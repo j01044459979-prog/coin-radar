@@ -105,9 +105,28 @@ test('버전: radar-core.js, index.html APP_VERSION, script ?v= 가 모두 같�
   assert.match(C.VERSION, /^\d+\.\d+\.\d+$/);
   assert.ok(html.includes(`const APP_VERSION = '${C.VERSION}'`), 'APP_VERSION 불일치');
   assert.ok(html.includes(`assets/radar-core.js?v=${C.VERSION}"`), 'script ?v= 불일치');
+  const E = require('../assets/radar-engine.js');
+  assert.equal(E.VERSION, C.VERSION, 'radar-engine.js VERSION 불일치');
+  assert.ok(html.includes(`assets/radar-engine.js?v=${C.VERSION}"`), 'radar-engine script ?v= 불일치');
 });
 
 test('처음 화면 문구에 거래소 이름 없는 "● 연결 중" 이 없음 (이전 버전 문구)', () => {
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(!html.includes('>● 연결 중<'));
+});
+
+test('감시 종목 스트림 주소: ticker(기본 6) + miniTicker(나머지) + kline_1m(전체)', () => {
+  const url = C.buildRadarStreamUrl('wss://stream.binance.com:9443', ['BTCUSDT', 'PEPEUSDT'], ['BTCUSDT']);
+  assert.equal(url, 'wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/pepeusdt@miniTicker/btcusdt@kline_1m/pepeusdt@kline_1m');
+});
+
+test('종목별 miniTicker 메시지 처리', () => {
+  const list = C.parseStreamMessage({ stream: 'pepeusdt@miniTicker', data: { e: '24hrMiniTicker', s: 'PEPEUSDT', c: '0.00001', o: '0.00002', q: '5', v: '6' } });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].symbol, 'PEPEUSDT');
+  assert.ok(Math.abs(list[0].changePct + 50) < 1e-9);
+});
+
+test('화면이 숨겨져 연결을 쉬는 상태 표시', () => {
+  assert.deepEqual(C.binanceStatusView({ state: 'paused' }, 0), { text: 'Binance 일시정지 (화면 숨김)', level: 'warn' });
 });

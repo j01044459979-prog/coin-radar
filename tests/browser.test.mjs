@@ -52,8 +52,29 @@ const upbitTicker = [
 const tickerMsg = (s, c, P) => JSON.stringify({ stream: s.toLowerCase() + '@ticker', data: { e: '24hrTicker', s, c: String(c), P: String(P), q: '2000000000', v: '30000' } });
 const miniMsg = JSON.stringify({ stream: '!miniTicker@arr', data: [{ e: '24hrMiniTicker', s: 'SOLUSDT', c: '120', o: '100', q: '900000000', v: '7000' }] });
 
-async function openPage({ upbitFail = false, viewport, initScript, wsMessages } = {}) {
-  const page = await browser.newPage(viewport ? { viewport } : {});
+// 테스트용 1분봉(REST klines 형식). SOLUSDT 만 최근 5분 동안 거래대금 4배 + 가격 +3% 로 만듭니다.
+const MIN = 60000;
+function klineRows(symbol, limit, startTime, mode) {
+  const now = Date.now();
+  const m0 = Math.floor(now / MIN) * MIN; // 진행 중인 1분봉
+  const first = startTime ? startTime : m0 - (limit - 1) * MIN;
+  const rows = [];
+  for (let t = first; t <= m0; t += MIN) {
+    const k = (m0 - MIN - t) / MIN; // 0 = 마지막 완료 봉
+    let o = 100, c = 100, q = 1e6;
+    if (symbol === 'SOLUSDT' && k >= 0 && k < 5) {
+      const j = 4 - k; // 0..4 (오래된 → 최근)
+      o = 100 + 0.6 * j;
+      c = 100 + 0.6 * (j + 1);
+      q = 4e6;
+    } else if (symbol === 'SOLUSDT' && k < 0) { o = 103; c = 103; }
+    rows.push([t, String(o), String(Math.max(o, c)), String(Math.min(o, c)), String(c), '100', t + MIN - 1, String(q), 10, '1', '1', '0']);
+  }
+  return mode === 'short' ? rows.slice(-4) : rows;
+}
+
+async function openPage({ upbitFail = false, viewport, initScript, wsMessages, klines = 'full', context } = {}) {
+  const page = context ? await context.newPage() : await browser.newPage(viewport ? { viewport } : {});
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   const sockets = [];
@@ -63,6 +84,12 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages } 
   });
   // Playwright 의 WebSocket 가로채기 뒤에 등록해야 테스트용 WebSocket 교체가 적용됩니다
   if (initScript) await page.addInitScript(initScript);
+  await page.route(/binance\.(com|vision)\/api\/v3\/klines/, (r) => {
+    if (klines === 'fail') return r.fulfill({ status: 503, body: 'x', headers: { 'access-control-allow-origin': '*' } });
+    const u = new URL(r.request().url());
+    const json = klineRows(u.searchParams.get('symbol'), Number(u.searchParams.get('limit')), Number(u.searchParams.get('startTime')) || 0, klines);
+    return r.fulfill({ json, headers: { 'access-control-allow-origin': '*' } });
+  });
   await page.route(/binance\.(com|vision)\/api\/v3\/ticker\/24hr/, (r) => r.fulfill({ json: rest24h, headers: { 'access-control-allow-origin': '*' } }));
   await page.route(/api\.upbit\.com/, (r) => {
     if (upbitFail) return r.fulfill({ status: 500, body: 'x', headers: { 'access-control-allow-origin': '*' } });
@@ -85,8 +112,19 @@ test('실시간 시세·상태 표시, 준비 중 기능 비활성', async () =>
   assert.match(await page.textContent('#hero'), /SOL\$120\+20\.00%/); // miniTicker: (120-100)/100
   assert.equal(await page.locator('#binanceBody tr').count(), 15);
   assert.equal(await page.locator('#upbitBody tr').count(), 2);
-  assert.match(await page.textContent('#signals'), /24H 상승 상위/);
-  assert.equal(await page.locator('.controls .btn:disabled').count(), 3);
+  // 단기 레이더 (기본 5분)
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  assert.equal(await page.getAttribute('#signals .signal >> nth=0', 'data-symbol'), 'SOLUSDT');
+  const first = await page.textContent('#signals .signal >> nth=0');
+  assert.match(first, /가격 급변 \+ 거래량 이상/);
+  assert.match(first, /5분 \+3\.00% · 거래 활동 4\.0배/);
+  assert.match(first, /레이더 점수 88/);
+  assert.match(first, /평소 \$5\.00M, 직전 12구간 평균/);
+  assert.equal(await page.locator('.controls .btn:disabled').count(), 0);
+  assert.equal(await page.getAttribute('.winbtn[data-win="5"]', 'aria-pressed'), 'true');
+  assert.match(sockets[0].url(), /solusdt@kline_1m/);
+  assert.match(sockets[0].url(), /btcusdt@ticker/);
+  assert.doesNotMatch(sockets[0].url(), /!miniTicker@arr/);
   assert.match(await page.textContent('#updated'), /Binance 마지막 수신 \d/);
   assert.equal(await page.evaluate(() => typeof window.status), 'string'); // 전역 status 와 충돌 없음
   assert.equal(sockets.length, 1);
@@ -245,6 +283,110 @@ test('버전 표시', async () => {
   const text = await page.textContent('#appVersion');
   assert.match(text, /^COIN RADAR v\d+\.\d+\.\d+$/);
   assert.equal(await page.$eval('#appVersion', (n) => n.classList.contains('warn')), false);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// ── Phase 2+3 레이더 화면 테스트 ──
+
+test('1분/5분/15분 버튼: 순위·변화율·거래 활동·상태가 선택 구간 기준으로 바뀜', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  const firstCard = () => page.textContent('#signals .signal >> nth=0');
+
+  await page.click('.winbtn[data-win="1"]');
+  assert.equal(await page.getAttribute('.winbtn[data-win="1"]', 'aria-pressed'), 'true');
+  assert.equal(await page.getAttribute('.winbtn[data-win="5"]', 'aria-pressed'), 'false');
+  let t = await firstCard();
+  assert.match(t, /1분 \+0\.59% · 거래 활동 2\.0배/);
+  assert.match(t, /가격 급변 \+ 활동 증가/);
+  assert.match(await page.textContent('#hero'), /1분 /);
+
+  await page.click('.winbtn[data-win="15"]');
+  t = await firstCard();
+  assert.match(t, /15분 \+3\.00% · 거래 활동 2\.0배/);
+  assert.match(t, /가격 급변 \+ 활동 증가/);
+  assert.match(await page.textContent('#radarInfo'), /완료된 1분봉 기준 · 감시 17종목 · 계산 가능 17종목/);
+  assert.match(await page.textContent('#volumeEvent'), /0종목/);
+
+  await page.click('.winbtn[data-win="5"]');
+  assert.match(await page.textContent('#volumeEvent'), /1종목[\s\S]*SOL/);
+
+  // 선택 구간은 새로고침 후에도 유지
+  await page.click('.winbtn[data-win="15"]');
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  assert.equal(await page.getAttribute('.winbtn[data-win="15"]', 'aria-pressed'), 'true');
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('데이터가 부족하면 수집 중 + 남은 시간 표시 (추정값 없음)', async () => {
+  const { page, errors } = await openPage({ klines: 'short' });
+  // 처음에는 1분봉이 하나도 없어 약 35분, REST 로 3개를 받은 뒤에는 약 32분
+  await page.waitForFunction(() => /데이터 수집 중 \(약 3[123]분 남음\)/.test(document.getElementById('signals').textContent));
+  const t = await page.textContent('#signals');
+  assert.match(t, /5분 데이터 수집 중 \(약 3[123]분 남음\)/);
+  assert.equal(await page.locator('#signals [data-symbol]').count(), 0);
+  assert.match(await page.textContent('#hero'), /5분 데이터 수집 중/);
+  assert.match(await page.textContent('#volumeEvent'), /데이터 수집 중/);
+  assert.doesNotMatch(await page.textContent('#signals'), /배|레이더 점수/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('localStorage 복원: 새로고침/재접속 시 수집 데이터 유지', async () => {
+  const context = await browser.newContext();
+  const a = await openPage({ context });
+  await a.page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  await a.page.waitForFunction(() => !!localStorage.getItem('coinradar.candles.v1'), null, { timeout: 10000 });
+  const saved = await a.page.evaluate(() => JSON.parse(localStorage.getItem('coinradar.candles.v1')));
+  assert.equal(saved.v, 1);
+  assert.ok(saved.s.SOLUSDT.length >= 190);
+  assert.ok(saved.s.SOLUSDT.every((row) => row.length === 7)); // 시각·시고저종·거래량·거래대금만
+  await a.page.close();
+
+  // 두 번째 접속: 과거 1분봉 REST 가 실패해도 저장 데이터로 바로 계산
+  const b = await openPage({ context, klines: 'fail' });
+  await b.page.waitForFunction(() => document.querySelector('#signals [data-symbol]'), null, { timeout: 10000 });
+  assert.equal(await b.page.getAttribute('#signals .signal >> nth=0', 'data-symbol'), 'SOLUSDT');
+  assert.match(await b.page.textContent('#signals .signal >> nth=0'), /거래 활동 4\.0배/);
+  assert.deepEqual([...a.errors, ...b.errors], []);
+  await context.close();
+});
+
+test('WebSocket 1분봉 수신: 완료된 봉이 레이더에 반영', async () => {
+  const now = Date.now();
+  const m0 = Math.floor(now / MIN) * MIN;
+  const k = (t, x) => JSON.stringify({ stream: 'dogeusdt@kline_1m', data: { e: 'kline', E: now, s: 'DOGEUSDT', k: { t, T: t + MIN - 1, s: 'DOGEUSDT', i: '1m', o: '100', c: '100', h: '100', l: '100', v: '1', q: '1', x } } });
+  const { page, errors, sockets } = await openPage({ wsMessages: [tickerMsg('BTCUSDT', 65432.1, 1.5), k(m0, false)] });
+  await page.waitForFunction(() => document.getElementById('binanceStatus').textContent === '● Binance 실시간');
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  // 진행 중 봉은 저장하지 않고, 완료된 봉만 저장
+  await page.waitForFunction(() => !!localStorage.getItem('coinradar.candles.v1'), null, { timeout: 10000 });
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('coinradar.candles.v1')));
+  assert.ok(!saved.s.DOGEUSDT.some((r) => r[0] === m0));
+  sockets[0].send(k(m0, true));
+  await page.waitForFunction((t) => {
+    const d = JSON.parse(localStorage.getItem('coinradar.candles.v1'));
+    return d.s.DOGEUSDT.some((r) => r[0] === t);
+  }, m0, { timeout: 10000 });
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('모바일: 레이더 버튼·카드 표시, 가로 스크롤 없음', async () => {
+  const { page, errors } = await openPage({ viewport: { width: 390, height: 844 } });
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  await page.click('.winbtn[data-win="15"]');
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw, `scrollWidth ${sw} > innerWidth ${iw}`);
+  const btn = await page.$eval('.winbtn[data-win="15"]', (n) => n.getBoundingClientRect().width);
+  assert.ok(btn >= 40);
+  if (process.env.SCREENSHOT_DIR) {
+    await page.$eval('#radarPanel', (n) => n.scrollIntoView());
+    await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-radar.png') });
+  }
   assert.deepEqual(errors, []);
   await page.close();
 });
