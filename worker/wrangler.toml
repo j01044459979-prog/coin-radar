@@ -10,3 +10,9 @@ compatibility_date = "2025-09-01"
 # 로그(Observability)를 켜서 대시보드에서 오류를 볼 수 있게 합니다.
 [observability]
 enabled = true
+
+# 실험: Cloudflare 공식 Placement Hint
+# Worker를 AWS 서울 리전(ap-northeast-2)과 가장 가까운 Cloudflare 데이터센터에서 실행하도록 요청합니다.
+# /debug/reachability 결과가 달라지는지 확인하기 위한 설정이며, 효과가 없으면 이 블록만 삭제하면 됩니다.
+[placement]
+region = "aws:ap-northeast-2"
