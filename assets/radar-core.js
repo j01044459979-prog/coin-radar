@@ -3,6 +3,9 @@
 (function (root) {
   'use strict';
 
+  // 화면 버전. index.html 의 APP_VERSION, <script src="...?v="> 값과 항상 같아야 합니다 (테스트로 확인).
+  const VERSION = '1.1.0';
+
   // Binance 공식 공개 주소 (API Key 불필요, 시세 조회 전용)
   const BINANCE_WS_HOSTS = ['wss://stream.binance.com:9443', 'wss://data-stream.binance.vision'];
   const BINANCE_REST_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
@@ -97,6 +100,30 @@
     return Math.min(30000, 1000 * 2 ** Math.max(0, attempt)) + Math.floor(rand() * 1000);
   }
 
+  const secLeft = (at, now) => Math.max(0, Math.ceil((at - now) / 1000));
+
+  // 연결 상태 → 화면 문구/색상. level: ok(초록) | warn(노랑) | err(빨강)
+  // s = { state: connecting|live|reconnecting|error, lastMsg, retryAt }
+  function binanceStatusView(s, now) {
+    if (s.state === 'live') {
+      if (s.lastMsg && now - s.lastMsg > 10000) return { text: 'Binance 수신 지연', level: 'warn' };
+      return { text: 'Binance 실시간', level: 'ok' };
+    }
+    if (s.state === 'reconnecting') return { text: 'Binance 재연결 중' + (s.retryAt ? ` (${secLeft(s.retryAt, now)}초 후)` : ''), level: 'warn' };
+    if (s.state === 'error') return { text: 'Binance 연결 실패 · 재시도' + (s.retryAt ? ` ${secLeft(s.retryAt, now)}초 후` : ' 중'), level: 'err' };
+    return { text: 'Binance 연결 중', level: 'warn' };
+  }
+
+  // s = { state: loading|ok|error, last }
+  function upbitStatusView(s, now) {
+    if (s.state === 'ok') {
+      if (s.last && now - s.last > 90000) return { text: 'Upbit 갱신 지연', level: 'warn' };
+      return { text: 'Upbit 정상', level: 'ok' };
+    }
+    if (s.state === 'error') return { text: 'Upbit 재시도 중', level: 'err' };
+    return { text: 'Upbit 불러오는 중', level: 'warn' };
+  }
+
   function fmtCompact(v) {
     const n = num(v);
     if (n === null) return '—';
@@ -126,6 +153,7 @@
   }
 
   const api = {
+    VERSION,
     BINANCE_WS_HOSTS,
     BINANCE_REST_HOSTS,
     WATCH,
@@ -138,6 +166,8 @@
     topByQuoteVolume,
     topMovers,
     reconnectDelay,
+    binanceStatusView,
+    upbitStatusView,
     fmtCompact,
     fmtPrice,
     fmtPct,
