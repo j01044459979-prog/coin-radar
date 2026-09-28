@@ -16,3 +16,7 @@ enabled = true
 # /debug/reachability 결과가 달라지는지 확인하기 위한 설정이며, 효과가 없으면 이 블록만 삭제하면 됩니다.
 [placement]
 region = "aws:ap-northeast-2"
+
+# PR Preview 빌드(wrangler preview)용 설정. Preview에도 같은 서울 리전 Placement Hint를 적용합니다.
+[previews.placement]
+region = "aws:ap-northeast-2"
