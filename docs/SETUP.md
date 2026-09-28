@@ -193,7 +193,7 @@ Binance는 일부 국가(예: 미국)에서의 접속을 막습니다. Cloudflar
 
 ## 6. 비밀값(Secret) 관리 규칙 — 앞으로 꼭 지킬 것
 
-Phase 0에는 비밀값이 없습니다. 하지만 Phase 4(Telegram 알림)부터 필요하므로 규칙을 미리 정합니다.
+Phase 0에는 비밀값이 없습니다. Phase 4(Telegram 알림)부터 필요하며, 실제 등록 방법은 `docs/MONITOR.md` 5장을 보세요.
 
 1. **비밀값(봇 토큰, API 키)은 절대로 GitHub 코드에 적지 않습니다.**
    - `wrangler.toml`, `src/*.js`, `index.html` 어디에도 적지 않습니다.
