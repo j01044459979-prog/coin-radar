@@ -1,0 +1,12 @@
+# Cloudflare Worker 설정 파일
+# ⚠️ 이 파일은 GitHub에 올라갑니다. 비밀키/토큰을 절대 여기에 적지 마세요.
+#    비밀값은 Cloudflare 대시보드 > Worker > Settings > Variables and Secrets 에서 "Secret"으로 등록합니다.
+
+# Cloudflare에 이미 만들어 둔 Worker 이름과 반드시 같아야 합니다.
+name = "coin-radar-engine"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# 로그(Observability)를 켜서 대시보드에서 오류를 볼 수 있게 합니다.
+[observability]
+enabled = true
