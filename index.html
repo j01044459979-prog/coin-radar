@@ -1,29 +1,235 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>COIN RADAR V3</title>
-<style>:root{--bg:#061019;--p:#0d1a25;--p2:#09151f;--line:#203344;--t:#edf6ff;--m:#8ea7ba;--g:#42d486;--r:#ff6576;--y:#ffc857;--b:#66aaff}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#061019,#09151e);color:var(--t);font-family:system-ui,-apple-system,'Noto Sans KR',sans-serif}.w{max-width:1280px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.brand{font-size:25px;font-weight:950}.muted,.src{color:var(--m);font-size:12px}.live{padding:8px 11px;border:1px solid var(--line);border-radius:99px;color:var(--g);font-size:12px}.tabs{display:flex;gap:8px;overflow:auto;margin:15px 0}.tab{white-space:nowrap;padding:9px 12px;background:var(--p2);border:1px solid var(--line);border-radius:11px;font-size:12px}.tab.on{border-color:#49708d}.hero{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.card,.panel{background:rgba(13,26,37,.97);border:1px solid var(--line);border-radius:16px}.card{padding:12px}.sym{font-weight:900}.price{font-size:18px;font-weight:850;margin:5px 0}.up{color:var(--g)}.down{color:var(--r)}.layout{display:grid;grid-template-columns:1.45fr .75fr;gap:14px;margin-top:14px}.panel{padding:15px;margin-bottom:14px}h2{font-size:15px;margin:0 0 11px}.radar{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.signal{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px}.signal strong{font-size:17px}.pill{display:inline-block;font-size:11px;padding:4px 7px;border-radius:99px;margin-top:7px;background:#132534}.hot{color:var(--y)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 6px;border-bottom:1px solid #172836;text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--m)}.feed{display:flex;flex-direction:column;gap:8px}.feeditem{padding:11px;border-radius:12px;background:var(--p2);border:1px solid #1b2d3c}.feeditem b{display:block;margin-bottom:3px}.note{padding:11px;border-left:3px solid var(--b);background:#0a1722;border-radius:8px;font-size:12px;line-height:1.5}.controls{display:flex;gap:7px;margin-bottom:10px}.btn{border:1px solid var(--line);background:#0a1722;color:var(--t);padding:7px 10px;border-radius:9px;font-size:11px}.foot{margin-top:10px;color:var(--m);font-size:11px;line-height:1.5}@media(max-width:900px){.hero{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.radar{grid-template-columns:1fr}.w{padding:11px}.brand{font-size:21px}table{font-size:11px}}</style></head><body><div class="w">
-<div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="status" class="live">● 연결 중</div></div>
-<div class="tabs"><div class="tab on">🔥 전체 레이더</div><div class="tab">🌎 Binance</div><div class="tab">🇰🇷 Upbit</div><div class="tab">📰 뉴스</div><div class="tab">📡 Telegram</div><div class="tab">𝕏 X Radar</div></div>
+<style>:root{--bg:#061019;--p:#0d1a25;--p2:#09151f;--line:#203344;--t:#edf6ff;--m:#8ea7ba;--g:#42d486;--r:#ff6576;--y:#ffc857;--b:#66aaff}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#061019,#09151e);color:var(--t);font-family:system-ui,-apple-system,'Noto Sans KR',sans-serif}.w{max-width:1280px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.brand{font-size:25px;font-weight:950}.muted,.src{color:var(--m);font-size:12px}.live{padding:8px 11px;border:1px solid var(--line);border-radius:99px;color:var(--g);font-size:12px}.tabs{display:flex;gap:8px;overflow:auto;margin:15px 0}.tab{white-space:nowrap;padding:9px 12px;background:var(--p2);border:1px solid var(--line);border-radius:11px;font-size:12px}.tab.on{border-color:#49708d}.hero{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.card,.panel{background:rgba(13,26,37,.97);border:1px solid var(--line);border-radius:16px}.card{padding:12px}.sym{font-weight:900}.price{font-size:18px;font-weight:850;margin:5px 0}.up{color:var(--g)}.down{color:var(--r)}.layout{display:grid;grid-template-columns:1.45fr .75fr;gap:14px;margin-top:14px}.panel{padding:15px;margin-bottom:14px}h2{font-size:15px;margin:0 0 11px}.radar{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.signal{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px}.signal strong{font-size:17px}.pill{display:inline-block;font-size:11px;padding:4px 7px;border-radius:99px;margin-top:7px;background:#132534}.hot{color:var(--y)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 6px;border-bottom:1px solid #172836;text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--m)}.feed{display:flex;flex-direction:column;gap:8px}.feeditem{padding:11px;border-radius:12px;background:var(--p2);border:1px solid #1b2d3c}.feeditem b{display:block;margin-bottom:3px}.note{padding:11px;border-left:3px solid var(--b);background:#0a1722;border-radius:8px;font-size:12px;line-height:1.5}.controls{display:flex;gap:7px;margin-bottom:10px}.btn{border:1px solid var(--line);background:#0a1722;color:var(--t);padding:7px 10px;border-radius:9px;font-size:11px}.foot{margin-top:10px;color:var(--m);font-size:11px;line-height:1.5}@media(max-width:900px){.hero{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.radar{grid-template-columns:1fr}.w{padding:11px}.brand{font-size:21px}table{font-size:11px}}
+/* Phase 1 추가: 연결 상태 색상, 준비 중 표시 */
+.live.warn{color:var(--y)}.live.err{color:var(--r)}.tab{cursor:pointer}.tab.soon,.btn:disabled{opacity:.45;cursor:not-allowed}.soonbadge{font-size:10px;color:var(--m);margin-left:4px}@media(max-width:900px){.top{align-items:flex-start}.live{font-size:11px;padding:7px 9px;text-align:right}}</style></head><body><div class="w">
+<div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="live warn" role="status" aria-live="polite">● 연결 중</div></div>
+<div class="tabs"><div class="tab on" data-go="top">🔥 전체 레이더</div><div class="tab" data-go="binancePanel">🌎 Binance</div><div class="tab" data-go="upbitPanel">🇰🇷 Upbit</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
 <div id="hero" class="hero"><div class="card">데이터 로딩...</div></div>
+<div id="updated" class="src" style="margin-top:8px">Binance 연결 대기 중</div>
 <div class="layout"><main>
-<div class="panel"><h2>🚨 지금 움직이는 코인</h2><div class="controls"><button class="btn" onclick="setWindow(1)">1분</button><button class="btn" onclick="setWindow(5)">5분</button><button class="btn" onclick="setWindow(15)">15분</button></div><div id="signals" class="radar"><div class="signal">데이터를 모으는 중입니다.<div class="src">첫 기준값 생성 후 변화량을 표시합니다.</div></div></div><div class="foot">브라우저를 열어둔 동안 Binance 24H 거래대금 스냅샷의 변화를 누적해 단기 활동 증가를 탐지합니다. 다음 서버 연결 단계에서는 실제 1·5·15분 체결/캔들, Telegram·X·뉴스 이벤트를 같은 시간축으로 묶습니다.</div></div>
-<div class="panel"><h2>🛰️ 이벤트 센터</h2><div class="radar">
-<div class="signal"><span class="hot">🔥 거래량 급증</span><br><strong>자동 감시</strong><div class="src">Binance/Upbit의 거래대금과 가격 변화를 함께 확인</div></div>
-<div class="signal"><span class="hot">📰 뉴스 발생</span><br><strong>교차검증 대기</strong><div class="src">BlockMedia · 공식 거래소/프로젝트 · 글로벌 뉴스</div></div>
-<div class="signal"><span class="hot">📣 SNS 확산</span><br><strong>소스 허브 준비</strong><div class="src">Telegram · X · 국내 커뮤니티 언급을 시장 데이터와 결합</div></div>
-</div></div><div class="panel"><h2>🌎 Binance 거래대금 TOP</h2><table><thead><tr><th>코인</th><th>가격</th><th>24H</th><th>거래대금</th><th>활동</th></tr></thead><tbody id="binance"></tbody></table></div>
-<div class="panel"><h2>🇰🇷 Upbit 원화시장</h2><table><thead><tr><th>코인</th><th>현재가</th><th>24H</th><th>24H 거래대금</th></tr></thead><tbody id="upbit"><tr><td colspan="4">불러오는 중...</td></tr></tbody></table></div>
+<div class="panel"><h2>🚨 지금 움직이는 코인 <span class="src">· Binance 24H 등락률 기준</span></h2><div class="controls"><button class="btn" disabled title="준비 중">1분 · 준비 중</button><button class="btn" disabled title="준비 중">5분 · 준비 중</button><button class="btn" disabled title="준비 중">15분 · 준비 중</button></div><div id="signals" class="radar"><div class="signal">데이터를 모으는 중입니다.<div class="src">Binance 실시간 시세를 기다리고 있습니다.</div></div></div><div class="foot">현재는 Binance가 제공하는 24시간 등락률 상위·하위 종목을 그대로 보여줍니다 (24H 거래대금 $10M 이상 USDT 마켓). 1분·5분·15분 거래량 급증 감지는 서버 분석 단계에서 추가될 예정이며 아직 동작하지 않습니다.</div></div>
+<div class="panel"><h2>🛰️ 이벤트 센터 <span class="soonbadge">준비 중</span></h2><div class="radar">
+<div class="signal"><span class="hot">🔥 거래량 급증</span><br><strong>준비 중</strong><div class="src">Binance/Upbit의 거래대금과 가격 변화를 함께 확인할 예정</div></div>
+<div class="signal"><span class="hot">📰 뉴스 발생</span><br><strong>준비 중</strong><div class="src">BlockMedia · 공식 거래소/프로젝트 · 글로벌 뉴스</div></div>
+<div class="signal"><span class="hot">📣 SNS 확산</span><br><strong>준비 중</strong><div class="src">Telegram · X · 국내 커뮤니티 언급을 시장 데이터와 결합할 예정</div></div>
+</div></div><div id="binancePanel" class="panel"><h2>🌎 Binance 거래대금 TOP</h2><table><thead><tr><th>코인</th><th>가격</th><th>24H</th><th>거래대금</th><th>거래량</th></tr></thead><tbody id="binanceBody"><tr><td colspan="5">불러오는 중...</td></tr></tbody></table><div class="foot">Binance 현물 USDT 마켓 · 24H 거래대금(USDT) 기준 상위 15개 · 거래량은 코인 수량</div></div>
+<div id="upbitPanel" class="panel"><h2>🇰🇷 Upbit 원화시장</h2><table><thead><tr><th>코인</th><th>현재가</th><th>24H</th><th>24H 거래대금</th></tr></thead><tbody id="upbitBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody></table><div class="foot">Upbit 공개 API · 30초마다 갱신</div></div>
 </main><aside>
 <div class="panel"><h2>🧠 종합 감지 규칙</h2><div class="note">V3는 <b>시장 이상징후 + 정보원 교차검증</b>을 중심으로 구성합니다. 이후 뉴스·Telegram·X가 붙으면 거래량/가격 변화와 같은 시간대에 발생한 정보만 한 사건으로 묶습니다.</div></div>
-<div class="panel"><h2>📡 등록 정보원 · V3</h2><div class="feed"><div class="feeditem"><b>🇰🇷 BlockMedia</b><span class="src">국내 뉴스 · 중요도 높음 · 교차검증 대상</span></div><div class="feeditem"><b>WeCryptoTogether</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>CEN · emperorcoin</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>취미생활방</b><span class="src">Telegram · 국내 반응</span></div><div class="feeditem"><b>🇰🇷 국내 코인 커뮤니티</b><span class="src">언급량/심리 감지용</span></div><div class="feeditem"><b>𝕏 Crypto Radar</b><span class="src">공식계정 + 주요 계정 · 다음 단계</span></div></div></div>
-<div class="panel"><h2>🎯 신호 판정 방식</h2><div class="note">한 출처의 글만으로 판단하지 않습니다.<br>① 가격/거래량 이상징후<br>② 공식 발표 여부<br>③ 뉴스 교차확인<br>④ Telegram/X/커뮤니티 확산<br>⑤ 같은 시간대 발생 여부를 묶어 보여주는 구조입니다.</div></div><div class="panel"><h2>🤖 AI 브리핑</h2><div class="feeditem"><b id="briefTitle">시장 데이터 수집 중</b><span id="brief" class="src">충분한 변화 데이터가 쌓이면 가장 눈에 띄는 종목을 여기에 표시합니다.</span></div><div class="foot">정보 제공용 화면입니다. 특정 코인의 매수·매도를 자동 실행하지 않습니다.</div></div>
+<div class="panel"><h2>📡 등록 정보원 · V3 <span class="soonbadge">연동 예정</span></h2><div class="feed"><div class="feeditem"><b>🇰🇷 BlockMedia</b><span class="src">국내 뉴스 · 중요도 높음 · 교차검증 대상</span></div><div class="feeditem"><b>WeCryptoTogether</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>CEN · emperorcoin</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>취미생활방</b><span class="src">Telegram · 국내 반응</span></div><div class="feeditem"><b>🇰🇷 국내 코인 커뮤니티</b><span class="src">언급량/심리 감지용</span></div><div class="feeditem"><b>𝕏 Crypto Radar</b><span class="src">공식계정 + 주요 계정 · 다음 단계</span></div></div></div>
+<div class="panel"><h2>🎯 신호 판정 방식</h2><div class="note">한 출처의 글만으로 판단하지 않습니다.<br>① 가격/거래량 이상징후<br>② 공식 발표 여부<br>③ 뉴스 교차확인<br>④ Telegram/X/커뮤니티 확산<br>⑤ 같은 시간대 발생 여부를 묶어 보여주는 구조입니다.</div></div><div class="panel"><h2>🤖 AI 브리핑 <span class="soonbadge">준비 중</span></h2><div class="feeditem"><b>준비 중</b><span class="src">AI 요약은 실제 데이터 검증 구조가 갖춰진 뒤 추가됩니다. 지금은 어떤 요약도 생성하지 않습니다.</span></div><div class="foot">정보 제공용 화면입니다. 특정 코인의 매수·매도를 자동 실행하지 않습니다.</div></div>
 </aside></div></div>
+<script src="assets/radar-core.js"></script>
 <script>
-const watch=['BTCUSDT','ETHUSDT','SOLUSDT','XRPUSDT','DOGEUSDT','BNBUSDT'];let prev=new Map(),win=5,last=[];
-const fmt=n=>{n=+n;if(n>=1e12)return (n/1e12).toFixed(1)+'T';if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';return n.toLocaleString()};
-const px=n=>{n=+n;return n>=1000?n.toLocaleString(undefined,{maximumFractionDigits:2}):n>=1?n.toLocaleString(undefined,{maximumFractionDigits:4}):n.toPrecision(5)};
-function setWindow(n){win=n;document.querySelectorAll('.controls .btn').forEach((b,i)=>b.style.borderColor=[1,5,15][i]===n?'#66aaff':'#203344');renderSignals(last)}
-function renderHero(data){let m=Object.fromEntries(data.map(x=>[x.symbol,x]));hero.innerHTML=watch.map(s=>{let x=m[s];if(!x)return'';let p=+x.priceChangePercent;return `<div class=card><div class=sym>${s.replace('USDT','')}</div><div class=price>$${px(x.lastPrice)}</div><div class=${p>=0?'up':'down'}>${p>=0?'+':''}${p.toFixed(2)}%</div><div class=src>24H $${fmt(x.quoteVolume)}</div></div>`}).join('')}
-function renderSignals(data){let scored=data.map(x=>{let old=prev.get(x.symbol),dv=old?Math.max(0,+x.quoteVolume-old.q):0,dp=old?((+x.lastPrice-old.p)/old.p*100):0;return {...x,dv,dp,score:dv*(1+Math.abs(dp)*3)}}).filter(x=>x.dv>0).sort((a,b)=>b.score-a.score).slice(0,6);if(!scored.length){signals.innerHTML='<div class=signal>기준 데이터 생성 중<div class=src>약 10~20초 후 변화 감지가 시작됩니다.</div></div>';return}signals.innerHTML=scored.map((x,i)=>`<div class=signal><div class=src>${i<3?'🔥 활동 증가':'관찰'}</div><strong>${x.symbol.replace('USDT','')}</strong><div class=${x.dp>=0?'up':'down'}>${x.dp>=0?'+':''}${x.dp.toFixed(3)}% · 최근 거래대금 +$${fmt(x.dv)}</div><span class=pill>${Math.abs(x.dp)>.2?'가격 동반':'거래 활동'}</span></div>`).join('');let x=scored[0];briefTitle.textContent=`${x.symbol.replace('USDT','')} 활동 변화 감지`;brief.textContent=`최근 수집 구간에서 거래대금 증가가 가장 크게 포착되었습니다. 가격 변화 ${x.dp>=0?'+':''}${x.dp.toFixed(3)}%. 뉴스/SNS 연동 전이므로 원인 판단은 하지 않습니다.`}
-async function loadBinance(){try{let r=await fetch('https://api.binance.com/api/v3/ticker/24hr');let d=(await r.json()).filter(x=>x.symbol.endsWith('USDT')&&!x.symbol.includes('_'));last=d;renderHero(d);renderSignals(d);let top=[...d].sort((a,b)=>+b.quoteVolume-+a.quoteVolume).slice(0,15);binance.innerHTML=top.map(x=>{let p=+x.priceChangePercent,old=prev.get(x.symbol),dv=old?Math.max(0,+x.quoteVolume-old.q):0;return `<tr><td>${x.symbol.replace('USDT','')}</td><td>$${px(x.lastPrice)}</td><td class=${p>=0?'up':'down'}>${p>=0?'+':''}${p.toFixed(2)}%</td><td>$${fmt(x.quoteVolume)}</td><td class=${dv>0?'hot':''}>${dv>0?'+$'+fmt(dv):'—'}</td></tr>`}).join('');d.forEach(x=>prev.set(x.symbol,{q:+x.quoteVolume,p:+x.lastPrice,t:Date.now()}));status.textContent='● Binance LIVE · Upbit LIVE'}catch(e){status.textContent='● 일부 데이터 재연결 중'}}
-async function loadUpbit(){try{let m=await fetch('https://api.upbit.com/v1/market/all?is_details=false').then(r=>r.json());let codes=m.filter(x=>x.market.startsWith('KRW-')).map(x=>x.market);let out=[];for(let i=0;i<codes.length;i+=80){let a=await fetch('https://api.upbit.com/v1/ticker?markets='+codes.slice(i,i+80).join(',')).then(r=>r.json());out.push(...a)}out.sort((a,b)=>b.acc_trade_price_24h-a.acc_trade_price_24h);upbit.innerHTML=out.slice(0,15).map(x=>{let p=x.signed_change_rate*100;return `<tr><td>${x.market.replace('KRW-','')}</td><td>₩${px(x.trade_price)}</td><td class=${p>=0?'up':'down'}>${p>=0?'+':''}${p.toFixed(2)}%</td><td>₩${fmt(x.acc_trade_price_24h)}</td></tr>`}).join('')}catch(e){upbit.innerHTML='<tr><td colspan=4>Upbit 연결 재시도 중</td></tr>'}}
-loadBinance();loadUpbit();setInterval(loadBinance,10000);setInterval(loadUpbit,30000);setWindow(5);
+(function () {
+  'use strict';
+  const C = window.RadarCore;
+  const $ = (id) => document.getElementById(id);
+  // 주의: window.status 등 전역 이름과 충돌하지 않도록 요소는 항상 getElementById 로 가져옵니다.
+  const el = { conn: $('connStatus'), hero: $('hero'), updated: $('updated'), signals: $('signals'), binance: $('binanceBody'), upbit: $('upbitBody') };
+
+  const tickers = new Map(); // symbol -> 최신 Binance 시세 (실제 API 값만 저장)
+  const state = {
+    binance: 'connecting', // connecting | live | reconnecting | error
+    binanceLastMsg: 0,
+    binanceRetryAt: 0,
+    upbit: 'loading', // loading | ok | error
+    upbitLast: 0,
+    dirty: false,
+  };
+
+  const timeStr = (t) => (t ? new Date(t).toLocaleTimeString('ko-KR', { hour12: false }) : '—');
+  const cls = (v) => (v === null ? '' : v >= 0 ? 'up' : 'down');
+
+  // ── 연결 상태 표시 ──────────────────────────────
+  function renderStatus() {
+    const b = {
+      connecting: 'Binance 연결 중',
+      live: 'Binance 실시간',
+      reconnecting: `Binance 재연결 중${state.binanceRetryAt ? ' (' + Math.max(0, Math.ceil((state.binanceRetryAt - Date.now()) / 1000)) + '초 후)' : ''}`,
+      error: `Binance 연결 실패 · 재시도${state.binanceRetryAt ? ' ' + Math.max(0, Math.ceil((state.binanceRetryAt - Date.now()) / 1000)) + '초 후' : ' 중'}`,
+    }[state.binance];
+    const u = { loading: 'Upbit 불러오는 중', ok: 'Upbit 정상', error: 'Upbit 재시도 중' }[state.upbit];
+    el.conn.textContent = `● ${b} · ${u}`;
+    const bad = state.binance === 'error' || state.upbit === 'error';
+    el.conn.className = 'live' + (state.binance === 'live' && state.upbit === 'ok' ? '' : bad ? ' err' : ' warn');
+    el.updated.textContent = `Binance 마지막 수신 ${timeStr(state.binanceLastMsg)} · Upbit 마지막 갱신 ${timeStr(state.upbitLast)}`;
+  }
+
+  // ── Binance 화면 ────────────────────────────────
+  function renderHero() {
+    el.hero.innerHTML = C.WATCH.map((s) => {
+      const x = tickers.get(s);
+      const name = C.esc(s.replace('USDT', ''));
+      if (!x) return `<div class=card><div class=sym>${name}</div><div class=price>—</div><div class=src>데이터 대기 중</div></div>`;
+      return `<div class=card><div class=sym>${name}</div><div class=price>$${C.fmtPrice(x.last)}</div><div class=${cls(x.changePct)}>${C.fmtPct(x.changePct)}</div><div class=src>24H 거래대금 $${C.fmtCompact(x.quoteVol)}</div><div class=src>24H 거래량 ${C.fmtCompact(x.baseVol)} ${name}</div></div>`;
+    }).join('');
+  }
+
+  function renderSignals(rows) {
+    const { up, down } = C.topMovers(rows, 3, 10e6);
+    if (!up.length) {
+      el.signals.innerHTML = '<div class=signal>데이터를 모으는 중입니다.<div class=src>Binance 실시간 시세를 기다리고 있습니다.</div></div>';
+      return;
+    }
+    const card = (x, label) => `<div class=signal><div class=src>${label}</div><strong>${C.esc(x.symbol.replace('USDT', ''))}</strong><div class=${cls(x.changePct)}>${C.fmtPct(x.changePct)} · $${C.fmtPrice(x.last)}</div><span class=pill>24H 거래대금 $${C.fmtCompact(x.quoteVol)}</span></div>`;
+    el.signals.innerHTML = up.map((x) => card(x, '📈 24H 상승 상위')).join('') + down.map((x) => card(x, '📉 24H 하락 상위')).join('');
+  }
+
+  function renderBinanceTable(rows) {
+    const top = C.topByQuoteVolume(rows, 15);
+    if (!top.length) return;
+    el.binance.innerHTML = top.map((x) => {
+      const name = C.esc(x.symbol.replace('USDT', ''));
+      return `<tr><td>${name}</td><td>$${C.fmtPrice(x.last)}</td><td class=${cls(x.changePct)}>${C.fmtPct(x.changePct)}</td><td>$${C.fmtCompact(x.quoteVol)}</td><td>${C.fmtCompact(x.baseVol)}</td></tr>`;
+    }).join('');
+  }
+
+  function renderBinance() {
+    if (!state.dirty) return;
+    state.dirty = false;
+    const rows = [...tickers.values()];
+    renderHero();
+    renderSignals(rows);
+    renderBinanceTable(rows);
+  }
+
+  function applyTickers(list) {
+    for (const t of list) {
+      if (t.symbol && t.last !== null) tickers.set(t.symbol, { ...tickers.get(t.symbol), ...t });
+    }
+    if (list.length) state.dirty = true;
+  }
+
+  // ── Binance 첫 화면용 REST 스냅샷 (1회) ─────────
+  async function loadBinanceSnapshot() {
+    for (const host of C.BINANCE_REST_HOSTS) {
+      try {
+        const r = await fetch(`${host}/api/v3/ticker/24hr`);
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (!Array.isArray(data)) continue;
+        // WebSocket 이 먼저 도착한 종목은 더 최신 값이므로 덮어쓰지 않습니다.
+        applyTickers(data.filter((x) => C.isTrackedSymbol(x.symbol) && !tickers.has(x.symbol)).map(C.fromRest24h));
+        return;
+      } catch (e) { /* 다음 주소 시도 */ }
+    }
+  }
+
+  // ── Binance WebSocket (자동 재연결) ─────────────
+  let ws = null, attempt = 0, hostIdx = 0, retryTimer = null;
+
+  function connect() {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    const url = C.buildStreamUrl(C.BINANCE_WS_HOSTS[hostIdx]);
+    state.binance = attempt === 0 ? 'connecting' : 'reconnecting';
+    state.binanceRetryAt = 0;
+    renderStatus();
+    let sock;
+    try {
+      sock = new WebSocket(url);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+    ws = sock;
+    sock.onopen = () => {
+      if (ws !== sock) return;
+      state.binanceLastMsg = Date.now(); // 감시 타이머 기준점
+    };
+    sock.onmessage = (ev) => {
+      if (ws !== sock) return;
+      const list = C.parseStreamMessage(ev.data);
+      state.binanceLastMsg = Date.now();
+      if (list.length) {
+        applyTickers(list);
+        if (state.binance !== 'live') {
+          state.binance = 'live';
+          attempt = 0;
+          renderStatus();
+        }
+      }
+    };
+    sock.onclose = () => {
+      if (ws !== sock) return;
+      ws = null;
+      scheduleReconnect();
+    };
+    sock.onerror = () => { /* onclose 에서 재연결 처리 */ };
+  }
+
+  function scheduleReconnect() {
+    if (retryTimer) return;
+    attempt += 1;
+    // 같은 주소로 2번 연속 실패하면 Binance 공식 시세 전용 주소로 전환
+    if (attempt % 2 === 0) hostIdx = (hostIdx + 1) % C.BINANCE_WS_HOSTS.length;
+    const delay = C.reconnectDelay(attempt - 1);
+    state.binance = attempt >= 6 ? 'error' : 'reconnecting';
+    state.binanceRetryAt = Date.now() + delay;
+    renderStatus();
+    retryTimer = setTimeout(connect, delay);
+  }
+
+  // 30초 이상 메시지가 없으면 연결이 멈춘 것으로 보고 다시 연결 (Binance 24시간 강제 종료 포함)
+  setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN && Date.now() - state.binanceLastMsg > 30000) {
+      const s = ws;
+      ws = null;
+      try { s.close(); } catch (e) {}
+      scheduleReconnect();
+    }
+  }, 5000);
+  window.addEventListener('online', () => {
+    if (!ws) { attempt = 0; connect(); }
+  });
+
+  // ── Upbit (기존 기능 유지: 공개 API, 30초마다) ──
+  let upbitBusy = false;
+  async function loadUpbit() {
+    if (upbitBusy) return;
+    upbitBusy = true;
+    try {
+      const m = await fetch('https://api.upbit.com/v1/market/all?is_details=false').then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      const codes = m.filter((x) => x.market.startsWith('KRW-')).map((x) => x.market);
+      const out = [];
+      for (let i = 0; i < codes.length; i += 80) {
+        const a = await fetch('https://api.upbit.com/v1/ticker?markets=' + codes.slice(i, i + 80).join(',')).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+        out.push(...a);
+      }
+      out.sort((a, b) => b.acc_trade_price_24h - a.acc_trade_price_24h);
+      el.upbit.innerHTML = out.slice(0, 15).map((x) => {
+        const p = x.signed_change_rate * 100;
+        return `<tr><td>${C.esc(x.market.replace('KRW-', ''))}</td><td>₩${C.fmtPrice(x.trade_price)}</td><td class=${cls(p)}>${C.fmtPct(p)}</td><td>₩${C.fmtCompact(x.acc_trade_price_24h)}</td></tr>`;
+      }).join('');
+      state.upbit = 'ok';
+      state.upbitLast = Date.now();
+    } catch (e) {
+      state.upbit = 'error';
+      if (!state.upbitLast) el.upbit.innerHTML = '<tr><td colspan=4>Upbit 연결 재시도 중</td></tr>';
+    } finally {
+      upbitBusy = false;
+      renderStatus();
+    }
+  }
+
+  // ── 탭: Binance/Upbit 은 해당 표로 이동, 나머지는 준비 중 ──
+  document.querySelectorAll('.tab[data-go]').forEach((t) => {
+    t.addEventListener('click', () => {
+      const go = t.dataset.go;
+      if (go === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
+      else $(go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  // ── 시작 ────────────────────────────────────────
+  renderHero();
+  renderStatus();
+  loadBinanceSnapshot();
+  connect();
+  loadUpbit();
+  setInterval(loadUpbit, 30000);
+  setInterval(renderBinance, 1000); // 화면은 1초에 한 번만 다시 그림
+  setInterval(renderStatus, 1000);
+})();
 </script></body></html>
