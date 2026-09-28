@@ -4,7 +4,7 @@
   'use strict';
 
   // 화면 버전. index.html 의 APP_VERSION, <script src="...?v="> 값과 항상 같아야 합니다 (테스트로 확인).
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
 
   // Binance 공식 공개 주소 (API Key 불필요, 시세 조회 전용)
   const BINANCE_WS_HOSTS = ['wss://stream.binance.com:9443', 'wss://data-stream.binance.vision'];
@@ -20,6 +20,21 @@
 
   function buildStreamUrl(host, watch = WATCH) {
     const streams = ['!miniTicker@arr', ...watch.map((s) => s.toLowerCase() + '@ticker')];
+    return `${host}/stream?streams=${streams.join('/')}`;
+  }
+
+  // Phase 2+3: 감시 종목(universe) 전용 결합 스트림.
+  // - watch 종목: @ticker (Binance 가 24H 등락률 P 를 직접 제공)
+  // - 나머지 감시 종목: @miniTicker (가격·24H 거래대금)
+  // - 모든 감시 종목: @kline_1m (1분봉 → 1분/5분/15분 레이더 계산)
+  // 전체 시장 !miniTicker@arr 대신 감시 종목만 받아 모바일 데이터 사용량을 줄입니다.
+  function buildRadarStreamUrl(host, universe, watch = WATCH) {
+    const lower = (s) => s.toLowerCase();
+    const streams = [
+      ...watch.map((s) => lower(s) + '@ticker'),
+      ...universe.filter((s) => !watch.includes(s)).map((s) => lower(s) + '@miniTicker'),
+      ...[...new Set([...watch, ...universe])].map((s) => lower(s) + '@kline_1m'),
+    ];
     return `${host}/stream?streams=${streams.join('/')}`;
   }
 
@@ -77,6 +92,9 @@
     if (msg.stream.endsWith('@ticker') && msg.data.e === '24hrTicker') {
       return [fromTicker(msg.data)];
     }
+    if (msg.stream.endsWith('@miniTicker') && msg.data.e === '24hrMiniTicker' && isTrackedSymbol(msg.data.s)) {
+      return [fromMiniTicker(msg.data)];
+    }
     return [];
   }
 
@@ -109,6 +127,7 @@
       if (s.lastMsg && now - s.lastMsg > 10000) return { text: 'Binance 수신 지연', level: 'warn' };
       return { text: 'Binance 실시간', level: 'ok' };
     }
+    if (s.state === 'paused') return { text: 'Binance 일시정지 (화면 숨김)', level: 'warn' };
     if (s.state === 'reconnecting') return { text: 'Binance 재연결 중' + (s.retryAt ? ` (${secLeft(s.retryAt, now)}초 후)` : ''), level: 'warn' };
     if (s.state === 'error') return { text: 'Binance 연결 실패 · 재시도' + (s.retryAt ? ` ${secLeft(s.retryAt, now)}초 후` : ' 중'), level: 'err' };
     return { text: 'Binance 연결 중', level: 'warn' };
@@ -158,6 +177,7 @@
     BINANCE_REST_HOSTS,
     WATCH,
     buildStreamUrl,
+    buildRadarStreamUrl,
     isTrackedSymbol,
     fromRest24h,
     fromTicker,
