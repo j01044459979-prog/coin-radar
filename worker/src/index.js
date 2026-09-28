@@ -6,9 +6,11 @@
 import { checkAllExchanges } from './reachability.js';
 import { json } from './response.js';
 
-export const SERVICE_NAME = 'coin-radar-engine';
-export const PHASE = 0;
-export const VERSION = '0.1.0';
+// 주의: 이 파일(진입점)에서는 default 외의 값을 export 하지 않습니다.
+//       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
+const SERVICE_NAME = 'coin-radar-engine';
+const PHASE = 0;
+const VERSION = '0.1.0';
 
 const ENDPOINTS = {
   'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
