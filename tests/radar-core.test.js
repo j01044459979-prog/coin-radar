@@ -82,3 +82,32 @@ test('숫자 표시 형식', () => {
   assert.equal(C.fmtPct(-0.5), '-0.50%');
   assert.equal(C.esc('<b>"x"</b>'), '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
 });
+
+test('Binance 상태: 데이터 수신 중이면 실시간(초록)', () => {
+  const now = 1_000_000;
+  assert.deepEqual(C.binanceStatusView({ state: 'live', lastMsg: now - 1000 }, now), { text: 'Binance 실시간', level: 'ok' });
+  assert.equal(C.binanceStatusView({ state: 'live', lastMsg: now - 15000 }, now).level, 'warn');
+  assert.deepEqual(C.binanceStatusView({ state: 'connecting' }, now), { text: 'Binance 연결 중', level: 'warn' });
+  assert.equal(C.binanceStatusView({ state: 'reconnecting', retryAt: now + 3200 }, now).text, 'Binance 재연결 중 (4초 후)');
+  assert.equal(C.binanceStatusView({ state: 'error', retryAt: now + 1000 }, now).level, 'err');
+});
+
+test('Upbit 상태는 Binance 와 별개로 판정', () => {
+  const now = 1_000_000;
+  assert.deepEqual(C.upbitStatusView({ state: 'ok', last: now - 1000 }, now), { text: 'Upbit 정상', level: 'ok' });
+  assert.equal(C.upbitStatusView({ state: 'ok', last: now - 100000 }, now).level, 'warn');
+  assert.deepEqual(C.upbitStatusView({ state: 'error' }, now), { text: 'Upbit 재시도 중', level: 'err' });
+  assert.deepEqual(C.upbitStatusView({ state: 'loading' }, now), { text: 'Upbit 불러오는 중', level: 'warn' });
+});
+
+test('버전: radar-core.js, index.html APP_VERSION, script ?v= 가 모두 같음 (캐시 섞임 방지)', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(C.VERSION, /^\d+\.\d+\.\d+$/);
+  assert.ok(html.includes(`const APP_VERSION = '${C.VERSION}'`), 'APP_VERSION 불일치');
+  assert.ok(html.includes(`assets/radar-core.js?v=${C.VERSION}"`), 'script ?v= 불일치');
+});
+
+test('처음 화면 문구에 거래소 이름 없는 "● 연결 중" 이 없음 (이전 버전 문구)', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(!html.includes('>● 연결 중<'));
+});

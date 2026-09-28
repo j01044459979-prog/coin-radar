@@ -1,9 +1,11 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>COIN RADAR V3</title>
 <style>:root{--bg:#061019;--p:#0d1a25;--p2:#09151f;--line:#203344;--t:#edf6ff;--m:#8ea7ba;--g:#42d486;--r:#ff6576;--y:#ffc857;--b:#66aaff}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#061019,#09151e);color:var(--t);font-family:system-ui,-apple-system,'Noto Sans KR',sans-serif}.w{max-width:1280px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center}.brand{font-size:25px;font-weight:950}.muted,.src{color:var(--m);font-size:12px}.live{padding:8px 11px;border:1px solid var(--line);border-radius:99px;color:var(--g);font-size:12px}.tabs{display:flex;gap:8px;overflow:auto;margin:15px 0}.tab{white-space:nowrap;padding:9px 12px;background:var(--p2);border:1px solid var(--line);border-radius:11px;font-size:12px}.tab.on{border-color:#49708d}.hero{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.card,.panel{background:rgba(13,26,37,.97);border:1px solid var(--line);border-radius:16px}.card{padding:12px}.sym{font-weight:900}.price{font-size:18px;font-weight:850;margin:5px 0}.up{color:var(--g)}.down{color:var(--r)}.layout{display:grid;grid-template-columns:1.45fr .75fr;gap:14px;margin-top:14px}.panel{padding:15px;margin-bottom:14px}h2{font-size:15px;margin:0 0 11px}.radar{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.signal{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px}.signal strong{font-size:17px}.pill{display:inline-block;font-size:11px;padding:4px 7px;border-radius:99px;margin-top:7px;background:#132534}.hot{color:var(--y)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 6px;border-bottom:1px solid #172836;text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--m)}.feed{display:flex;flex-direction:column;gap:8px}.feeditem{padding:11px;border-radius:12px;background:var(--p2);border:1px solid #1b2d3c}.feeditem b{display:block;margin-bottom:3px}.note{padding:11px;border-left:3px solid var(--b);background:#0a1722;border-radius:8px;font-size:12px;line-height:1.5}.controls{display:flex;gap:7px;margin-bottom:10px}.btn{border:1px solid var(--line);background:#0a1722;color:var(--t);padding:7px 10px;border-radius:9px;font-size:11px}.foot{margin-top:10px;color:var(--m);font-size:11px;line-height:1.5}@media(max-width:900px){.hero{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.radar{grid-template-columns:1fr}.w{padding:11px}.brand{font-size:21px}table{font-size:11px}}
 /* Phase 1 추가: 연결 상태 색상, 준비 중 표시 */
-.live.warn{color:var(--y)}.live.err{color:var(--r)}.tab{cursor:pointer}.tab.soon,.btn:disabled{opacity:.45;cursor:not-allowed}.soonbadge{font-size:10px;color:var(--m);margin-left:4px}@media(max-width:900px){.top{align-items:flex-start}.live{font-size:11px;padding:7px 9px;text-align:right}}</style></head><body><div class="w">
-<div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="live warn" role="status" aria-live="polite">● 연결 중</div></div>
-<div class="tabs"><div class="tab on" data-go="top">🔥 전체 레이더</div><div class="tab" data-go="binancePanel">🌎 Binance</div><div class="tab" data-go="upbitPanel">🇰🇷 Upbit</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
+.live.warn{color:var(--y)}.live.err{color:var(--r)}.tab{cursor:pointer}.tab.soon,.btn:disabled{opacity:.45;cursor:not-allowed}.soonbadge{font-size:10px;color:var(--m);margin-left:4px}@media(max-width:900px){.top{align-items:flex-start}.live{font-size:11px;padding:7px 9px;text-align:right}}
+/* Phase 1.1: 거래소별 상태, 선택된 탭, 고정 탭, 이동한 패널 강조 */
+.conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}</style></head><body><div class="w" id="top">
+<div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="conns" role="status" aria-live="polite"><span id="binanceStatus" class="live warn" data-level="warn">● Binance 연결 중</span><span id="upbitStatus" class="live warn" data-level="warn">● Upbit 불러오는 중</span></div></div>
+<div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
 <div id="hero" class="hero"><div class="card">데이터 로딩...</div></div>
 <div id="updated" class="src" style="margin-top:8px">Binance 연결 대기 중</div>
 <div class="layout"><main>
@@ -18,15 +20,17 @@
 <div class="panel"><h2>🧠 종합 감지 규칙</h2><div class="note">V3는 <b>시장 이상징후 + 정보원 교차검증</b>을 중심으로 구성합니다. 이후 뉴스·Telegram·X가 붙으면 거래량/가격 변화와 같은 시간대에 발생한 정보만 한 사건으로 묶습니다.</div></div>
 <div class="panel"><h2>📡 등록 정보원 · V3 <span class="soonbadge">연동 예정</span></h2><div class="feed"><div class="feeditem"><b>🇰🇷 BlockMedia</b><span class="src">국내 뉴스 · 중요도 높음 · 교차검증 대상</span></div><div class="feeditem"><b>WeCryptoTogether</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>CEN · emperorcoin</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>취미생활방</b><span class="src">Telegram · 국내 반응</span></div><div class="feeditem"><b>🇰🇷 국내 코인 커뮤니티</b><span class="src">언급량/심리 감지용</span></div><div class="feeditem"><b>𝕏 Crypto Radar</b><span class="src">공식계정 + 주요 계정 · 다음 단계</span></div></div></div>
 <div class="panel"><h2>🎯 신호 판정 방식</h2><div class="note">한 출처의 글만으로 판단하지 않습니다.<br>① 가격/거래량 이상징후<br>② 공식 발표 여부<br>③ 뉴스 교차확인<br>④ Telegram/X/커뮤니티 확산<br>⑤ 같은 시간대 발생 여부를 묶어 보여주는 구조입니다.</div></div><div class="panel"><h2>🤖 AI 브리핑 <span class="soonbadge">준비 중</span></h2><div class="feeditem"><b>준비 중</b><span class="src">AI 요약은 실제 데이터 검증 구조가 갖춰진 뒤 추가됩니다. 지금은 어떤 요약도 생성하지 않습니다.</span></div><div class="foot">정보 제공용 화면입니다. 특정 코인의 매수·매도를 자동 실행하지 않습니다.</div></div>
-</aside></div></div>
-<script src="assets/radar-core.js"></script>
+</aside></div><div id="appVersion" class="ver">COIN RADAR</div></div>
+<script src="assets/radar-core.js?v=1.1.0"></script>
 <script>
 (function () {
   'use strict';
+  const APP_VERSION = '1.1.0'; // assets/radar-core.js 의 VERSION, script ?v= 와 같게 유지
   const C = window.RadarCore;
   const $ = (id) => document.getElementById(id);
   // 주의: window.status 등 전역 이름과 충돌하지 않도록 요소는 항상 getElementById 로 가져옵니다.
-  const el = { conn: $('connStatus'), hero: $('hero'), updated: $('updated'), signals: $('signals'), binance: $('binanceBody'), upbit: $('upbitBody') };
+  const el = { binanceStatus: $('binanceStatus'), upbitStatus: $('upbitStatus'), hero: $('hero'), updated: $('updated'), signals: $('signals'), binance: $('binanceBody'), upbit: $('upbitBody'), version: $('appVersion') };
+  const CONNECT_TIMEOUT_MS = 10000; // 연결 시도가 10초 안에 열리지 않으면 재연결
 
   const tickers = new Map(); // symbol -> 최신 Binance 시세 (실제 API 값만 저장)
   const state = {
@@ -42,17 +46,17 @@
   const cls = (v) => (v === null ? '' : v >= 0 ? 'up' : 'down');
 
   // ── 연결 상태 표시 ──────────────────────────────
+  // Binance 와 Upbit 상태를 각각 따로 표시합니다 (한쪽 문제가 다른 쪽 색을 바꾸지 않음)
+  function paintStatus(node, view) {
+    node.textContent = '● ' + view.text;
+    node.className = 'live ' + view.level;
+    node.dataset.level = view.level;
+  }
+
   function renderStatus() {
-    const b = {
-      connecting: 'Binance 연결 중',
-      live: 'Binance 실시간',
-      reconnecting: `Binance 재연결 중${state.binanceRetryAt ? ' (' + Math.max(0, Math.ceil((state.binanceRetryAt - Date.now()) / 1000)) + '초 후)' : ''}`,
-      error: `Binance 연결 실패 · 재시도${state.binanceRetryAt ? ' ' + Math.max(0, Math.ceil((state.binanceRetryAt - Date.now()) / 1000)) + '초 후' : ' 중'}`,
-    }[state.binance];
-    const u = { loading: 'Upbit 불러오는 중', ok: 'Upbit 정상', error: 'Upbit 재시도 중' }[state.upbit];
-    el.conn.textContent = `● ${b} · ${u}`;
-    const bad = state.binance === 'error' || state.upbit === 'error';
-    el.conn.className = 'live' + (state.binance === 'live' && state.upbit === 'ok' ? '' : bad ? ' err' : ' warn');
+    const now = Date.now();
+    paintStatus(el.binanceStatus, C.binanceStatusView({ state: state.binance, lastMsg: state.binanceLastMsg, retryAt: state.binanceRetryAt }, now));
+    paintStatus(el.upbitStatus, C.upbitStatusView({ state: state.upbit, last: state.upbitLast }, now));
     el.updated.textContent = `Binance 마지막 수신 ${timeStr(state.binanceLastMsg)} · Upbit 마지막 갱신 ${timeStr(state.upbitLast)}`;
   }
 
@@ -117,11 +121,12 @@
   }
 
   // ── Binance WebSocket (자동 재연결) ─────────────
-  let ws = null, attempt = 0, hostIdx = 0, retryTimer = null;
+  let ws = null, attempt = 0, hostIdx = 0, retryTimer = null, openTimer = null;
 
   function connect() {
     clearTimeout(retryTimer);
     retryTimer = null;
+    clearTimeout(openTimer);
     const url = C.buildStreamUrl(C.BINANCE_WS_HOSTS[hostIdx]);
     state.binance = attempt === 0 ? 'connecting' : 'reconnecting';
     state.binanceRetryAt = 0;
@@ -134,7 +139,16 @@
       return;
     }
     ws = sock;
+    // 연결 시도가 응답 없이 멈추면(CONNECTING 상태 유지) 끊고 다시 연결
+    openTimer = setTimeout(() => {
+      if (ws === sock && sock.readyState === WebSocket.CONNECTING) {
+        ws = null;
+        try { sock.close(); } catch (e) {}
+        scheduleReconnect();
+      }
+    }, CONNECT_TIMEOUT_MS);
     sock.onopen = () => {
+      clearTimeout(openTimer);
       if (ws !== sock) return;
       state.binanceLastMsg = Date.now(); // 감시 타이머 기준점
     };
@@ -153,6 +167,7 @@
     };
     sock.onclose = () => {
       if (ws !== sock) return;
+      clearTimeout(openTimer);
       ws = null;
       scheduleReconnect();
     };
@@ -213,14 +228,77 @@
     }
   }
 
-  // ── 탭: Binance/Upbit 은 해당 표로 이동, 나머지는 준비 중 ──
-  document.querySelectorAll('.tab[data-go]').forEach((t) => {
-    t.addEventListener('click', () => {
-      const go = t.dataset.go;
-      if (go === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
-      else $(go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // ── 탭: 선택 상태 표시 + 해당 표로 이동, 나머지는 준비 중 ──
+  const navTabs = [...document.querySelectorAll('.tab[data-go]')];
+  let spyPausedUntil = 0;
+
+  let activeGo = 'top';
+  function setActiveTab(go) {
+    if (go === activeGo) return;
+    activeGo = go;
+    navTabs.forEach((t) => {
+      const on = t.dataset.go === go;
+      t.classList.toggle('on', on);
+      if (on) t.setAttribute('aria-current', 'true');
+      else t.removeAttribute('aria-current');
+    });
+    // 모바일: 선택된 탭이 탭 줄 밖에 있으면 탭 줄만 가로로 이동 (페이지 스크롤에는 영향 없음)
+    const box = $('tabs');
+    const cur = navTabs.find((t) => t.dataset.go === go);
+    if (cur && (cur.offsetLeft < box.scrollLeft || cur.offsetLeft + cur.offsetWidth > box.scrollLeft + box.clientWidth)) {
+      box.scrollLeft = Math.max(0, cur.offsetLeft - 8);
+    }
+  }
+
+  function goTo(go) {
+    setActiveTab(go);
+    spyPausedUntil = Date.now() + 1200; // 부드러운 스크롤 중에는 자동 선택을 잠시 멈춤
+    if (go === 'top') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    const target = $(go);
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target.classList.add('flash');
+    setTimeout(() => target.classList.remove('flash'), 1400);
+  }
+
+  navTabs.forEach((t) => {
+    t.addEventListener('click', () => goTo(t.dataset.go));
+    t.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goTo(t.dataset.go); }
     });
   });
+
+  // 스크롤 위치에 맞춰 선택 탭 자동 변경
+  function sectionInView() {
+    const line = $('tabs').getBoundingClientRect().bottom + 24;
+    const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+    for (const go of ['upbitPanel', 'binancePanel']) {
+      const r = $(go).getBoundingClientRect();
+      if (r.top <= line && r.bottom > line) return go;
+      if (atBottom && r.top < window.innerHeight && r.bottom > line) return go;
+    }
+    return 'top';
+  }
+  let spyQueued = false;
+  window.addEventListener('scroll', () => {
+    if (spyQueued) return;
+    spyQueued = true;
+    requestAnimationFrame(() => {
+      spyQueued = false;
+      if (Date.now() < spyPausedUntil) return;
+      setActiveTab(sectionInView());
+    });
+  }, { passive: true });
+
+  // ── 버전 표시 (화면과 radar-core.js 버전이 다르면 캐시 문제 안내) ──
+  if (C.VERSION === APP_VERSION) {
+    el.version.textContent = `COIN RADAR v${APP_VERSION}`;
+  } else {
+    el.version.textContent = `COIN RADAR v${APP_VERSION} · 구성 파일 v${C.VERSION || '?'} — 새로고침이 필요합니다`;
+    el.version.classList.add('warn');
+  }
 
   // ── 시작 ────────────────────────────────────────
   renderHero();
