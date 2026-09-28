@@ -1,0 +1,16 @@
+{
+  "name": "coin-radar-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "COIN RADAR backend (Cloudflare Worker) - Phase 0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
