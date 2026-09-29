@@ -73,7 +73,41 @@ function klineRows(symbol, limit, startTime, mode) {
   return mode === 'short' ? rows.slice(-4) : rows;
 }
 
-async function openPage({ upbitFail = false, viewport, initScript, wsMessages, klines = 'full', context } = {}) {
+// 테스트용 Binance 선물 응답 (fapi). APTUSDT 는 선물 계약 없음, SOLUSDT 는 최근 OI 10% 증가
+const FUT_MISSING = 'APTUSDT';
+const fundingOf = { BTCUSDT: '0.00012500', ETHUSDT: '-0.00018000' };
+function futuresRoute(mode, counter) {
+  return (r) => {
+    counter.n += 1;
+    const cors = { 'access-control-allow-origin': '*' };
+    if (mode === 'fail') return r.fulfill({ status: 500, body: 'x', headers: cors });
+    if (mode === 'ratelimit') return r.fulfill({ status: 429, body: 'x', headers: { ...cors, 'retry-after': '120' } });
+    const u = new URL(r.request().url());
+    const sym = u.searchParams.get('symbol');
+    const now = Date.now();
+    const prem = (s) => ({ symbol: s, markPrice: '100.0', indexPrice: '100.0', lastFundingRate: fundingOf[s] || '0.00010000', nextFundingTime: Math.ceil(now / 28800000) * 28800000, time: now });
+    if (u.pathname === '/fapi/v1/premiumIndex') {
+      if (sym) return r.fulfill({ json: prem(sym), headers: cors });
+      const all = SYMS.map((b) => b + 'USDT').filter((s) => s !== FUT_MISSING).map(prem);
+      all.push(prem('BTCUSDT_261226'));
+      return r.fulfill({ json: all, headers: cors });
+    }
+    const oiNow = sym === 'SOLUSDT' ? 1100 : 1000;
+    if (u.pathname === '/fapi/v1/openInterest') return r.fulfill({ json: { symbol: sym, openInterest: String(oiNow), time: now }, headers: cors });
+    if (u.pathname === '/futures/data/openInterestHist') {
+      const f5 = Math.floor(now / 300000) * 300000;
+      const list = [];
+      for (let k = 12; k >= 0; k -= 1) {
+        const oi = sym === 'SOLUSDT' && k < 2 ? 1100 : 1000;
+        list.push({ symbol: sym, sumOpenInterest: String(oi), sumOpenInterestValue: String(oi * 100), timestamp: f5 - k * 300000 });
+      }
+      return r.fulfill({ json: list, headers: cors });
+    }
+    return r.fulfill({ status: 404, body: 'x', headers: cors });
+  };
+}
+
+async function openPage({ upbitFail = false, viewport, initScript, wsMessages, klines = 'full', context, futures = 'ok' } = {}) {
   const page = context ? await context.newPage() : await browser.newPage(viewport ? { viewport } : {});
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -90,6 +124,8 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages, k
     const json = klineRows(u.searchParams.get('symbol'), Number(u.searchParams.get('limit')), Number(u.searchParams.get('startTime')) || 0, klines);
     return r.fulfill({ json, headers: { 'access-control-allow-origin': '*' } });
   });
+  const futCalls = { n: 0 };
+  await page.route(/fapi\.binance\.com/, futuresRoute(futures, futCalls));
   await page.route(/binance\.(com|vision)\/api\/v3\/ticker\/24hr/, (r) => r.fulfill({ json: rest24h, headers: { 'access-control-allow-origin': '*' } }));
   await page.route(/api\.upbit\.com/, (r) => {
     if (upbitFail) return r.fulfill({ status: 500, body: 'x', headers: { 'access-control-allow-origin': '*' } });
@@ -97,7 +133,7 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages, k
     return r.fulfill({ json, headers: { 'access-control-allow-origin': '*' } });
   });
   await page.goto(base);
-  return { page, errors, sockets };
+  return { page, errors, sockets, futCalls };
 }
 
 test('실시간 시세·상태 표시, 준비 중 기능 비활성', async () => {
@@ -387,6 +423,100 @@ test('모바일: 레이더 버튼·카드 표시, 가로 스크롤 없음', asyn
     await page.$eval('#radarPanel', (n) => n.scrollIntoView());
     await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-radar.png') });
   }
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// ── Phase 5 선물 레이더 화면 테스트 (Binance 선물 응답은 테스트용 고정값) ──
+
+test('선물 탭·카드: OI 금액·변화, Funding, 가격·OI 조합, 활동도 순 정렬, 선물 없는 종목 표시', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.getElementById('futStatus').textContent === '● 선물 정상');
+  await page.waitForFunction(() => /가격↑ · OI↑/.test(document.getElementById('futCards').textContent));
+  assert.equal(await page.locator('.tab[data-go="futuresPanel"]').count(), 1);
+  await page.click('.tab[data-go="futuresPanel"]');
+  assert.deepEqual(await page.$$eval('.tab.on', (ns) => ns.map((n) => n.dataset.go)), ['futuresPanel']);
+
+  const first = page.locator('#futCards .fcard').first();
+  assert.equal(await first.getAttribute('data-symbol'), 'SOLUSDT'); // 활동도 가장 높음
+  const sol = await first.textContent();
+  assert.match(sol, /선물시장 활동도 69/);
+  assert.match(sol, /가격↑ · OI↑/);
+  assert.match(sol, /OI 급증/);
+  assert.match(sol, /\$110\.0K/); // 1100 × Mark 100
+  assert.match(sol, /\+10\.00%/); // 15분 OI
+  assert.match(sol, /현물 15분\+3\.00%/);
+  const btc = await page.textContent('#futCards [data-symbol="BTCUSDT"]');
+  assert.match(btc, /\+0\.0125%/);
+  assert.match(btc, /양수 펀딩/);
+  assert.match(await page.textContent('#futCards [data-symbol="ETHUSDT"]'), /-0\.0180%\s*음수 펀딩/);
+  assert.match(await page.textContent('#futInfo'), /선물 없음: APT/);
+  assert.match(await page.textContent('#futCards'), /갱신 \d/);
+  assert.doesNotMatch(await page.textContent('#futuresPanel'), /매수|매도|롱|숏|진입/);
+  assert.match(await page.textContent('#appVersion'), /v1\.3\.0/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('선물 API 실패: 선물만 재연결 표시, 현물·Upbit 는 정상, 재시도는 천천히(backoff)', async () => {
+  const { page, errors, futCalls } = await openPage({ futures: 'fail' });
+  await page.waitForFunction(() => /선물 재연결 중/.test(document.getElementById('futStatus').textContent));
+  await page.waitForFunction(() => document.getElementById('binanceStatus').textContent === '● Binance 실시간');
+  await page.waitForFunction(() => document.getElementById('upbitStatus').textContent === '● Upbit 정상');
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  assert.match(await page.textContent('#futCards'), /선물 데이터를 받지 못했습니다/);
+  assert.equal(await page.getAttribute('#futStatus', 'data-level'), 'err');
+  const before = futCalls.n;
+  await page.waitForTimeout(3000);
+  assert.equal(futCalls.n, before); // 5초 이내 재요청 없음
+  await page.waitForFunction((b) => document.getElementById('futStatus').textContent.includes('재연결') && true, before);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('선물 API 429(요청 제한): Retry-After 만큼 기다림', async () => {
+  const { page, errors } = await openPage({ futures: 'ratelimit' });
+  await page.waitForFunction(() => /선물 재연결 중 \((11\d|120)초 후\)/.test(document.getElementById('futStatus').textContent));
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('localStorage 손상 데이터가 있어도 사이트·선물 레이더 정상', async () => {
+  const initScript = () => {
+    localStorage.setItem('coinradar.futures.v1', '{broken json');
+    localStorage.setItem('coinradar.candles.v1', 'garbage');
+    localStorage.setItem('coinradar.window', 'nan');
+  };
+  const { page, errors } = await openPage({ initScript });
+  await page.waitForFunction(() => document.getElementById('futStatus').textContent === '● 선물 정상');
+  await page.waitForFunction(() => document.querySelector('#futCards .fcard') && document.querySelector('#signals [data-symbol]'));
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('coinradar.futures.v1')));
+  assert.equal(saved.v, 1);
+  assert.ok(saved.s.SOLUSDT.length >= 2);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('모바일: 선물 카드 가로 스크롤 없음, 모바일 종목 수 10개', async () => {
+  const { page, errors } = await openPage({ viewport: { width: 390, height: 844 } });
+  await page.waitForFunction(() => /가격↑ · OI↑/.test(document.getElementById('futCards').textContent));
+  await page.click('.tab[data-go="futuresPanel"]');
+  await page.waitForTimeout(800);
+  assert.ok((await page.locator('#futCards .fcard').count()) <= 10);
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw, `scrollWidth ${sw} > innerWidth ${iw}`);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-futures.png') });
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('데스크톱: 선물 레이더 표시', async () => {
+  const { page, errors } = await openPage({ viewport: { width: 1280, height: 900 } });
+  await page.waitForFunction(() => /가격↑ · OI↑/.test(document.getElementById('futCards').textContent));
+  await page.$eval('#futuresPanel', (n) => n.scrollIntoView());
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'desktop-futures.png') });
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw);
   assert.deepEqual(errors, []);
   await page.close();
 });

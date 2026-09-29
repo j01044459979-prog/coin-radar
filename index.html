@@ -3,13 +3,14 @@
 /* Phase 1 추가: 연결 상태 색상, 준비 중 표시 */
 .live.warn{color:var(--y)}.live.err{color:var(--r)}.tab{cursor:pointer}.tab.soon,.btn:disabled{opacity:.45;cursor:not-allowed}.soonbadge{font-size:10px;color:var(--m);margin-left:4px}@media(max-width:900px){.top{align-items:flex-start}.live{font-size:11px;padding:7px 9px;text-align:right}}
 /* Phase 1.1: 거래소별 상태, 선택된 탭, 고정 탭, 이동한 패널 강조 */
-.conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}.winbtn{cursor:pointer}.winbtn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.signal .state{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;margin-left:4px;white-space:nowrap}.signal .why{margin-top:6px;line-height:1.45}.lv-overheat .state{background:#4a1520;color:#ffb3bc}.lv-alert .state{background:#4a3a12;color:var(--y)}.lv-active .state{background:#12304a;color:#9cc8ff}.signal.lv-overheat{border-color:#6a2430}.signal.lv-alert{border-color:#5a4a1f}.src.lv-overheat{color:#ff9aa6}.src.lv-alert{color:var(--y)}.src.lv-active{color:#9cc8ff}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}</style></head><body><div class="w" id="top">
+.conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}.winbtn{cursor:pointer}.winbtn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.signal .state{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;margin-left:4px;white-space:nowrap}.signal .why{margin-top:6px;line-height:1.45}.lv-overheat .state{background:#4a1520;color:#ffb3bc}.lv-alert .state{background:#4a3a12;color:var(--y)}.lv-active .state{background:#12304a;color:#9cc8ff}.signal.lv-overheat{border-color:#6a2430}.signal.lv-alert{border-color:#5a4a1f}.src.lv-overheat{color:#ff9aa6}.src.lv-alert{color:var(--y)}.src.lv-active{color:#9cc8ff}.fcard .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:8px}.fgrid div{font-size:12px;min-width:0}.fgrid span{display:block;color:var(--m);font-size:10.5px}.fgrid b{font-size:13px;overflow-wrap:anywhere}.fgrid i{font-style:normal}.fgrid small{color:var(--m);font-size:10.5px}.fcard.stale{opacity:.55}.fut-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}</style></head><body><div class="w" id="top">
 <div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="conns" role="status" aria-live="polite"><span id="binanceStatus" class="live warn" data-level="warn">● Binance 연결 중</span><span id="upbitStatus" class="live warn" data-level="warn">● Upbit 불러오는 중</span></div></div>
-<div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
+<div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab" data-go="futuresPanel" role="button" tabindex="0">📈 선물</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
 <div id="hero" class="hero"><div class="card">데이터 로딩...</div></div>
 <div id="updated" class="src" style="margin-top:8px">Binance 연결 대기 중</div>
 <div class="layout"><main>
 <div class="panel" id="radarPanel"><h2>🚨 지금 움직이는 코인 <span class="src">· Binance 1분봉 기준 단기 레이더</span></h2><div class="controls" role="group" aria-label="분석 구간"><button class="btn winbtn" data-win="1" aria-pressed="false">1분</button><button class="btn winbtn on" data-win="5" aria-pressed="true">5분</button><button class="btn winbtn" data-win="15" aria-pressed="false">15분</button></div><div id="radarInfo" class="src" style="margin-bottom:9px">데이터 준비 중</div><div id="signals" class="radar"><div class="signal">데이터를 모으는 중입니다.<div class="src">Binance 공식 1분봉을 기다리고 있습니다.</div></div></div><div class="foot">레이더 점수(0~100) = 가격 점수(최대 50: 변화율 ÷ 급변 기준, 2배 이상 만점) + 거래 점수(최대 50: 거래 활동 배수 1배=0점, 5배 이상 만점). 거래 활동 배수 = 현재 구간 거래대금 ÷ 직전 같은 길이 12개 구간 평균 거래대금. 급변 기준: 1분 ±0.5% · 5분 ±1.2% · 15분 ±2.0%. 상태는 데이터 상태 표시일 뿐 투자 권유가 아닙니다. 자세한 계산: docs/RADAR.md</div></div>
+<div class="panel" id="futuresPanel"><h2>📈 선물 레이더 <span class="src">· Binance USDⓈ-M 무기한 · OI · Funding</span></h2><div class="fut-head"><span id="futStatus" class="live warn" data-level="warn">● 선물 연결 중</span><span id="futInfo" class="src">선물 계약 목록을 불러오는 중</span></div><div id="futCards" class="radar"><div class="signal">선물 데이터를 불러오는 중<div class="src">데이터가 없을 때는 추정값을 표시하지 않습니다.</div></div></div><div class="foot">선물시장 활동도(0~100) = OI 15분 변화(40) + 현물 15분 가격 변화(20) + 거래 활동(20) + Funding 절대값(20). 점수가 높을수록 선물시장에서 강한 활동이 관측됐다는 뜻이며, 상승·하락 예측이나 매매 신호가 아닙니다. "가격↑ · OI↑" 같은 표시는 관측된 가격·미결제약정 방향의 조합일 뿐입니다. OI 변화율은 계약 수량 기준, OI 금액은 계약 수량 × Mark Price. 자세한 계산: docs/FUTURES-RADAR.md</div></div>
 <div class="panel"><h2>🛰️ 이벤트 센터</h2><div class="radar">
 <div class="signal"><span class="hot">🔥 거래량 이상</span><br><div id="volumeEvent"><strong>데이터 수집 중</strong><div class="src">선택 구간 기준 거래대금 3배 이상 종목</div></div></div>
 <div class="signal"><span class="hot">📰 뉴스 발생</span><br><strong>준비 중</strong><div class="src">BlockMedia · 공식 거래소/프로젝트 · 글로벌 뉴스</div></div>
@@ -21,14 +22,16 @@
 <div class="panel"><h2>📡 등록 정보원 · V3 <span class="soonbadge">연동 예정</span></h2><div class="feed"><div class="feeditem"><b>🇰🇷 BlockMedia</b><span class="src">국내 뉴스 · 중요도 높음 · 교차검증 대상</span></div><div class="feeditem"><b>WeCryptoTogether</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>CEN · emperorcoin</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>취미생활방</b><span class="src">Telegram · 국내 반응</span></div><div class="feeditem"><b>🇰🇷 국내 코인 커뮤니티</b><span class="src">언급량/심리 감지용</span></div><div class="feeditem"><b>𝕏 Crypto Radar</b><span class="src">공식계정 + 주요 계정 · 다음 단계</span></div></div></div>
 <div class="panel"><h2>🎯 신호 판정 방식</h2><div class="note">한 출처의 글만으로 판단하지 않습니다.<br>① 가격/거래량 이상징후<br>② 공식 발표 여부<br>③ 뉴스 교차확인<br>④ Telegram/X/커뮤니티 확산<br>⑤ 같은 시간대 발생 여부를 묶어 보여주는 구조입니다.</div></div><div class="panel"><h2>🤖 AI 브리핑 <span class="soonbadge">준비 중</span></h2><div class="feeditem"><b>준비 중</b><span class="src">AI 요약은 실제 데이터 검증 구조가 갖춰진 뒤 추가됩니다. 지금은 어떤 요약도 생성하지 않습니다.</span></div><div class="foot">정보 제공용 화면입니다. 특정 코인의 매수·매도를 자동 실행하지 않습니다.</div></div>
 </aside></div><div id="appVersion" class="ver">COIN RADAR</div></div>
-<script src="assets/radar-core.js?v=1.2.0"></script>
-<script src="assets/radar-engine.js?v=1.2.0"></script>
+<script src="assets/radar-core.js?v=1.3.0"></script>
+<script src="assets/radar-engine.js?v=1.3.0"></script>
+<script src="assets/futures-engine.js?v=1.3.0"></script>
 <script>
 (function () {
   'use strict';
-  const APP_VERSION = '1.2.0'; // assets/radar-core.js · radar-engine.js 의 VERSION, script ?v= 와 같게 유지
+  const APP_VERSION = '1.3.0'; // assets/radar-core.js · radar-engine.js · futures-engine.js 의 VERSION, script ?v= 와 같게 유지
   const C = window.RadarCore;
   const E = window.RadarEngine;
+  const F = window.FuturesEngine;
   const $ = (id) => document.getElementById(id);
   // 주의: window.status 등 전역 이름과 충돌하지 않도록 요소는 항상 getElementById 로 가져옵니다.
   const el = {
@@ -449,7 +452,7 @@
   function sectionInView() {
     const line = $('tabs').getBoundingClientRect().bottom + 24;
     const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
-    for (const go of ['upbitPanel', 'binancePanel']) {
+    for (const go of ['upbitPanel', 'binancePanel', 'futuresPanel']) {
       const r = $(go).getBoundingClientRect();
       if (r.top <= line && r.bottom > line) return go;
       if (atBottom && r.top < window.innerHeight && r.bottom > line) return go;
@@ -467,11 +470,167 @@
     });
   }, { passive: true });
 
+  // ── 선물 레이더 (Binance USDⓈ-M, 브라우저에서 공식 공개 API 직접 호출) ──
+  // Cloudflare Worker 는 Binance 에 접속이 차단(451/403)되므로 사용하지 않습니다. 선물은 현물·Upbit 와 독립적으로 동작합니다.
+  const FR = F.FUT_RULES;
+  const FUT_MAX = window.matchMedia && window.matchMedia('(max-width: 900px)').matches ? FR.maxSymbols.mobile : FR.maxSymbols.desktop;
+  const fut = {
+    state: 'connecting', // connecting | live | retrying | paused
+    lastOk: 0,
+    retryAt: 0,
+    failures: 0,
+    available: null, // 선물 계약이 있는 USDT 무기한 종목 Set
+    availableAt: 0,
+    symbols: [],
+    missing: [],
+    premium: new Map(), // symbol -> premiumIndex
+    updated: new Map(), // symbol -> 마지막 성공 시각
+    series: new Map(), // symbol -> OI 시계열
+    histAt: new Map(), // symbol -> 이력 요청 시각
+    timer: null,
+  };
+  el.futStatus = $('futStatus');
+  el.futInfo = $('futInfo');
+  el.futCards = $('futCards');
+
+  try {
+    const raw = safeStorage.get(F.STORAGE_KEY);
+    if (raw) fut.series = F.deserialize(JSON.parse(raw), Date.now());
+  } catch (e) { /* 손상된 저장 데이터는 무시하고 새로 수집 */ }
+  function saveFutures() {
+    const keep = new Map([...fut.series].filter(([s]) => fut.symbols.includes(s)));
+    safeStorage.set(F.STORAGE_KEY, JSON.stringify(F.serialize(keep, Date.now())));
+  }
+
+  class FutError extends Error {
+    constructor(status, retryAfter) { super('HTTP ' + status); this.status = status; this.retryAfter = retryAfter; }
+  }
+  async function futGet(path) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), FR.requestTimeoutMs);
+    try {
+      const r = await fetch(FR.base + path, { signal: ctrl.signal });
+      if (!r.ok) throw new FutError(r.status, r.headers.get('retry-after'));
+      return await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  async function pool(items, n, fn) {
+    const q = items.slice();
+    await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => { while (q.length) await fn(q.shift()); }));
+  }
+
+  async function futuresCycle() {
+    clearTimeout(fut.timer);
+    if (paused) {
+      fut.state = 'paused';
+      fut.timer = setTimeout(futuresCycle, 5000);
+      return;
+    }
+    let delay;
+    try {
+      const now = Date.now();
+      // 1) 선물 계약 목록 (1시간마다): 전체 premiumIndex 1회 → Funding 도 함께 갱신
+      if (!fut.available || now - fut.availableAt > FR.availabilityRefreshMs) {
+        const all = await futGet('/fapi/v1/premiumIndex');
+        fut.available = F.availableSymbols(all);
+        fut.availableAt = now;
+        for (const x of all) { const p = F.parsePremiumIndex(x); if (p) fut.premium.set(p.symbol, p); }
+      }
+      const pick = F.pickFuturesSymbols(universe, fut.available, FUT_MAX, C.WATCH);
+      fut.symbols = pick.symbols;
+      fut.missing = pick.missing;
+      // 2) 종목별 현재 OI + Funding, 3) 필요한 종목만 5분 OI 이력 (동시에 4개씩)
+      let ok = 0;
+      let lastErr = null;
+      await pool(fut.symbols, 4, async (sym) => {
+        try {
+          const [oiRaw, prRaw] = await Promise.all([futGet(`/fapi/v1/openInterest?symbol=${sym}`), futGet(`/fapi/v1/premiumIndex?symbol=${sym}`)]);
+          const t = Date.now();
+          const pr = F.parsePremiumIndex(prRaw);
+          const oi = F.parseOpenInterest(oiRaw);
+          if (!pr || !oi) throw new Error('형식 오류');
+          fut.premium.set(sym, pr);
+          let series = fut.series.get(sym) || [];
+          if (F.needsHistory(series, t) && !(t - (fut.histAt.get(sym) || 0) < 10 * 60000)) {
+            fut.histAt.set(sym, t);
+            const hist = F.parseOiHist(await futGet(`/futures/data/openInterestHist?symbol=${sym}&period=5m&limit=13`));
+            for (const p of hist) series = F.addPoint(series, p, t);
+          }
+          series = F.addPoint(series, { t: oi.t, oi: oi.oi, notional: oi.oi * pr.markPrice }, t);
+          fut.series.set(sym, series);
+          fut.updated.set(sym, t);
+          ok += 1;
+        } catch (e) {
+          lastErr = e;
+        }
+      });
+      if (!ok && fut.symbols.length) throw lastErr || new Error('선물 데이터 없음');
+      fut.state = 'live';
+      fut.lastOk = Date.now();
+      fut.failures = 0;
+      fut.retryAt = 0;
+      saveFutures();
+      delay = F.nextDelay(0);
+    } catch (e) {
+      fut.failures += 1;
+      fut.state = 'retrying';
+      delay = F.nextDelay(fut.failures, e ? F.retryAfterFor(e.status, e.retryAfter) : null);
+      fut.retryAt = Date.now() + delay;
+    }
+    renderFutures();
+    fut.timer = setTimeout(futuresCycle, delay);
+  }
+  window.addEventListener('online', () => { if (fut.state === 'retrying') futuresCycle(); });
+
+  const pctText = (v, d = 2) => (v === null || v === undefined ? '수집 중' : (v > 0 ? '+' : '') + v.toFixed(d) + '%');
+  const pctCls = (v) => (v === null || v === undefined ? '' : v > 0 ? 'up' : v < 0 ? 'down' : '');
+  const ago = (t, now) => {
+    const s = Math.max(0, Math.round((now - t) / 1000));
+    return s < 60 ? `${s}초 전` : `${Math.floor(s / 60)}분 전`;
+  };
+
+  function renderFutures() {
+    const now = Date.now();
+    paintStatus(el.futStatus, F.futuresStatusView(fut, now));
+    if (!fut.symbols.length) {
+      el.futInfo.textContent = fut.state === 'retrying' ? 'Binance 선물 API 연결을 다시 시도합니다. 현물·Upbit 레이더는 계속 동작합니다.' : '선물 계약 목록을 불러오는 중';
+      el.futCards.innerHTML = `<div class=signal>${fut.state === 'retrying' ? '선물 데이터를 받지 못했습니다' : '선물 데이터를 불러오는 중'}<div class=src>데이터가 없을 때는 추정값을 표시하지 않습니다.</div></div>`;
+      return;
+    }
+    const spotRows = E.analyze(candles, fut.symbols, 15, now).rows;
+    const spotOf = (s) => {
+      const r = spotRows.find((x) => x.symbol === s);
+      return r && r.metrics.status === 'ok' ? { changePct: r.metrics.changePct, ratio: r.metrics.ratio } : null;
+    };
+    const cards = fut.symbols.map((s) => F.evaluate(s, { series: fut.series.get(s), premium: fut.premium.get(s), updatedAt: fut.updated.get(s), spot: spotOf(s) }, now));
+    const ranked = F.rankCards(cards, [...C.WATCH, ...universe]);
+    el.futInfo.textContent = `Binance USDⓈ-M 무기한 · 감시 ${fut.symbols.length}종목 · 1분마다 갱신` + (fut.missing.length ? ` · 선물 없음: ${fut.missing.map((s) => s.replace(/USDT$/, '')).join(', ')}` : '');
+    el.futCards.innerHTML = ranked.map((c, i) => {
+      const lv = c.stale || !c.score ? 'lv-observe' : c.score.score >= 70 ? 'lv-alert' : c.score.score >= 40 ? 'lv-active' : 'lv-observe';
+      const scoreText = c.stale ? '—' : c.score ? c.score.score : '수집 중';
+      const tip = c.score ? `OI ${c.score.parts.oi} + 가격 ${c.score.parts.price} + 거래 ${c.score.parts.volume} + Funding ${c.score.parts.funding}${c.score.incomplete ? ' (일부 데이터 수집 중)' : ''}` : '15분 OI 변화 수집 중';
+      const fresh = c.updatedAt ? `${timeStr(c.updatedAt)} (${ago(c.updatedAt, now)})` : '—';
+      return `<div class="signal fcard ${lv}${c.stale ? ' stale' : ''}" data-symbol="${C.esc(c.symbol)}">`
+        + `<div class=src>#${i + 1} · 선물시장 활동도 <b title="${tip}">${scoreText}</b></div>`
+        + `<strong>${base(c.symbol)}</strong> <span class=state>${c.stale ? '⚠️ 데이터 지연' : C.esc(c.combo || c.oiState.label)}</span>`
+        + `<div class=fgrid>`
+        + `<div><span>가격(Mark)</span><b>${c.markPrice ? '$' + C.fmtPrice(c.markPrice) : '—'}</b></div>`
+        + `<div><span>현물 15분</span><b class="${pctCls(c.price15)}">${pctText(c.price15)}</b></div>`
+        + `<div><span>OI</span><b>${c.notional ? '$' + C.fmtCompact(c.notional) : '—'}</b></div>`
+        + `<div><span>OI 5분 / 15분</span><b><i class="${pctCls(c.oi5)}">${pctText(c.oi5)}</i> / <i class="${pctCls(c.oi15)}">${pctText(c.oi15)}</i></b></div>`
+        + `<div><span>Funding</span><b class="${pctCls(c.fundingPct)}">${c.fundingPct === null ? '—' : (c.fundingPct > 0 ? '+' : '') + c.fundingPct.toFixed(4) + '%'}</b> <small>${C.esc(c.funding.label)}</small></div>`
+        + `<div><span>다음 Funding</span><b>${c.nextFundingTime ? hm(c.nextFundingTime) : '—'}</b></div>`
+        + `</div><div class="src why">${C.esc(c.oiState.label)} · OI 1시간 ${pctText(c.oi60)} · 갱신 ${fresh}</div></div>`;
+    }).join('');
+  }
+
   // ── 버전 표시 (화면과 구성 파일 버전이 다르면 캐시 문제 안내) ──
-  if (C.VERSION === APP_VERSION && E.VERSION === APP_VERSION) {
+  if (C.VERSION === APP_VERSION && E.VERSION === APP_VERSION && F && F.VERSION === APP_VERSION) {
     el.version.textContent = `COIN RADAR v${APP_VERSION}`;
   } else {
-    el.version.textContent = `COIN RADAR v${APP_VERSION} · 구성 파일 v${C.VERSION || '?'}/${E.VERSION || '?'} — 새로고침이 필요합니다`;
+    el.version.textContent = `COIN RADAR v${APP_VERSION} · 구성 파일 v${C.VERSION || '?'}/${E.VERSION || '?'}/${(F && F.VERSION) || '?'} — 새로고침이 필요합니다`;
     el.version.classList.add('warn');
   }
 
@@ -483,11 +642,13 @@
   (async () => {
     await loadBinanceSnapshot(); // 실패하면 기본 6종목으로 감시
     connect();
+    futuresCycle(); // 선물 레이더 (현물 감시 종목 선택 뒤 시작, 실패해도 현물·Upbit 는 계속 동작)
   })();
   loadUpbit();
   setInterval(loadUpbit, 30000);
   setInterval(renderBinance, 1000); // 화면은 1초에 한 번만 다시 그림
   setInterval(renderStatus, 1000);
+  setInterval(renderFutures, 1000); // 선물: '몇 초 전' 표시와 지연 판정
   let lastMinute = 0;
   setInterval(() => {
     const minute = Math.floor(Date.now() / E.MIN);
