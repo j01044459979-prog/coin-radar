@@ -27,7 +27,7 @@ test('GET /api/health 는 status ok 를 돌려준다', async () => {
   const body = await res.json();
   assert.equal(body.status, 'ok');
   assert.equal(body.service, 'coin-radar-engine');
-  assert.equal(body.phase, 0);
+  assert.equal(body.phase, 4);
 });
 
 test('끝에 / 가 붙어도 동작한다', async () => {

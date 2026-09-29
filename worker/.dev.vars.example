@@ -1,9 +1,8 @@
-# 로컬 테스트용 비밀값 예시 파일입니다. (Phase 0에서는 필요한 비밀값이 없습니다)
-# 사용법: 이 파일을 복사해 같은 폴더에 ".dev.vars" 라는 이름으로 만든 뒤 실제 값을 넣으세요.
+# 로컬 테스트용 비밀값 예시 파일입니다. 실제 값은 절대 이 파일에 쓰지 마세요.
+# 사용법: 이 파일을 복사해 같은 폴더에 ".dev.vars" 라는 이름으로 만든 뒤 값을 넣으세요.
 #        ".dev.vars" 는 .gitignore 에 들어 있어서 GitHub에 올라가지 않습니다.
-# 실제 서버(Cloudflare)에서는 이 파일이 아니라 대시보드의 "Secret" 으로 등록합니다.
+# 실제 서버(Cloudflare)에서는 이 파일이 아니라 대시보드의 "Secret" 으로 등록합니다. (docs/MONITOR.md)
 #
-# 앞으로 추가될 예시 (지금은 비워 두세요):
 # TELEGRAM_BOT_TOKEN=
 # TELEGRAM_CHAT_ID=
 # ADMIN_TOKEN=
