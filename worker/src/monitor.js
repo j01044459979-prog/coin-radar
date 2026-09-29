@@ -3,7 +3,7 @@ import { ALERT, STABLE_BASES, readConfig } from './config.js';
 import { fetchKrwTickers, fetchCandles } from './upbit.js';
 import { analyzeMarket, bestPerMarket, pickMarkets } from './monitor-engine.js';
 import { isEvent, decideAlerts, formatAlertMessage } from './alerts.js';
-import { sendTelegram } from './telegram.js';
+import { sendKakaoMemo, maintainTokens, kakaoStatus } from './kakao.js';
 import * as store from './store.js';
 
 // D1 이 없을 때를 위한 같은 인스턴스 안의 마지막 실행 기록 (재시작되면 사라짐)
@@ -49,12 +49,20 @@ export async function runMonitor(env, now, options = {}) {
       await store.saveEvents(db, events, now);
     }
 
-    // ── Telegram: 중요 이벤트만, 중복/쿨다운 확인 ──
+    // ── 카카오톡: 중요 이벤트만, 중복/쿨다운 확인 ──
     if (!notify) {
       run.notes.push('미리보기 실행: 알림 없음');
     } else if (!db) {
-      run.notes.push('D1 미설정: 중복 알림 방지 기록을 저장할 수 없어 Telegram 알림을 보내지 않습니다');
+      run.notes.push('D1 미설정: 중복 알림 방지 기록을 저장할 수 없어 카카오톡 알림을 보내지 않습니다');
     } else {
+      // Access Token 이 곧 만료되면 미리 갱신 (Refresh Token 도 자동 연장)
+      try {
+        const m = await maintainTokens(env, db, now, fetchImpl);
+        if (m && m.ok === false) run.notes.push('카카오 토큰 갱신 실패: ' + m.error);
+      } catch (err) {
+        run.notes.push('카카오 토큰 갱신 오류');
+      }
+      const kakao = await kakaoStatus(env, db, now);
       const keys = best.map((r) => `${r.market}|${r.window}|${r.metrics.windowEnd}`);
       const history = await store.loadAlertHistory(db, now, ALERT.cooldownMinutes, keys);
       const decisions = decideAlerts(best, history, now);
@@ -63,11 +71,11 @@ export async function runMonitor(env, now, options = {}) {
           run.alerts.push({ market: d.row.market, window: d.row.window, action: 'skip', why: d.why });
           continue;
         }
-        if (!cfg.telegramConfigured) {
-          run.alerts.push({ market: d.row.market, window: d.row.window, action: 'skip', why: 'Telegram Secret 미설정' });
+        if (!kakao.ready) {
+          run.alerts.push({ market: d.row.market, window: d.row.window, action: 'skip', why: cfg.kakaoConfigured ? '카카오 미연결 (/kakao/setup 에서 연결)' : 'Kakao Secret 미설정' });
           continue;
         }
-        const res = await sendTelegram(env, formatAlertMessage(d.row, now, { escalation: d.escalation }), fetchImpl);
+        const res = await sendKakaoMemo(env, db, formatAlertMessage(d.row, now, { escalation: d.escalation }), now, fetchImpl);
         await store.saveAlert(db, d.row, d.key, res.ok ? 'sent' : 'failed', res.ok ? d.reason : res.reason, now);
         if (res.ok) run.alertsSent += 1;
         run.alerts.push({ market: d.row.market, window: d.row.window, action: res.ok ? 'sent' : 'failed', why: res.ok ? d.reason : res.reason });
@@ -102,7 +110,7 @@ export async function monitorStatus(env, now) {
     cron: { schedule: '* * * * * (1분마다)', last_run_at: null, last_run_kst: null, seconds_since_last_run: null, healthy: false, last_ok_at: null, source: null },
     markets_watched: null,
     markets_setting: cfg.markets,
-    telegram: { configured: cfg.telegramConfigured, ready: cfg.telegramConfigured && cfg.d1Configured },
+    kakao: { configured: cfg.kakaoConfigured, ready: false },
     d1: { configured: cfg.d1Configured },
     latest_ranking: [],
     recent_events: [],
@@ -121,17 +129,19 @@ export async function monitorStatus(env, now) {
       out.cron.last_ok_at = s.lastOkAt;
       out.recent_events = s.events.map((e) => ({ detected_at: e.detected_at, market: e.market, window: e.win, change_pct: e.change_pct, ratio: e.ratio, score: e.score, labels: e.labels }));
       out.recent_alerts = s.alerts.map((a) => ({ created_at: a.created_at, market: a.market, window: a.win, score: a.score, status: a.status, reason: a.reason }));
+      out.kakao = await kakaoStatus(env, env.DB, now);
     } catch (err) {
       out.notes.push('D1 조회 실패: ' + String(err && err.message));
     }
   } else {
-    out.notes.push('D1 미설정: 실행 기록/이벤트를 저장하지 않으며 Telegram 알림도 보내지 않습니다 (docs/MONITOR.md 참고)');
+    out.notes.push('D1 미설정: 실행 기록/이벤트를 저장하지 않으며 카카오톡 알림도 보내지 않습니다 (docs/MONITOR.md 참고)');
     if (memory.lastRun) {
       run = memory.lastRun;
       out.cron.source = 'memory (이 인스턴스의 마지막 실행, 재시작 시 사라짐)';
     }
   }
-  if (!cfg.telegramConfigured) out.notes.push('Telegram Secret 미설정: 알림을 건너뜁니다');
+  if (!cfg.kakaoConfigured) out.notes.push('Kakao Secret(KAKAO_REST_API_KEY) 미설정: 알림을 건너뜁니다 (docs/KAKAO.md)');
+  else if (!out.kakao.ready) out.notes.push('카카오 계정 미연결: /kakao/setup 에서 한 번 연결해 주세요 (docs/KAKAO.md)');
   if (run) {
     const age = Math.round((now - run.startedAt) / 1000);
     out.cron.last_run_at = run.startedAt;

@@ -14,7 +14,7 @@ export const RULES = {
   score: { priceFullMult: 2, ratioFull: 5 },
 };
 
-// Telegram 알림 규칙 (중요 이벤트만)
+// 카카오톡 알림 규칙 (중요 이벤트만)
 export const ALERT = {
   minScore: 60, // 레이더 점수 60 이상일 때만 (과열은 항상 100점)
   surgeRatio: 5, // 거래 활동 5배 이상 = 급증
@@ -37,14 +37,14 @@ export const UPBIT = {
 export const STABLE_BASES = new Set(['USDT', 'USDC', 'USDS', 'USDE', 'DAI', 'TUSD', 'PYUSD', 'USD1', 'FDUSD']);
 
 export const DEFAULT_MARKETS = 15;
-// 무료 플랜 외부 요청 50개 제한: 종목당 2개 + 시세 목록 약 4개 + Telegram 최대 3개 ≤ 50
-export const MAX_MARKETS = 20;
+// 무료 플랜 외부 요청 50개 제한: 시세 목록 약 4개 + 종목당 2개 × 18 + 카카오(토큰 갱신 1 + 알림 3건 × 최대 3) 10개 ≤ 50
+export const MAX_MARKETS = 18;
 
 export function readConfig(env = {}) {
   const n = Number.parseInt(env.MONITOR_MARKETS, 10);
   return {
     markets: Number.isFinite(n) && n > 0 ? Math.min(n, MAX_MARKETS) : DEFAULT_MARKETS,
-    telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
+    kakaoConfigured: Boolean(env.KAKAO_REST_API_KEY),
     d1Configured: Boolean(env.DB && typeof env.DB.prepare === 'function'),
   };
 }

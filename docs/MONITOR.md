@@ -1,7 +1,7 @@
-# COIN RADAR 24시간 서버 감시 + Telegram 알림 (Phase 4)
+# COIN RADAR 24시간 서버 감시 + 카카오톡 알림 (Phase 4)
 
 사이트를 열어 두지 않아도 Cloudflare Worker 가 **1분마다** Upbit 원화시장을 확인하고,
-중요한 이상 움직임만 Telegram 으로 알립니다.
+중요한 이상 움직임만 **카카오톡 "나와의 채팅"** 으로 알립니다. (카카오 연결 방법: `docs/KAKAO.md`)
 
 > ⚠️ 알림은 **데이터 상태**일 뿐이며 투자 권유가 아닙니다. 매수·매도 등 어떤 행동도 추천하지 않습니다.
 >
@@ -14,7 +14,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 대상 | Upbit 원화(KRW) 마켓 중 24H 거래대금 상위 **15종목** (스테이블코인 제외, 설정으로 최대 20) |
+| 대상 | Upbit 원화(KRW) 마켓 중 24H 거래대금 상위 **15종목** (스테이블코인 제외, 설정으로 최대 18) |
 | 주기 | Cloudflare Cron Trigger `* * * * *` = **1분마다** (Cloudflare Cron 의 가장 짧은 주기) |
 | 계산 | 1분 / 5분 / 15분 구간 가격 변화율, 구간 거래대금, 평소 대비 거래 활동 배수, 상태, 레이더 점수 |
 | 데이터 | Upbit 공식 공개 API (API Key 불필요): `/v1/market/all`, `/v1/ticker`, `/v1/candles/minutes/1`, `/v1/candles/minutes/15` |
@@ -50,7 +50,7 @@ Cloudflare 공식 문서 기준 (Workers Free):
 | 제한 | 값 | 이 프로젝트 |
 |---|---|---|
 | Cron Trigger | 계정당 5개 | 1개 사용 (`* * * * *`) |
-| 외부 요청(subrequest) | 실행 1회당 50개 | Upbit 약 4개 + 종목당 2개 × 15 = 34개 + Telegram 최대 3개 |
+| 외부 요청(subrequest) | 실행 1회당 50개 | Upbit 약 4개 + 종목당 2개 × 15 = 34개 + 카카오(토큰 갱신·전송) 최대 10개 |
 | CPU 시간 | 실행 1회당 10ms | 필요한 캔들만 받아 계산량을 줄임 (1분봉 70개 + 15분봉 15개/종목) |
 | 요청 수 | 하루 10만 | Cron 1,440회/일 |
 | D1 쓰기 | 하루 10만 행 | 실행 기록 1,440행 + 이벤트/알림 (보통 수백 행) |
@@ -61,7 +61,7 @@ Cloudflare 공식 문서 기준 (Workers Free):
 
 ---
 
-## 3. Telegram 알림 조건 (중요 이벤트만)
+## 3. 카카오톡 알림 조건 (중요 이벤트만)
 
 종목마다 1분/5분/15분 중 **레이더 점수가 가장 높은 구간 하나**만 후보가 되고, 아래를 모두 통과해야 알림을 보냅니다.
 
@@ -85,18 +85,23 @@ Cloudflare 공식 문서 기준 (Workers Free):
 
 > 중복 방지 기록은 D1 에 저장합니다. **D1 이 없으면 알림을 보내지 않습니다** (도배 방지를 보장할 수 없기 때문).
 
-### 메시지 예시
+### 메시지 예시 (카카오톡 "나와의 채팅", 버튼: COIN RADAR 보기)
 
 ```
-🚨 COIN RADAR · Upbit 원화시장
-종목: SOL (KRW-SOL)
-시간 구간: 5분 (14:32~14:37 KST, 완료된 1분봉 기준)
-가격 변화율: +2.10%
-거래 활동: 3.8배 (현재 ₩32.0억 / 평소 ₩8.4억)
-상태: 가격 급변 + 거래량 이상
-레이더 점수: 79
-발생 시각: 2026-09-28 14:37:20 KST
-※ 데이터 상태 알림이며 투자 권유가 아닙니다.
+🚨 COIN RADAR
+SOL 가격 급변 + 거래량 이상 감지
+
+⏱ 5분 (14:32~14:37)
+💰 가격변동 +2.10%
+📊 거래활동 3.8배
+🎯 Radar Score 79
+
+상태
+⚡ 가격 급변
+⚠️ 거래량 이상
+
+🕒 09-28 14:37 KST · Upbit
+※ 투자 권유 아님
 ```
 
 ---
@@ -107,9 +112,10 @@ Cloudflare 공식 문서 기준 (Workers Free):
 |---|---|
 | `GET /api/health` | Worker 동작 여부 (기존) |
 | `GET /debug/reachability` | 거래소 접속 확인 (기존) |
-| `GET /api/monitor/status` | 최근 수집 시각, Cron 정상 여부(3분 이내 성공 실행), 감시 종목 수, 최근 순위, 최근 이벤트, 최근 알림, Telegram·D1 설정 여부 (Secret 값은 절대 표시하지 않음) |
+| `GET /api/monitor/status` | 최근 수집 시각, Cron 정상 여부(3분 이내 성공 실행), 감시 종목 수, 최근 순위, 최근 이벤트, 최근 알림, 카카오(configured·linked·ready, 토큰 만료 시각)·D1 설정 여부 (Secret 값은 절대 표시하지 않음) |
 | `GET /api/monitor/preview` | 지금 한 번 계산만 실행한 결과 (저장·알림 없음, 1분에 1회) |
-| `POST /api/admin/telegram-test` | Telegram 테스트 메시지 (ADMIN_TOKEN Secret 이 있을 때만 동작) |
+| `GET /kakao/setup` | 카카오 연결·테스트 페이지 (ADMIN_TOKEN 입력) |
+| `POST /api/admin/kakao-test` | 카카오톡 테스트 메시지 (`Authorization: Bearer <ADMIN_TOKEN>`) |
 
 ---
 
@@ -119,7 +125,7 @@ Cloudflare 공식 문서 기준 (Workers Free):
 
 ### 5-1. (필수 아님) 먼저 감시 계산만 확인
 
-PR 을 main 에 합치면 Cron 이 자동으로 동작합니다. D1·Telegram 없이도
+PR 을 main 에 합치면 Cron 이 자동으로 동작합니다. D1·카카오 연결 없이도
 `https://coin-radar-engine.<계정>.workers.dev/api/monitor/preview` 에서 계산 결과를 볼 수 있습니다.
 
 ### 5-2. D1 데이터베이스 만들기 (알림을 쓰려면 필요)
@@ -134,37 +140,9 @@ PR 을 main 에 합치면 Cron 이 자동으로 동작합니다. D1·Telegram �
 > ⚠️ 대시보드의 Bindings 화면에서만 D1 을 연결하면, 다음 GitHub 자동 배포 때 `wrangler.toml` 기준으로 덮어써져 사라질 수 있습니다.
 > 반드시 `wrangler.toml` 에 넣어 주세요.
 
-### 5-3. Telegram 봇 만들기
+### 5-3. 카카오톡 알림 연결
 
-1. Telegram 에서 **@BotFather** → `/newbot` → 이름 입력 → **봇 토큰** 받기 (누구에게도 보여주지 마세요)
-2. 만든 봇과 대화방을 열고 아무 메시지나 보내기
-3. 브라우저에서 `https://api.telegram.org/bot<봇토큰>/getUpdates` 를 열어 `"chat":{"id": 숫자` 의 숫자가 **Chat ID**
-   (이 주소는 토큰이 들어 있으니 다른 사람과 공유하거나 캡처하지 마세요)
-
-### 5-4. Secret 넣기 (가장 중요)
-
-Cloudflare 대시보드 → **Workers & Pages** → **coin-radar-engine** → **Settings** → **Variables and Secrets** → **Add**
-
-| Type | Variable name | Value |
-|---|---|---|
-| **Secret** | `TELEGRAM_BOT_TOKEN` | BotFather 가 준 토큰 |
-| **Secret** | `TELEGRAM_CHAT_ID` | getUpdates 에서 찾은 숫자 |
-| **Secret** (선택) | `ADMIN_TOKEN` | 테스트 메시지용으로 직접 만든 긴 임의 문자열 |
-
-- 반드시 Type 을 **Secret** 으로 선택하세요 (Text 가 아님). Secret 은 저장 후 다시 보이지 않으며 GitHub 배포로 지워지지 않습니다.
-- 토큰을 GitHub, 이슈, PR, 채팅, 스크린샷에 절대 올리지 마세요. 실수로 노출됐다면 @BotFather 에서 `/revoke` 로 즉시 폐기하고 새로 발급하세요.
-
-### 5-5. 확인
-
-1. `/api/monitor/status` 에서
-   - `cron.healthy: true`, `cron.source: "D1"`
-   - `d1.configured: true`
-   - `telegram.configured: true`, `telegram.ready: true`
-2. (선택) 테스트 메시지 — 터미널에서 (ADMIN_TOKEN 을 넣은 경우):
-   ```bash
-   curl -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" https://coin-radar-engine.<계정>.workers.dev/api/admin/telegram-test
-   ```
-3. 실제 알림은 조건을 만족하는 움직임이 있을 때만 옵니다. 조용한 시장에서는 몇 시간 동안 알림이 없을 수 있습니다.
+`docs/KAKAO.md` 를 따라 진행하세요. (카카오 앱 만들기 → Cloudflare Secret 3개 → `/kakao/setup` 에서 한 번 연결)
 
 ---
 
@@ -174,7 +152,8 @@ Cloudflare 대시보드 → **Workers & Pages** → **coin-radar-engine** → **
 |---|---|---|
 | `monitor_runs` | Cron 실행 시각, 성공 여부, 감시 종목 수, 오류, 상위 10개 결과 | 3일 |
 | `events` | 레이더 점수 50 이상 또는 거래량 이상/가격 급변/과열 이벤트 | 14일 |
-| `alerts` | Telegram 알림 기록 (`sent` / `failed`), `dedup_key` | 30일 |
+| `alerts` | 카카오톡 알림 기록 (`sent` / `failed`), `dedup_key` | 30일 |
+| `kakao_auth` | 카카오 Access/Refresh Token (**AES-GCM 암호화**), 만료 시각 | 계속 (자동 갱신) |
 
 캔들 원본은 저장하지 않습니다 (매 실행마다 Upbit 공식 API 에서 필요한 만큼 새로 받기 때문).
 오래된 기록은 매시 정각에 자동 삭제합니다. 스키마: `worker/migrations/0001_monitor.sql`

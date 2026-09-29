@@ -1,9 +1,8 @@
-// Telegram 알림 판정 / 메시지 / 전송 테스트
+// 알림 판정 / 카카오톡 메시지 테스트
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { importance, isEvent, decideAlerts, formatAlertMessage, dedupKey, kst, fmtKrw } from '../src/alerts.js';
 import { classify, radarScore } from '../src/monitor-engine.js';
-import { sendTelegram, telegramConfigured } from '../src/telegram.js';
 import { ALERT } from '../src/config.js';
 
 const MIN = 60000;
@@ -78,14 +77,21 @@ test('도배 방지: 한 번에 최대 3건, 1시간 최대 10건', () => {
   assert.match(busy[1].why, /1시간 최대/);
 });
 
-test('Telegram 메시지: 필수 정보 포함, 추천 표현 없음', () => {
+test('카카오톡 메시지: 필수 정보 포함, 200자 이내, 추천 표현 없음', () => {
   const r = row('KRW-SOL', 5, 2.1, 3.8, 32e8);
   const text = formatAlertMessage(r, NOW);
-  for (const s of ['COIN RADAR', '종목: SOL (KRW-SOL)', '시간 구간: 5분 (14:32~14:37 KST', '가격 변화율: +2.10%', '거래 활동: 3.8배 (현재 ₩32.0억 / 평소 ₩8.4억)', '상태: 가격 급변 + 거래량 이상', '레이더 점수: 79', '발생 시각: 2026-09-28 14:37:20 KST']) {
+  for (const s of ['🚨 COIN RADAR', 'SOL 가격 급변 + 거래량 이상 감지', '⏱ 5분 (14:32~14:37)', '💰 가격변동 +2.10%', '📊 거래활동 3.8배', '🎯 Radar Score 79', '상태\n⚡ 가격 급변\n⚠️ 거래량 이상', '🕒 09-28 14:37 KST · Upbit']) {
     assert.ok(text.includes(s), `메시지에 "${s}" 없음\n${text}`);
   }
+  assert.ok(text.length <= 200, `길이 ${text.length}`);
   assert.doesNotMatch(text, /매수|매도|롱|숏|buy|sell|long|short/i);
-  assert.match(formatAlertMessage(row('KRW-SOL', 5, 3, 6), NOW, { escalation: true }), /상태 상향/);
+  const hot = formatAlertMessage(row('KRW-SOL', 5, 3, 6), NOW, { escalation: true });
+  assert.match(hot, /COIN RADAR \(상태 상향\)\nSOL 과열 감지/);
+  assert.match(hot, /🔥 과열\n⚡ 가격 급변\n⚠️ 거래량 이상/);
+  assert.ok(hot.length <= 200);
+  // 가장 긴 경우(긴 종목명 + 모든 상태 + 평소 거래 없음)도 200자 이내
+  const worst = formatAlertMessage(row('KRW-ABCDEFGHIJ', 15, -12.34, null), NOW, { escalation: true });
+  assert.ok(worst.length <= 200, `길이 ${worst.length}`);
 });
 
 test('시간/금액 표시', () => {
@@ -93,28 +99,4 @@ test('시간/금액 표시', () => {
   assert.equal(fmtKrw(1.5e12), '₩1.50조');
   assert.equal(fmtKrw(3.2e9), '₩32.0억');
   assert.equal(fmtKrw(52e6), '₩5200만');
-});
-
-test('Telegram Secret 이 없으면 요청 없이 건너뜀', async () => {
-  let called = 0;
-  const f = async () => { called += 1; return new Response('{}'); };
-  assert.equal(telegramConfigured({}), false);
-  assert.equal(telegramConfigured({ TELEGRAM_BOT_TOKEN: 'x' }), false);
-  const r = await sendTelegram({ TELEGRAM_BOT_TOKEN: 'x' }, 'hi', f);
-  assert.deepEqual(r, { ok: false, skipped: true, reason: 'Telegram Secret 미설정' });
-  assert.equal(called, 0);
-});
-
-test('Telegram 전송 성공/실패 (실패 사유에 토큰이 들어가지 않음)', async () => {
-  const env = { TELEGRAM_BOT_TOKEN: 'TEST-TOKEN-NOT-REAL', TELEGRAM_CHAT_ID: '123' };
-  let req;
-  const ok = await sendTelegram(env, 'hello', async (url, init) => { req = { url, body: JSON.parse(init.body) }; return new Response('{"ok":true}'); });
-  assert.deepEqual(ok, { ok: true });
-  assert.equal(req.url, 'https://api.telegram.org/botTEST-TOKEN-NOT-REAL/sendMessage');
-  assert.deepEqual(req.body, { chat_id: '123', text: 'hello', disable_web_page_preview: true });
-  const bad = await sendTelegram(env, 'x', async () => new Response('unauthorized', { status: 401 }));
-  assert.equal(bad.ok, false);
-  assert.doesNotMatch(bad.reason, /TEST-TOKEN/);
-  const err = await sendTelegram(env, 'x', async () => { throw new Error('boom TEST-TOKEN-NOT-REAL'); });
-  assert.doesNotMatch(err.reason, /TEST-TOKEN/);
 });
