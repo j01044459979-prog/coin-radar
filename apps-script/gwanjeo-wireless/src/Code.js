@@ -8,8 +8,10 @@ const SPOT_HEADERS=[
 ];
 
 /*
- * 스팟완료 기록 (월별 장표와 분리된 별도 시트)
- * 스팟별 × 개통건별 완료 상태를 관리
+ * 스팟완료 기록 (월별 장표와 분리된 별도 시트, 연도 구분 없이 누적)
+ * 1행 = 스팟 1개 × 개통건 1건의 완료 상태
+ * 키 = 스팟ID + 개통월(yyyy-MM, 연도·월) + CTN(해당 월 개통건ID)
+ * 조회는 선택한 개통월 행만 찾아서 읽음 (전체 기록을 매번 읽지 않음)
  */
 const SPOT_DONE_SHEET='스팟완료기록';
 
@@ -1104,7 +1106,10 @@ function readSpots_(
   var list=[];
 
   var doneMap=
-    readSpotDoneMap_(ss);
+    readSpotDoneMap_(
+      ss,
+      onlyMonth
+    );
 
   rows.forEach(
     function(r,idx){
@@ -1909,7 +1914,95 @@ function spotDoneKey_(
   );
 }
 
-function readSpotDoneMap_(ss){
+/*
+ * 해당 개통월의 기록 행만 찾아서 반환
+ * 개통월 열(B)에서 월 값으로 위치를 찾은 뒤 그 구간만 읽음
+ * 반환: [{row, values}]
+ */
+function readSpotDoneRows_(
+  sh,
+  month
+){
+
+  var out=[];
+
+  if(
+    !sh||
+    sh.getLastRow()<2||
+    !month
+  ){
+    return out;
+  }
+
+  var found=
+    sh.getRange(
+      2,
+      2,
+      sh.getLastRow()-1,
+      1
+    )
+    .createTextFinder(
+      month
+    )
+    .matchEntireCell(true)
+    .findAll();
+
+  if(!found.length){
+    return out;
+  }
+
+  var rowNos=
+    found.map(
+      function(r){
+        return r.getRow();
+      }
+    );
+
+  var first=
+    Math.min.apply(
+      null,
+      rowNos
+    );
+
+  var last=
+    Math.max.apply(
+      null,
+      rowNos
+    );
+
+  sh.getRange(
+    first,
+    1,
+    last-first+1,
+    SPOT_DONE_HEADERS.length
+  )
+  .getValues()
+  .forEach(
+    function(r,i){
+
+      if(
+        monthKey(r[1])===month
+      ){
+
+        out.push({
+          row:first+i,
+          values:r
+        });
+      }
+    }
+  );
+
+  return out;
+}
+
+/*
+ * 선택한 개통월의 스팟완료 상태 맵
+ * key(스팟ID|개통월|CTN) → true
+ */
+function readSpotDoneMap_(
+  ss,
+  month
+){
 
   var map={};
 
@@ -1918,22 +2011,14 @@ function readSpotDoneMap_(ss){
       SPOT_DONE_SHEET
     );
 
-  if(
-    !sh||
-    sh.getLastRow()<2
-  ){
-    return map;
-  }
-
-  sh.getRange(
-    2,
-    1,
-    sh.getLastRow()-1,
-    SPOT_DONE_HEADERS.length
+  readSpotDoneRows_(
+    sh,
+    month
   )
-  .getValues()
   .forEach(
-    function(r){
+    function(x){
+
+      var r=x.values;
 
       var done=
         r[5]===true||
@@ -2087,36 +2172,31 @@ function setSpotCompletion(x){
 
     var row=0;
 
-    if(
-      sh.getLastRow()>=2
+    var monthRows=
+      readSpotDoneRows_(
+        sh,
+        month
+      );
+
+    for(
+      var i=0;
+      i<monthRows.length;
+      i++
     ){
 
-      var keys=
-        sh.getRange(
-          2,
-          1,
-          sh.getLastRow()-1,
-          3
-        )
-        .getValues();
+      var v=
+        monthRows[i].values;
 
-      for(
-        var i=0;
-        i<keys.length;
-        i++
+      if(
+        spotDoneKey_(
+          v[0],
+          monthKey(v[1]),
+          v[2]
+        )===key
       ){
 
-        if(
-          spotDoneKey_(
-            keys[i][0],
-            monthKey(keys[i][1]),
-            keys[i][2]
-          )===key
-        ){
-
-          row=i+2;
-          break;
-        }
+        row=monthRows[i].row;
+        break;
       }
     }
 
