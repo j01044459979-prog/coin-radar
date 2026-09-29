@@ -193,14 +193,14 @@ Binance는 일부 국가(예: 미국)에서의 접속을 막습니다. Cloudflar
 
 ## 6. 비밀값(Secret) 관리 규칙 — 앞으로 꼭 지킬 것
 
-Phase 0에는 비밀값이 없습니다. Phase 4(Telegram 알림)부터 필요하며, 실제 등록 방법은 `docs/MONITOR.md` 5장을 보세요.
+Phase 0에는 비밀값이 없습니다. Phase 4(카카오톡 알림)부터 필요하며, 실제 등록 방법은 `docs/KAKAO.md` 를 보세요.
 
 1. **비밀값(봇 토큰, API 키)은 절대로 GitHub 코드에 적지 않습니다.**
    - `wrangler.toml`, `src/*.js`, `index.html` 어디에도 적지 않습니다.
 2. 비밀값은 Cloudflare 대시보드에만 등록합니다.
    - coin-radar-engine → **Settings** → **Variables and Secrets** → **Add**
    - Type: **Secret** 선택 (Text 가 아니라 **Secret**)
-   - Variable name 예: `TELEGRAM_BOT_TOKEN`
+   - Variable name 예: `KAKAO_REST_API_KEY`
    - Value: 실제 토큰 붙여 넣기 → **Deploy** / **Save**
    - Secret 으로 저장하면 저장 후에는 다시 보이지 않습니다. 정상입니다.
 3. 컴퓨터에서 직접 테스트할 일이 생기면 `worker/.dev.vars.example` 을 복사해 `worker/.dev.vars` 를 만들고 그 안에만 적습니다.

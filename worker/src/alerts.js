@@ -1,4 +1,4 @@
-// Telegram 알림 판정 (순수 함수): 중요 이벤트 선별, cooldown, 중복 방지, 메시지 생성
+// 알림 판정 (순수 함수): 중요 이벤트 선별, cooldown, 중복 방지, 카카오톡 메시지 생성
 import { ALERT, MIN } from './config.js';
 import { LEVEL_RANK } from './monitor-engine.js';
 
@@ -7,7 +7,7 @@ export function isEvent(row) {
   return row.metrics.status === 'ok' && (row.score.score >= 50 || LEVEL_RANK[row.cls.level] >= LEVEL_RANK.alert);
 }
 
-// Telegram 으로 보낼 '중요 이벤트' 인지 판단. 반환 { important, reason }
+// 카카오톡으로 보낼 '중요 이벤트' 인지 판단. 반환 { important, reason }
 export function importance(row, cfg = ALERT) {
   const m = row.metrics;
   if (m.status !== 'ok') return { important: false, reason: '데이터 부족' };
@@ -76,19 +76,28 @@ export function fmtKrw(x) {
 }
 const pct = (x) => (x > 0 ? '+' : '') + x.toFixed(2) + '%';
 
+const STATE_ICON = { 과열: '🔥', '가격 급변': '⚡', '거래량 이상': '⚠️', '활동 증가': '📈', 관찰: '👀' };
+
+// 카카오톡 "나에게 보내기" 텍스트 메시지 (카카오 텍스트 템플릿 최대 200자 이내로 구성)
 export function formatAlertMessage(row, now, extra = {}) {
   const m = row.metrics;
   const coin = row.market.replace(/^KRW-/, '');
+  const labels = row.cls.labels;
+  const headline = labels.includes('과열') ? '과열' : labels.join(' + ');
   const lines = [
-    `🚨 COIN RADAR · Upbit 원화시장${extra.escalation ? ' (상태 상향)' : ''}`,
-    `종목: ${coin} (${row.market})`,
-    `시간 구간: ${m.window}분 (${hmKst(m.windowStart)}~${hmKst(m.windowEnd)} KST, 완료된 1분봉 기준)`,
-    `가격 변화율: ${pct(m.changePct)}`,
-    `거래 활동: ${m.ratio === null ? '평소 거래 없음' : m.ratio.toFixed(1) + '배'} (현재 ${fmtKrw(m.quoteVol)} / 평소 ${fmtKrw(m.baselineAvg)})`,
-    `상태: ${row.cls.labels.join(' + ')}`,
-    `레이더 점수: ${row.score.score}`,
-    `발생 시각: ${kst(now)} KST`,
-    '※ 데이터 상태 알림이며 투자 권유가 아닙니다.',
+    `🚨 COIN RADAR${extra.escalation ? ' (상태 상향)' : ''}`,
+    `${coin} ${headline} 감지`,
+    '',
+    `⏱ ${m.window}분 (${hmKst(m.windowStart)}~${hmKst(m.windowEnd)})`,
+    `💰 가격변동 ${pct(m.changePct)}`,
+    `📊 거래활동 ${m.ratio === null ? '평소 거래 없음' : m.ratio.toFixed(1) + '배'}`,
+    `🎯 Radar Score ${row.score.score}`,
+    '',
+    '상태',
+    ...labels.map((l) => `${STATE_ICON[l] || '•'} ${l}`),
+    '',
+    `🕒 ${kst(now, false).slice(5)} KST · Upbit`,
+    '※ 투자 권유 아님',
   ];
   return lines.join('\n');
 }
