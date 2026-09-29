@@ -1,0 +1,2722 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+  >
+
+  <style>
+    *{
+      box-sizing:border-box;
+    }
+
+    body{
+      margin:0;
+      background:#f4f6f9;
+      color:#111827;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        "Noto Sans KR",
+        Arial,
+        sans-serif;
+      padding-bottom:90px;
+    }
+
+    button,
+    input,
+    select,
+    textarea{
+      font:inherit;
+    }
+
+    button{
+      cursor:pointer;
+    }
+
+    .app{
+      width:100%;
+      max-width:760px;
+      margin:0 auto;
+      min-height:100vh;
+    }
+
+    .topbar{
+      position:sticky;
+      top:0;
+      z-index:50;
+      background:#ffffff;
+      border-bottom:1px solid #e5e7eb;
+      padding:14px 16px 12px;
+    }
+
+    .top-title{
+      font-size:20px;
+      font-weight:900;
+      line-height:1.2;
+      margin-bottom:10px;
+    }
+
+    .top-row{
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+
+    .top-row select{
+      flex:1;
+      min-width:0;
+      height:42px;
+      border:1px solid #d1d5db;
+      border-radius:12px;
+      background:#fff;
+      padding:0 12px;
+      font-weight:700;
+    }
+
+    .refresh-btn{
+      height:42px;
+      border:0;
+      border-radius:12px;
+      background:#111827;
+      color:#fff;
+      padding:0 15px;
+      font-weight:800;
+      white-space:nowrap;
+    }
+
+    .page{
+      display:none;
+      padding:16px;
+    }
+
+    .page.active{
+      display:block;
+    }
+
+    .section-title{
+      font-size:18px;
+      font-weight:900;
+      margin:0 0 12px;
+    }
+
+    .section-sub{
+      color:#6b7280;
+      font-size:13px;
+      line-height:1.5;
+      margin:-5px 0 14px;
+    }
+
+    .summary-grid{
+      display:grid;
+      grid-template-columns:
+        repeat(2,minmax(0,1fr));
+      gap:10px;
+      margin-bottom:16px;
+    }
+
+    .summary{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      padding:14px;
+      min-width:0;
+    }
+
+    .summary .label{
+      color:#6b7280;
+      font-size:12px;
+      font-weight:700;
+      margin-bottom:6px;
+    }
+
+    .summary .value{
+      font-size:20px;
+      font-weight:900;
+      overflow-wrap:anywhere;
+    }
+
+    .panel{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:18px;
+      padding:16px;
+      margin-bottom:14px;
+    }
+
+    .filter-row{
+      display:flex;
+      gap:8px;
+      margin-bottom:12px;
+    }
+
+    .filter-row select{
+      flex:1;
+      height:42px;
+      border:1px solid #d1d5db;
+      border-radius:12px;
+      background:#fff;
+      padding:0 12px;
+    }
+
+    .employee-list{
+      display:grid;
+      gap:10px;
+    }
+
+    .employee-card{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      padding:14px;
+    }
+
+    .employee-name{
+      font-size:16px;
+      font-weight:900;
+      margin-bottom:12px;
+    }
+
+    .mini-grid{
+      display:grid;
+      grid-template-columns:
+        repeat(3,minmax(0,1fr));
+      gap:8px;
+    }
+
+    .mini-stat{
+      background:#f8fafc;
+      border-radius:12px;
+      padding:10px 8px;
+      text-align:center;
+    }
+
+    .mini-stat .k{
+      font-size:11px;
+      color:#6b7280;
+      margin-bottom:4px;
+    }
+
+    .mini-stat .v{
+      font-size:17px;
+      font-weight:900;
+    }
+
+    .case-list{
+      display:grid;
+      gap:12px;
+    }
+
+    .case-card{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:18px;
+      padding:16px;
+    }
+
+    .case-head{
+      display:block;
+    }
+
+    .case-name{
+      font-size:17px;
+      font-weight:900;
+      margin-bottom:6px;
+    }
+
+    .case-sub{
+      color:#6b7280;
+      font-size:12px;
+      line-height:1.65;
+    }
+
+    .case-review-row{
+      margin-top:10px;
+    }
+
+    .review-badge{
+      display:inline-flex;
+      align-items:center;
+      min-height:28px;
+      padding:0 10px;
+      border-radius:999px;
+      background:#f3f4f6;
+      color:#6b7280;
+      font-size:12px;
+      font-weight:800;
+    }
+
+    .review-badge.done{
+      background:#dcfce7;
+      color:#166534;
+    }
+
+    .case-memo{
+      margin-top:10px;
+      padding:10px 12px;
+      border-radius:12px;
+      background:#f8fafc;
+      font-size:13px;
+      line-height:1.5;
+      word-break:break-word;
+    }
+
+    .case-memo.muted{
+      color:#9ca3af;
+    }
+
+    .case-money-grid{
+      display:grid;
+      grid-template-columns:
+        repeat(3,minmax(0,1fr));
+      gap:8px;
+      margin-top:14px;
+    }
+
+    .case-money-item{
+      background:#f8fafc;
+      border-radius:13px;
+      padding:11px 8px;
+      text-align:center;
+      min-width:0;
+    }
+
+    .case-money-label{
+      font-size:11px;
+      color:#6b7280;
+      margin-bottom:5px;
+    }
+
+    .case-money-value{
+      font-size:15px;
+      font-weight:900;
+      overflow-wrap:anywhere;
+    }
+
+    .case-money-value.remaining{
+      color:#166534;
+    }
+
+    .case-money-value.negative{
+      color:#dc2626;
+    }
+
+    .form-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+
+    .field{
+      min-width:0;
+    }
+
+    .field.full{
+      grid-column:1/-1;
+    }
+
+    .field label{
+      display:block;
+      font-size:12px;
+      color:#4b5563;
+      font-weight:800;
+      margin:0 0 6px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea{
+      width:100%;
+      border:1px solid #d1d5db;
+      border-radius:12px;
+      background:#fff;
+      padding:10px 12px;
+      outline:none;
+    }
+
+    .field input,
+    .field select{
+      height:44px;
+    }
+
+    .field textarea{
+      min-height:92px;
+      resize:vertical;
+    }
+
+    .primary-btn{
+      width:100%;
+      min-height:48px;
+      border:0;
+      border-radius:13px;
+      background:#111827;
+      color:#fff;
+      font-weight:900;
+      margin-top:12px;
+    }
+
+    .secondary-btn{
+      width:100%;
+      min-height:44px;
+      border:1px solid #d1d5db;
+      border-radius:13px;
+      background:#fff;
+      color:#111827;
+      font-weight:800;
+      margin-top:8px;
+    }
+
+    .spot-list{
+      display:grid;
+      gap:10px;
+      margin-top:14px;
+    }
+
+    .spot-card{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:16px;
+      padding:14px;
+    }
+
+    .spot-name{
+      font-weight:900;
+      font-size:16px;
+      margin-bottom:6px;
+    }
+
+    .spot-sub{
+      font-size:12px;
+      color:#6b7280;
+      line-height:1.6;
+    }
+
+    .spot-result{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:center;
+      margin-top:10px;
+      padding-top:10px;
+      border-top:1px solid #f0f0f0;
+    }
+
+    .spot-total{
+      font-weight:900;
+      font-size:17px;
+    }
+
+    .preview{
+      margin-top:12px;
+      padding:14px;
+      border-radius:14px;
+      background:#111827;
+      color:#fff;
+      white-space:pre-wrap;
+      word-break:break-word;
+      font-size:13px;
+      line-height:1.7;
+    }
+
+    .activation-text{
+      width:100%;
+      min-height:310px;
+      border:1px solid #d1d5db;
+      border-radius:14px;
+      padding:14px;
+      resize:vertical;
+      outline:none;
+      line-height:1.6;
+    }
+
+    .risk-filter{
+      display:flex;
+      gap:7px;
+      flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+
+    .risk-status-btn{
+      border:1px solid #d1d5db;
+      border-radius:999px;
+      background:#fff;
+      padding:8px 12px;
+      font-size:12px;
+      font-weight:800;
+    }
+
+    .risk-status-btn.active{
+      background:#111827;
+      color:#fff;
+      border-color:#111827;
+    }
+
+    .risk-list{
+      display:grid;
+      gap:12px;
+    }
+
+    .risk-card{
+      background:#fff;
+      border:1px solid #e5e7eb;
+      border-radius:17px;
+      padding:15px;
+    }
+
+    .risk-title{
+      font-weight:900;
+      font-size:16px;
+      margin-bottom:5px;
+    }
+
+    .risk-sub{
+      font-size:12px;
+      color:#6b7280;
+      line-height:1.5;
+      margin-bottom:12px;
+    }
+
+    .risk-check{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-top:10px;
+      font-weight:800;
+      font-size:13px;
+    }
+
+    .risk-check input{
+      width:20px;
+      height:20px;
+    }
+
+    .empty{
+      background:#fff;
+      border:1px dashed #d1d5db;
+      border-radius:15px;
+      padding:24px 14px;
+      text-align:center;
+      color:#9ca3af;
+      font-size:13px;
+    }
+
+    .warning{
+      margin-bottom:12px;
+      padding:12px;
+      border-radius:12px;
+      background:#fff7ed;
+      color:#9a3412;
+      font-size:12px;
+      line-height:1.5;
+    }
+
+    .bottom-nav{
+      position:fixed;
+      z-index:100;
+      left:50%;
+      bottom:0;
+      transform:translateX(-50%);
+      width:100%;
+      max-width:760px;
+      height:72px;
+      display:grid;
+      grid-template-columns:
+        repeat(5,1fr);
+      background:#fff;
+      border-top:1px solid #e5e7eb;
+      padding-bottom:
+        env(safe-area-inset-bottom);
+    }
+
+    .nav-btn{
+      border:0;
+      background:transparent;
+      color:#9ca3af;
+      font-size:11px;
+      font-weight:800;
+      padding:8px 2px 6px;
+    }
+
+    .nav-icon{
+      display:block;
+      font-size:21px;
+      line-height:1;
+      margin-bottom:5px;
+    }
+
+    .nav-btn.active{
+      color:#111827;
+    }
+
+    .loading{
+      display:none;
+      position:fixed;
+      inset:0;
+      z-index:999;
+      background:rgba(255,255,255,.72);
+      align-items:center;
+      justify-content:center;
+      font-weight:900;
+      font-size:15px;
+    }
+
+    .loading.show{
+      display:flex;
+    }
+
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom:88px;
+      transform:translateX(-50%);
+      z-index:1000;
+      background:#111827;
+      color:#fff;
+      border-radius:999px;
+      padding:11px 16px;
+      font-size:13px;
+      font-weight:800;
+      opacity:0;
+      pointer-events:none;
+      transition:.2s;
+      max-width:calc(100% - 32px);
+      text-align:center;
+    }
+
+    .toast.show{
+      opacity:1;
+    }
+
+    @media(max-width:420px){
+      .summary-grid{
+        grid-template-columns:1fr 1fr;
+      }
+
+      .form-grid{
+        grid-template-columns:1fr;
+      }
+
+      .field.full{
+        grid-column:auto;
+      }
+
+      .case-money-grid{
+        gap:5px;
+      }
+
+      .case-money-item{
+        padding:10px 4px;
+      }
+
+      .case-money-value{
+        font-size:13px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+
+    <div class="top-title">
+      관저중로점 무선 실적
+    </div>
+
+    <div class="top-row">
+
+      <select
+        id="globalMonth"
+        onchange="changeMonth()"
+      ></select>
+
+      <button
+        class="refresh-btn"
+        onclick="refreshData()"
+      >
+        새로고침
+      </button>
+
+    </div>
+
+  </header>
+
+  <!-- 홈 -->
+  <section
+    id="page-home"
+    class="page active"
+  >
+
+    <h2 class="section-title">
+      홈
+    </h2>
+
+    <div id="warningBox"></div>
+
+    <div
+      id="homeSummary"
+      class="summary-grid"
+    ></div>
+
+    <div class="panel">
+
+      <div class="section-title">
+        직원별 실적
+      </div>
+
+      <div
+        id="employeeList"
+        class="employee-list"
+      ></div>
+
+    </div>
+
+  </section>
+
+  <!-- 예산관리 -->
+  <section
+    id="page-budget"
+    class="page"
+  >
+
+    <h2 class="section-title">
+      예산관리
+    </h2>
+
+    <div class="section-sub">
+      금액·검수·메모는 장표에서 직접 관리합니다.
+    </div>
+
+    <div class="filter-row">
+
+      <select
+        id="filterStaff"
+        onchange="renderCases()"
+      >
+        <option value="">
+          전체 직원
+        </option>
+      </select>
+
+    </div>
+
+    <div
+      id="caseList"
+      class="case-list"
+    ></div>
+
+  </section>
+
+  <!-- 스팟 -->
+  <section
+    id="page-spot"
+    class="page"
+  >
+
+    <h2 class="section-title">
+      스팟
+    </h2>
+
+    <div class="panel">
+
+      <div class="form-grid">
+
+        <input
+          type="hidden"
+          id="spotId"
+        >
+
+        <div class="field full">
+          <label>스팟명</label>
+
+          <input
+            id="spotName"
+            placeholder="예: 9월 후불 스팟"
+          >
+        </div>
+
+        <div class="field">
+          <label>실적기준</label>
+
+          <select id="spotMetric">
+            <option value="post">후불</option>
+            <option value="mnp">MNP</option>
+            <option value="choice">스초</option>
+            <option value="house">가구초</option>
+            <option value="second">세컨</option>
+            <option value="card">카드</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>계산방식</label>
+
+          <select id="spotMode">
+            <option value="구간정액">구간정액</option>
+            <option value="구간건당">구간건당</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>시작일</label>
+          <input id="spotStart" type="date">
+        </div>
+
+        <div class="field">
+          <label>종료일</label>
+          <input id="spotEnd" type="date">
+        </div>
+
+        <div class="field">
+          <label>1차 목표</label>
+          <input id="spotT1" type="number" min="1">
+        </div>
+
+        <div class="field">
+          <label>1차 금액</label>
+          <input id="spotV1" inputmode="numeric">
+        </div>
+
+        <div class="field">
+          <label>2차 목표</label>
+          <input id="spotT2" type="number" min="1">
+        </div>
+
+        <div class="field">
+          <label>2차 금액</label>
+          <input id="spotV2" inputmode="numeric">
+        </div>
+
+        <div class="field">
+          <label>3차 목표</label>
+          <input id="spotT3" type="number" min="1">
+        </div>
+
+        <div class="field">
+          <label>3차 금액</label>
+          <input id="spotV3" inputmode="numeric">
+        </div>
+
+        <div class="field full">
+          <label>비고</label>
+
+          <textarea
+            id="spotNote"
+            placeholder="필요 시 입력"
+          ></textarea>
+        </div>
+
+      </div>
+
+      <button
+        class="primary-btn"
+        onclick="saveSpotForm()"
+      >
+        스팟 저장
+      </button>
+
+      <button
+        class="secondary-btn"
+        onclick="clearSpotForm()"
+      >
+        입력 초기화
+      </button>
+
+    </div>
+
+    <div
+      id="spotList"
+      class="spot-list"
+    ></div>
+
+  </section>
+
+  <!-- 개통입력 -->
+  <section
+    id="page-activation"
+    class="page"
+  >
+
+    <h2 class="section-title">
+      개통입력
+    </h2>
+
+    <div class="section-sub">
+      기본 개통정보만 장표에 저장합니다. 검수·메모·확보/사용금액은 장표에서 직접 입력합니다.
+    </div>
+
+    <div class="panel">
+
+      <textarea
+        id="activationText"
+        class="activation-text"
+        placeholder="개통정보를 여기에 붙여넣어 주세요."
+      ></textarea>
+
+      <button
+        class="secondary-btn"
+        onclick="previewActivation()"
+      >
+        입력내용 확인
+      </button>
+
+      <button
+        class="primary-btn"
+        onclick="saveActivation()"
+      >
+        개통 저장
+      </button>
+
+      <div id="activationPreview"></div>
+
+    </div>
+
+  </section>
+
+  <!-- 리스크관리 -->
+  <section
+    id="page-risk"
+    class="page"
+  >
+
+    <h2 class="section-title">
+      리스크관리
+    </h2>
+
+    <div class="filter-row">
+
+      <select
+        id="riskStaffFilter"
+        onchange="renderRisk()"
+      >
+        <option value="">
+          전체 직원
+        </option>
+      </select>
+
+    </div>
+
+    <div class="risk-filter">
+
+      <button
+        class="risk-status-btn active"
+        onclick="setRiskStatus('all',this)"
+      >
+        전체
+      </button>
+
+      <button
+        class="risk-status-btn"
+        onclick="setRiskStatus('incomplete',this)"
+      >
+        미완료
+      </button>
+
+      <button
+        class="risk-status-btn"
+        onclick="setRiskStatus('complete',this)"
+      >
+        완료
+      </button>
+
+    </div>
+
+    <div
+      id="riskSummary"
+      class="summary-grid"
+    ></div>
+
+    <button
+      class="secondary-btn"
+      onclick="copyIncompleteRiskNotice()"
+      style="margin-bottom:12px"
+    >
+      미완료 카드 공지 복사
+    </button>
+
+    <div
+      id="riskList"
+      class="risk-list"
+    ></div>
+
+  </section>
+
+</div>
+
+<nav class="bottom-nav">
+
+  <button
+    class="nav-btn active"
+    data-page="home"
+    onclick="openPage('home',this)"
+  >
+    <span class="nav-icon">⌂</span>
+    홈
+  </button>
+
+  <button
+    class="nav-btn"
+    data-page="budget"
+    onclick="openPage('budget',this)"
+  >
+    <span class="nav-icon">₩</span>
+    예산관리
+  </button>
+
+  <button
+    class="nav-btn"
+    data-page="spot"
+    onclick="openPage('spot',this)"
+  >
+    <span class="nav-icon">◎</span>
+    스팟
+  </button>
+
+  <button
+    class="nav-btn"
+    data-page="activation"
+    onclick="openPage('activation',this)"
+  >
+    <span class="nav-icon">＋</span>
+    개통입력
+  </button>
+
+  <button
+    class="nav-btn"
+    data-page="risk"
+    onclick="openPage('risk',this)"
+  >
+    <span class="nav-icon">!</span>
+    리스크관리
+  </button>
+
+</nav>
+
+<div id="loading" class="loading">
+  불러오는 중...
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+
+let DATA={
+  cases:[],
+  spots:[],
+  risks:[],
+  employeeStats:[],
+  months:[],
+  summary:{}
+};
+
+let SELECTED_MONTH='';
+let CURRENT_PAGE='home';
+let RISK_STATUS_FILTER='all';
+let AUTO_REFRESH_TIMER=null;
+
+
+/* =========================
+   공통
+========================= */
+
+function esc(v){
+
+  return String(
+    v==null?'':v
+  )
+  .replace(/&/g,'&amp;')
+  .replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;')
+  .replace(/'/g,'&#039;');
+}
+
+
+function money(v){
+
+  const n=
+    Number(v)||0;
+
+  return(
+    n.toLocaleString('ko-KR')+
+    '원'
+  );
+}
+
+
+function numeric(v){
+
+  return Number(
+    String(
+      v==null?'':v
+    )
+    .replace(
+      /[^0-9.-]/g,
+      ''
+    )
+  )||0;
+}
+
+
+function showLoading(v){
+
+  document
+    .getElementById('loading')
+    .classList
+    .toggle(
+      'show',
+      !!v
+    );
+}
+
+
+function toast(msg){
+
+  const el=
+    document.getElementById('toast');
+
+  el.textContent=
+    msg||'';
+
+  el.classList.add('show');
+
+  clearTimeout(
+    el._timer
+  );
+
+  el._timer=
+    setTimeout(
+      ()=>{
+        el.classList.remove('show');
+      },
+      2200
+    );
+}
+
+
+function fail(err){
+
+  showLoading(false);
+
+  const msg=
+    err&&err.message
+      ?err.message
+      :String(
+        err||
+        '오류가 발생했습니다.'
+      );
+
+  toast(msg);
+}
+
+
+function openPage(
+  page,
+  btn
+){
+
+  CURRENT_PAGE=
+    page;
+
+  document
+    .querySelectorAll('.page')
+    .forEach(
+      el=>
+        el.classList.remove('active')
+    );
+
+  const target=
+    document.getElementById(
+      'page-'+page
+    );
+
+  if(target){
+    target.classList.add('active');
+  }
+
+  document
+    .querySelectorAll('.nav-btn')
+    .forEach(
+      el=>
+        el.classList.remove('active')
+    );
+
+  if(btn){
+    btn.classList.add('active');
+  }
+
+  window.scrollTo(0,0);
+}
+
+
+/* =========================
+   데이터
+========================= */
+
+function loadData(
+  month,
+  silent=false
+){
+
+  if(!silent){
+    showLoading(true);
+  }
+
+  google.script.run
+    .withSuccessHandler(
+      d=>{
+
+        showLoading(false);
+
+        DATA=
+          d||{
+            cases:[],
+            spots:[],
+            risks:[],
+            employeeStats:[],
+            months:[],
+            summary:{}
+          };
+
+        SELECTED_MONTH=
+          DATA.selectedMonth||
+          month||
+          '';
+
+        renderAll();
+      }
+    )
+    .withFailureHandler(fail)
+    .getDashboardData(
+      month||''
+    );
+}
+
+
+function refreshData(){
+
+  loadData(
+    SELECTED_MONTH
+  );
+}
+
+
+function changeMonth(){
+
+  const v=
+    document
+      .getElementById('globalMonth')
+      .value;
+
+  loadData(v);
+}
+
+
+function renderAll(){
+
+  renderMonthSelect();
+  renderStaffFilters();
+  renderWarnings();
+  renderHome();
+  renderEmployees();
+  renderCases();
+  renderSpots();
+  renderRisk();
+}
+
+
+function renderMonthSelect(){
+
+  const el=
+    document.getElementById('globalMonth');
+
+  const months=
+    DATA.months||[];
+
+  el.innerHTML=
+    months
+      .map(
+        m=>`
+          <option
+            value="${esc(m.key)}"
+            ${
+              m.key===SELECTED_MONTH
+                ?'selected'
+                :''
+            }
+          >
+            ${esc(m.title)}
+          </option>
+        `
+      )
+      .join('');
+}
+
+
+function renderStaffFilters(){
+
+  const staff=
+    [
+      ...new Set(
+        (DATA.cases||[])
+          .map(x=>x.staff)
+          .filter(Boolean)
+      )
+    ]
+    .sort(
+      (a,b)=>
+        a.localeCompare(
+          b,
+          'ko'
+        )
+    );
+
+  const budget=
+    document.getElementById(
+      'filterStaff'
+    );
+
+  const risk=
+    document.getElementById(
+      'riskStaffFilter'
+    );
+
+  const oldBudget=
+    budget.value;
+
+  const oldRisk=
+    risk.value;
+
+  const options=
+    staff
+      .map(
+        s=>`
+          <option value="${esc(s)}">
+            ${esc(s)}
+          </option>
+        `
+      )
+      .join('');
+
+  budget.innerHTML=
+    '<option value="">전체 직원</option>'+
+    options;
+
+  risk.innerHTML=
+    '<option value="">전체 직원</option>'+
+    options;
+
+  if(
+    staff.includes(oldBudget)
+  ){
+    budget.value=
+      oldBudget;
+  }
+
+  if(
+    staff.includes(oldRisk)
+  ){
+    risk.value=
+      oldRisk;
+  }
+}
+
+
+function renderWarnings(){
+
+  const el=
+    document.getElementById(
+      'warningBox'
+    );
+
+  const list=
+    DATA.warnings||[];
+
+  if(!list.length){
+    el.innerHTML='';
+    return;
+  }
+
+  el.innerHTML=
+    list
+      .map(
+        x=>`
+          <div class="warning">
+            ${esc(x)}
+          </div>
+        `
+      )
+      .join('');
+}
+
+
+/* =========================
+   홈
+========================= */
+
+function renderHome(){
+
+  const s=
+    DATA.summary||{};
+
+  /*
+   * 고객혜택 확보금액
+   * = 장표 총 확보금액 합계
+   */
+  const customerSecured=
+    Number(
+      s.benefitTotal||0
+    );
+
+  /*
+   * 스팟 확보금액
+   * = 스팟 달성금액 합계
+   */
+  const spotSecured=
+    Number(
+      s.spotEarned||0
+    );
+
+  /*
+   * 총 사용금액
+   */
+  const used=
+    Number(
+      s.usedTotal||0
+    );
+
+  /*
+   * 전체 잔여금액
+   *
+   * 고객혜택 확보금액
+   * +
+   * 스팟 확보금액
+   * -
+   * 사용금액
+   */
+  const totalRemaining=
+    customerSecured+
+    spotSecured-
+    used;
+
+  const items=[
+
+    [
+      '개통건수',
+      Number(
+        s.caseCount||0
+      )+'건'
+    ],
+
+    [
+      '고객혜택 확보금액',
+      money(
+        customerSecured
+      )
+    ],
+
+    [
+      '스팟 확보금액',
+      money(
+        spotSecured
+      )
+    ],
+
+    [
+      '사용금액',
+      money(
+        used
+      )
+    ],
+
+    [
+      '잔여금액',
+      money(
+        totalRemaining
+      )
+    ],
+
+    [
+      '카드 미완료',
+      Number(
+        s.riskIncomplete||0
+      )+'건'
+    ]
+
+  ];
+
+  document
+    .getElementById('homeSummary')
+    .innerHTML=
+      items
+        .map(
+          x=>`
+            <div class="summary">
+
+              <div class="label">
+                ${x[0]}
+              </div>
+
+              <div class="value">
+                ${x[1]}
+              </div>
+
+            </div>
+          `
+        )
+        .join('');
+}
+
+
+function renderEmployees(){
+
+  const el=
+    document.getElementById(
+      'employeeList'
+    );
+
+  const rows=
+    DATA.employeeStats||[];
+
+  if(!rows.length){
+
+    el.innerHTML=
+      '<div class="empty">해당 월 실적이 없습니다.</div>';
+
+    return;
+  }
+
+  el.innerHTML=
+    rows
+      .map(
+        r=>`
+          <div class="employee-card">
+
+            <div class="employee-name">
+              ${esc(r.staff)}
+            </div>
+
+            <div class="mini-grid">
+              ${miniStat('개통',r.post)}
+              ${miniStat('MNP',r.mnp)}
+              ${miniStat('스초',r.choice)}
+              ${miniStat('가구초',r.house)}
+              ${miniStat('세컨',r.second)}
+              ${miniStat('카드',r.card)}
+            </div>
+
+          </div>
+        `
+      )
+      .join('');
+}
+
+
+function miniStat(k,v){
+
+  return`
+    <div class="mini-stat">
+
+      <div class="k">
+        ${k}
+      </div>
+
+      <div class="v">
+        ${Number(v||0)}
+      </div>
+
+    </div>
+  `;
+}
+
+
+/* =========================
+   예산관리
+========================= */
+
+function renderCases(){
+
+  const staff=
+    document
+      .getElementById('filterStaff')
+      .value;
+
+  const list=
+    (DATA.cases||[])
+      .filter(
+        c=>
+          !staff||
+          c.staff===staff
+      );
+
+  const el=
+    document.getElementById(
+      'caseList'
+    );
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="empty">해당 조건의 개통건이 없습니다.</div>';
+
+    return;
+  }
+
+  el.innerHTML=
+    list
+      .map(
+        c=>{
+
+          const secured=
+            Number(
+              c.secured||0
+            );
+
+          const used=
+            Number(
+              c.used!=null
+                ?c.used
+                :c.totalUsed||0
+            );
+
+          const remaining=
+            Number(
+              c.remaining!=null
+                ?c.remaining
+                :secured-used
+            );
+
+          const review=
+            c.reviewed
+              ?`
+                <span class="review-badge done">
+                  ✓ 검수완료
+                </span>
+              `
+              :`
+                <span class="review-badge">
+                  검수대기
+                </span>
+              `;
+
+          const memo=
+            c.memo
+              ?`
+                <div class="case-memo">
+                  <strong>메모</strong>
+                  ·
+                  ${esc(c.memo)}
+                </div>
+              `
+              :`
+                <div class="case-memo muted">
+                  메모 없음
+                </div>
+              `;
+
+          return`
+            <div class="case-card">
+
+              <div class="case-head">
+
+                <div class="case-name">
+
+                  ${esc(c.name)}
+
+                  ${
+                    c.no
+                      ?` · ${esc(c.no)}번`
+                      :''
+                  }
+
+                </div>
+
+                <div class="case-sub">
+
+                  ${esc(c.date||'-')}
+                  ·
+                  ${esc(c.staff||'-')}
+                  ·
+                  ${esc(c.phone||'-')}
+
+                  <br>
+
+                  ${esc(c.model||'-')}
+                  ·
+                  ${esc(c.type||'-')}
+                  ·
+                  ${esc(c.plan||'-')}
+
+                </div>
+
+                <div class="case-review-row">
+                  ${review}
+                </div>
+
+                ${memo}
+
+                <div class="case-money-grid">
+
+                  <div class="case-money-item">
+
+                    <div class="case-money-label">
+                      확보금액
+                    </div>
+
+                    <div class="case-money-value">
+                      ${money(secured)}
+                    </div>
+
+                  </div>
+
+                  <div class="case-money-item">
+
+                    <div class="case-money-label">
+                      사용금액
+                    </div>
+
+                    <div class="case-money-value">
+                      ${money(used)}
+                    </div>
+
+                  </div>
+
+                  <div class="case-money-item">
+
+                    <div class="case-money-label">
+                      잔여금액
+                    </div>
+
+                    <div class="
+                      case-money-value
+                      remaining
+                      ${
+                        remaining<0
+                          ?'negative'
+                          :''
+                      }
+                    ">
+                      ${money(remaining)}
+                    </div>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+          `;
+        }
+      )
+      .join('');
+}
+
+
+/* =========================
+   스팟
+========================= */
+
+function clearSpotForm(){
+
+  document.getElementById('spotId').value='';
+  document.getElementById('spotName').value='';
+  document.getElementById('spotMetric').value='post';
+  document.getElementById('spotMode').value='구간정액';
+  document.getElementById('spotStart').value='';
+  document.getElementById('spotEnd').value='';
+  document.getElementById('spotT1').value='';
+  document.getElementById('spotV1').value='';
+  document.getElementById('spotT2').value='';
+  document.getElementById('spotV2').value='';
+  document.getElementById('spotT3').value='';
+  document.getElementById('spotV3').value='';
+  document.getElementById('spotNote').value='';
+}
+
+
+function renderSpots(){
+
+  const el=
+    document.getElementById(
+      'spotList'
+    );
+
+  const list=
+    DATA.spots||[];
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="empty">등록된 스팟이 없습니다.</div>';
+
+    return;
+  }
+
+  el.innerHTML=
+    list
+      .map(
+        s=>`
+          <div class="spot-card">
+
+            <div class="spot-name">
+              ${esc(s.name)}
+            </div>
+
+            <div class="spot-sub">
+
+              ${esc(s.metricTitle||s.metric)}
+              ·
+              ${esc(s.start)}
+              ~
+              ${esc(s.end)}
+
+              <br>
+
+              현재
+              ${Number(s.count||0)}건
+              ·
+              ${esc(s.status||'')}
+
+            </div>
+
+            <div class="spot-result">
+
+              <div>
+                확보금액
+              </div>
+
+              <div class="spot-total">
+                ${money(s.total)}
+              </div>
+
+            </div>
+
+          </div>
+        `
+      )
+      .join('');
+}
+
+
+function saveSpotForm(){
+
+  const p={
+
+    id:
+      document
+        .getElementById('spotId')
+        .value,
+
+    month:
+      SELECTED_MONTH,
+
+    name:
+      document
+        .getElementById('spotName')
+        .value
+        .trim(),
+
+    metric:
+      document
+        .getElementById('spotMetric')
+        .value,
+
+    mode:
+      document
+        .getElementById('spotMode')
+        .value,
+
+    start:
+      document
+        .getElementById('spotStart')
+        .value,
+
+    end:
+      document
+        .getElementById('spotEnd')
+        .value,
+
+    tier1Target:
+      numeric(
+        document
+          .getElementById('spotT1')
+          .value
+      ),
+
+    tier1Value:
+      numeric(
+        document
+          .getElementById('spotV1')
+          .value
+      ),
+
+    tier2Target:
+      numeric(
+        document
+          .getElementById('spotT2')
+          .value
+      ),
+
+    tier2Value:
+      numeric(
+        document
+          .getElementById('spotV2')
+          .value
+      ),
+
+    tier3Target:
+      numeric(
+        document
+          .getElementById('spotT3')
+          .value
+      ),
+
+    tier3Value:
+      numeric(
+        document
+          .getElementById('spotV3')
+          .value
+      ),
+
+    note:
+      document
+        .getElementById('spotNote')
+        .value
+        .trim()
+  };
+
+  if(!p.month){
+    toast('적용월을 선택해주세요.');
+    return;
+  }
+
+  if(!p.name){
+    toast('스팟명을 입력해주세요.');
+    return;
+  }
+
+  if(
+    !p.start||
+    !p.end
+  ){
+    toast('적용기간을 입력해주세요.');
+    return;
+  }
+
+  if(
+    !Number(p.tier1Target)||
+    !Number(p.tier1Value)
+  ){
+    toast(
+      '1차 목표와 금액을 입력해주세요.'
+    );
+    return;
+  }
+
+  showLoading(true);
+
+  google.script.run
+    .withSuccessHandler(
+      r=>{
+
+        const savedMonth=
+          (
+            r&&
+            r.month
+          )||
+          p.month||
+          SELECTED_MONTH;
+
+        clearSpotForm();
+
+        toast(
+          '스팟 저장 완료'
+        );
+
+        loadData(
+          savedMonth
+        );
+      }
+    )
+    .withFailureHandler(fail)
+    .saveSpot(p);
+}
+
+
+/* =========================
+   개통입력
+========================= */
+
+function previewActivation(){
+
+  const text=
+    document
+      .getElementById('activationText')
+      .value;
+
+  if(!text.trim()){
+
+    toast(
+      '개통정보를 붙여넣어 주세요.'
+    );
+
+    return;
+  }
+
+  showLoading(true);
+
+  google.script.run
+    .withSuccessHandler(
+      d=>{
+
+        showLoading(false);
+
+        const lines=[
+
+          `개통일: ${d.date}`,
+          `개통자: ${d.staff}`,
+          `고객명: ${d.name}`,
+          `CTN: ${d.phone}`,
+          `모델: ${d.model}`,
+          `유형: ${d.type}`,
+          `요금제: ${d.plan}`,
+
+          '',
+
+          '검수완료 / 메모 / 확보금액 / 사용금액',
+          '→ 장표에서 직접 입력'
+        ];
+
+        if(
+          d.warnings&&
+          d.warnings.length
+        ){
+
+          lines.push(
+            '',
+            '[확인 필요]',
+            ...d.warnings
+          );
+        }
+
+        document
+          .getElementById('activationPreview')
+          .innerHTML=
+            `
+              <div class="preview">
+                ${esc(
+                  lines.join('\n')
+                )}
+              </div>
+            `;
+      }
+    )
+    .withFailureHandler(fail)
+    .parseActivationText(text);
+}
+
+
+function saveActivation(){
+
+  const text=
+    document
+      .getElementById('activationText')
+      .value;
+
+  if(!text.trim()){
+
+    toast(
+      '개통정보를 붙여넣어 주세요.'
+    );
+
+    return;
+  }
+
+  showLoading(true);
+
+  google.script.run
+    .withSuccessHandler(
+      r=>{
+
+        const mk=
+          r&&
+          r.data&&
+          r.data.month
+            ?r.data.month
+            :SELECTED_MONTH;
+
+        document
+          .getElementById('activationText')
+          .value='';
+
+        document
+          .getElementById('activationPreview')
+          .innerHTML='';
+
+        toast(
+          '개통 저장 완료'
+        );
+
+        loadData(mk);
+      }
+    )
+    .withFailureHandler(fail)
+    .saveActivationText(text);
+}
+
+
+/* =========================
+   리스크관리
+========================= */
+
+function setRiskStatus(
+  status,
+  btn
+){
+
+  RISK_STATUS_FILTER=
+    status||
+    'all';
+
+  document
+    .querySelectorAll(
+      '.risk-status-btn'
+    )
+    .forEach(
+      x=>
+        x.classList.remove('active')
+    );
+
+  if(btn){
+    btn.classList.add('active');
+  }
+
+  renderRisk();
+}
+
+
+function getStaffFilteredRisk(){
+
+  const staff=
+    document
+      .getElementById('riskStaffFilter')
+      .value;
+
+  return(
+    DATA.risks||[]
+  ).filter(
+    r=>
+      !staff||
+      r.staff===staff
+  );
+}
+
+
+function getFilteredRisk(){
+
+  return getStaffFilteredRisk()
+    .filter(
+      r=>{
+
+        if(
+          RISK_STATUS_FILTER===
+          'complete'
+        ){
+          return !!r.completed;
+        }
+
+        if(
+          RISK_STATUS_FILTER===
+          'incomplete'
+        ){
+          return !r.completed;
+        }
+
+        return true;
+      }
+    );
+}
+
+
+function renderRisk(){
+
+  const baseList=
+    getStaffFilteredRisk();
+
+  const list=
+    getFilteredRisk();
+
+  const completed=
+    baseList.filter(
+      r=>r.completed
+    ).length;
+
+  const incomplete=
+    baseList.length-
+    completed;
+
+  const summary=[
+    [
+      '총 카드유치건수',
+      baseList.length+'건'
+    ],
+    [
+      '완료카드건수',
+      completed+'건'
+    ],
+    [
+      '미완료건수',
+      incomplete+'건'
+    ]
+  ];
+
+  document
+    .getElementById('riskSummary')
+    .innerHTML=
+      summary
+        .map(
+          x=>`
+            <div class="summary">
+
+              <div class="label">
+                ${x[0]}
+              </div>
+
+              <div class="value">
+                ${x[1]}
+              </div>
+
+            </div>
+          `
+        )
+        .join('');
+
+  const el=
+    document.getElementById(
+      'riskList'
+    );
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="empty">해당 조건의 카드건이 없습니다.</div>';
+
+    return;
+  }
+
+  el.innerHTML=
+    list
+      .map(
+        (r,i)=>{
+
+          const k=
+            'r'+i;
+
+          return`
+            <div class="risk-card">
+
+              <div class="risk-title">
+
+                ${esc(r.name)}
+
+                ${
+                  r.no
+                    ?` · ${esc(r.no)}번`
+                    :''
+                }
+
+              </div>
+
+              <div class="risk-sub">
+
+                ${esc(r.date||'-')}
+                ·
+                ${esc(r.staff||'-')}
+
+                <br>
+
+                ${esc(r.phone||'-')}
+
+              </div>
+
+              <div class="form-grid">
+
+                <div class="field">
+
+                  <label>
+                    카드1
+                  </label>
+
+                  <input
+                    id="risk-card1-${k}"
+                    value="${esc(r.card1||'')}"
+                    placeholder="예: 신한"
+                  >
+
+                </div>
+
+                <div class="field">
+
+                  <label>
+                    카드2
+                  </label>
+
+                  <input
+                    id="risk-card2-${k}"
+                    value="${esc(r.card2||'')}"
+                    placeholder="예: 국민할부"
+                  >
+
+                </div>
+
+                <div class="field full">
+
+                  <label>
+                    메모
+                  </label>
+
+                  <textarea
+                    id="risk-memo-${k}"
+                  >${esc(r.memo||'')}</textarea>
+
+                </div>
+
+              </div>
+
+              <label class="risk-check">
+
+                <input
+                  id="risk-done-${k}"
+                  type="checkbox"
+                  ${r.completed?'checked':''}
+                >
+
+                카드 처리 완료
+
+              </label>
+
+              <button
+                id="risk-save-${k}"
+                class="primary-btn"
+                onclick="saveRiskRow(${i},'${k}')"
+              >
+                저장
+              </button>
+
+            </div>
+          `;
+        }
+      )
+      .join('');
+
+  window.__RISK_VISIBLE_LIST=
+    list;
+}
+
+
+function saveRiskRow(
+  index,
+  k
+){
+
+  const list=
+    window.__RISK_VISIBLE_LIST||
+    [];
+
+  const r=
+    list[index];
+
+  if(!r){
+
+    toast(
+      '대상 카드건을 찾지 못했습니다.'
+    );
+
+    return;
+  }
+
+  const card1El=
+    document.getElementById(
+      'risk-card1-'+k
+    );
+
+  const card2El=
+    document.getElementById(
+      'risk-card2-'+k
+    );
+
+  const memoEl=
+    document.getElementById(
+      'risk-memo-'+k
+    );
+
+  const doneEl=
+    document.getElementById(
+      'risk-done-'+k
+    );
+
+  const saveBtn=
+    document.getElementById(
+      'risk-save-'+k
+    );
+
+  const p={
+
+    month:r.month,
+    phone:r.phone,
+    name:r.name,
+    date:r.date,
+    staff:r.staff,
+
+    card1:
+      card1El
+        ?card1El.value.trim()
+        :'',
+
+    card2:
+      card2El
+        ?card2El.value.trim()
+        :'',
+
+    completed:
+      doneEl
+        ?doneEl.checked
+        :false,
+
+    memo:
+      memoEl
+        ?memoEl.value.trim()
+        :''
+  };
+
+  if(saveBtn){
+
+    saveBtn.disabled=true;
+
+    saveBtn.textContent=
+      '저장 중...';
+  }
+
+  google.script.run
+    .withSuccessHandler(
+      ()=>{
+
+        r.card1=p.card1;
+        r.card2=p.card2;
+        r.completed=p.completed;
+        r.memo=p.memo;
+
+        renderRisk();
+
+        toast(
+          '리스크 저장 완료'
+        );
+      }
+    )
+    .withFailureHandler(
+      err=>{
+
+        if(saveBtn){
+
+          saveBtn.disabled=false;
+
+          saveBtn.textContent='저장';
+        }
+
+        fail(err);
+      }
+    )
+    .saveRisk(p);
+}
+
+
+/* =========================
+   미완료 카드 공지
+========================= */
+
+function getSelectedMonthLabel(){
+
+  const month=
+    String(
+      SELECTED_MONTH||''
+    );
+
+  const match=
+    month.match(
+      /^(\d{4})-(\d{1,2})$/
+    );
+
+  if(match){
+
+    return(
+      Number(match[2])+
+      '월'
+    );
+  }
+
+  return '선택월';
+}
+
+
+function riskNoNumber(r){
+
+  const n=
+    Number(
+      String(
+        r.no==null
+          ?''
+          :r.no
+      ).replace(
+        /[^0-9.-]/g,
+        ''
+      )
+    );
+
+  return Number.isFinite(n)
+    ?n
+    :999999;
+}
+
+
+function getIncompleteRiskForNotice(){
+
+  const staff=
+    document
+      .getElementById('riskStaffFilter')
+      .value;
+
+  return(
+    DATA.risks||[]
+  )
+  .filter(
+    r=>!r.completed
+  )
+  .filter(
+    r=>
+      !staff||
+      r.staff===staff
+  );
+}
+
+
+function buildIncompleteRiskNotice(){
+
+  const list=
+    getIncompleteRiskForNotice();
+
+  const monthLabel=
+    getSelectedMonthLabel();
+
+  if(!list.length){
+
+    return{
+      text:'',
+      count:0
+    };
+  }
+
+  const groups={};
+
+  list.forEach(
+    r=>{
+
+      const staff=
+        r.staff||
+        '미지정';
+
+      if(!groups[staff]){
+        groups[staff]=[];
+      }
+
+      groups[staff].push(r);
+    }
+  );
+
+  const lines=[
+    `[${monthLabel} 카드 미완료 안내]`,
+    ''
+  ];
+
+  Object.keys(groups)
+    .sort(
+      (a,b)=>
+        a.localeCompare(
+          b,
+          'ko'
+        )
+    )
+    .forEach(
+      staff=>{
+
+        lines.push(
+          `■ ${staff}`
+        );
+
+        groups[staff]
+          .sort(
+            (a,b)=>
+              riskNoNumber(a)-
+              riskNoNumber(b)
+          )
+          .forEach(
+            r=>{
+
+              const no=
+                r.no
+                  ?`${r.no}번`
+                  :'';
+
+              const cards=
+                [
+                  r.card1,
+                  r.card2
+                ]
+                .filter(Boolean)
+                .join(' / ');
+
+              let line=
+                `- ${no} ${r.name}`;
+
+              if(cards){
+                line+=
+                  ` · ${cards}`;
+              }
+
+              lines.push(
+                line.trim()
+              );
+            }
+          );
+
+        lines.push('');
+      }
+    );
+
+  return{
+    text:
+      lines.join('\n').trim(),
+
+    count:
+      list.length
+  };
+}
+
+
+async function copyIncompleteRiskNotice(){
+
+  const result=
+    buildIncompleteRiskNotice();
+
+  if(!result.count){
+
+    toast(
+      '미완료 카드건이 없습니다.'
+    );
+
+    return;
+  }
+
+  try{
+
+    await navigator.clipboard.writeText(
+      result.text
+    );
+
+    toast(
+      result.count+
+      '건 공지 복사 완료'
+    );
+
+  }catch(e){
+
+    const ta=
+      document.createElement(
+        'textarea'
+      );
+
+    ta.value=
+      result.text;
+
+    document.body.appendChild(ta);
+
+    ta.select();
+
+    document.execCommand('copy');
+
+    ta.remove();
+
+    toast(
+      result.count+
+      '건 공지 복사 완료'
+    );
+  }
+}
+
+
+/* =========================
+   자동 새로고침
+========================= */
+
+function startAutoRefresh(){
+
+  if(AUTO_REFRESH_TIMER){
+
+    clearInterval(
+      AUTO_REFRESH_TIMER
+    );
+  }
+
+  AUTO_REFRESH_TIMER=
+    setInterval(
+      ()=>{
+
+        if(
+          CURRENT_PAGE===
+          'activation'
+        ){
+          return;
+        }
+
+        if(
+          CURRENT_PAGE===
+          'risk'
+        ){
+          return;
+        }
+
+        loadData(
+          SELECTED_MONTH,
+          true
+        );
+
+      },
+      30000
+    );
+}
+
+
+/* =========================
+   최초 실행
+========================= */
+
+window.addEventListener(
+  'load',
+  ()=>{
+
+    loadData('');
+
+    startAutoRefresh();
+  }
+);
+
+</script>
+
+</body>
+</html>
