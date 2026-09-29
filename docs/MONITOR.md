@@ -43,6 +43,8 @@
 
 ---
 
+> Phase 6A 부터 두 번째 Cron(`*/2 * * * *`)이 공식 공지·뉴스를 수집합니다 (별도 실행). 자세한 내용은 [INTELLIGENCE.md](INTELLIGENCE.md). Cron Trigger 는 계정 한도 5개 중 2개를 사용합니다.
+
 ## 2. Cloudflare 무료 플랜 제한과 설계
 
 Cloudflare 공식 문서 기준 (Workers Free):

@@ -142,17 +142,27 @@ test('카카오/Telegram 경로 제거됨 (404/405)', async () => {
   assert.ok(!idx.includes('kakao') && !idx.includes('telegram'));
 });
 
+// src 아래 모든 .js 파일 (하위 폴더 포함): [상대경로, 내용]
+function allSources(dir = SRC, rel = '') {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? allSources(join(dir, e.name), rel + e.name + '/') : [[rel + e.name, readFileSync(join(dir, e.name), 'utf8')]],
+  );
+}
+
 test('소스에 카카오/Telegram 코드·import 가 남아 있지 않음', () => {
-  for (const f of readdirSync(SRC)) {
-    const text = readFileSync(join(SRC, f), 'utf8');
+  for (const [f, text] of allSources()) {
     assert.doesNotMatch(text, /from '\.\/(kakao|telegram)/, f);
     assert.doesNotMatch(text, /KAKAO_|TELEGRAM_|ADMIN_TOKEN|kapi\.kakao|kauth\.kakao|api\.telegram/, f);
+    assert.ok(!/kakao|telegram/i.test(f), f);
   }
-  assert.ok(!readdirSync(SRC).some((f) => /kakao|telegram/i.test(f)));
 });
 
-test('Worker 는 Binance 를 호출하지 않음 (선물 레이더는 브라우저 전용)', () => {
-  for (const f of readdirSync(SRC).filter((x) => x !== 'reachability.js')) {
-    assert.doesNotMatch(readFileSync(join(SRC, f), 'utf8'), /binance\.com|binance\.vision/, f);
+// Binance 시세 API(현물·선물)는 Worker 에서 차단되므로 브라우저 전용. Phase 6A 의 Binance '공식 공지' 수집(intel/official.js)만 예외.
+test('Worker 는 Binance 시세 API 를 호출하지 않음 (공지 수집 intel/official.js 만 예외)', () => {
+  for (const [f, text] of allSources().filter(([x]) => x !== 'reachability.js' && x !== 'intel/official.js')) {
+    assert.doesNotMatch(text, /binance\.com|binance\.vision/, f);
   }
+  const official = allSources().find(([x]) => x === 'intel/official.js')[1];
+  assert.doesNotMatch(official, /(api|fapi|dapi|data-api)\.binance|binance\.vision|\/api\/v3|\/fapi\//);
+  assert.match(official, /www\.binance\.com\/bapi\/composite\/v1\/public\/cms/);
 });

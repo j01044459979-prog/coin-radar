@@ -24,10 +24,11 @@ region = "aws:ap-northeast-2"
 # ─────────────────────────────────────────────
 # Phase 4: Upbit 24시간 감시 (docs/MONITOR.md)
 # ─────────────────────────────────────────────
-# Cron Trigger: 1분마다 실행 (Cloudflare Cron 의 가장 짧은 주기).
-# 무료 플랜은 계정 전체에서 Cron Trigger 5개까지 사용할 수 있으며, 이 설정은 그중 1개를 사용합니다.
+# Cron Trigger 1: 1분마다 Upbit 감시 (Cloudflare Cron 의 가장 짧은 주기).
+# Cron Trigger 2 (Phase 6A): 2분마다 정보 수집(공식 공지 2분 · 뉴스 5분, 출처별로 간격 조절). 별도 실행이라 기존 감시에 영향 없음.
+# 무료 플랜은 계정 전체에서 Cron Trigger 5개까지 사용할 수 있으며, 이 설정은 그중 2개를 사용합니다.
 [triggers]
-crons = ["* * * * *"]
+crons = ["* * * * *", "*/2 * * * *"]
 
 # 비밀이 아닌 설정값. (비밀값은 여기에 넣지 말고 Cloudflare Secret 으로 등록)
 # 필요한 Secret: 없음 (외부 메신저 알림 제거됨. 예전에 등록한 Secret 이 있어도 사용하지 않음)

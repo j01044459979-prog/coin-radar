@@ -3,17 +3,21 @@
 /* Phase 1 추가: 연결 상태 색상, 준비 중 표시 */
 .live.warn{color:var(--y)}.live.err{color:var(--r)}.tab{cursor:pointer}.tab.soon,.btn:disabled{opacity:.45;cursor:not-allowed}.soonbadge{font-size:10px;color:var(--m);margin-left:4px}@media(max-width:900px){.top{align-items:flex-start}.live{font-size:11px;padding:7px 9px;text-align:right}}
 /* Phase 1.1: 거래소별 상태, 선택된 탭, 고정 탭, 이동한 패널 강조 */
-.conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}.winbtn{cursor:pointer}.winbtn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.signal .state{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;margin-left:4px;white-space:nowrap}.signal .why{margin-top:6px;line-height:1.45}.lv-overheat .state{background:#4a1520;color:#ffb3bc}.lv-alert .state{background:#4a3a12;color:var(--y)}.lv-active .state{background:#12304a;color:#9cc8ff}.signal.lv-overheat{border-color:#6a2430}.signal.lv-alert{border-color:#5a4a1f}.src.lv-overheat{color:#ff9aa6}.src.lv-alert{color:var(--y)}.src.lv-active{color:#9cc8ff}.fcard .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:8px}.fgrid div{font-size:12px;min-width:0}.fgrid span{display:block;color:var(--m);font-size:10.5px}.fgrid b{font-size:13px;overflow-wrap:anywhere}.fgrid i{font-style:normal}.fgrid small{color:var(--m);font-size:10.5px}.fcard.stale{opacity:.55}.fut-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}</style></head><body><div class="w" id="top">
+.conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}.winbtn{cursor:pointer}.winbtn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.signal .state{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;margin-left:4px;white-space:nowrap}.signal .why{margin-top:6px;line-height:1.45}.lv-overheat .state{background:#4a1520;color:#ffb3bc}.lv-alert .state{background:#4a3a12;color:var(--y)}.lv-active .state{background:#12304a;color:#9cc8ff}.signal.lv-overheat{border-color:#6a2430}.signal.lv-alert{border-color:#5a4a1f}.src.lv-overheat{color:#ff9aa6}.src.lv-alert{color:var(--y)}.src.lv-active{color:#9cc8ff}.fcard .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:8px}.fgrid div{font-size:12px;min-width:0}.fgrid span{display:block;color:var(--m);font-size:10.5px}.fgrid b{font-size:13px;overflow-wrap:anywhere}.fgrid i{font-style:normal}.fgrid small{color:var(--m);font-size:10.5px}.fcard.stale{opacity:.55}.fut-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}
+/* Phase 6A: 정보(공지/뉴스) 카드 */
+.ilist{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:9px}.icard{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px;min-width:0}.icard.v-official{border-color:#1f5a3c}.icard.v-multi{border-color:#3a4f72}.ihead{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.isym{font-size:17px}.ibadge{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;white-space:nowrap}.ibadge.v-official{background:#123a28;color:var(--g)}.ibadge.v-multi{background:#12304a;color:#9cc8ff}.ibadge.v-news{background:#1c2a36;color:var(--m)}.ibadge.v-unverified{background:#3a2a12;color:var(--y)}.ikind{font-size:10.5px;color:var(--m)}.itime{margin-top:5px}.ititle{margin:7px 0;font-size:14px;font-weight:700;line-height:1.4;overflow-wrap:anywhere}.imeta{margin-bottom:6px}.ichip{font-size:11px;padding:3px 7px;border-radius:8px;background:#0f2030;border:1px solid #1b2d3c;color:var(--m)}.ireact{margin:8px 0;padding:8px;background:#0a1722;border-radius:9px}.ifoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}.iscore{color:var(--t);font-size:14px}.ilink{color:var(--b);font-size:12px;text-decoration:none;padding:6px 9px;border:1px solid var(--line);border-radius:9px;white-space:nowrap}.ilink:hover{border-color:var(--b)}.ifilters{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.ifilters .btn{cursor:pointer}.ifilters .btn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.wait{color:var(--m)}.imini a{color:var(--t);text-decoration:none;overflow-wrap:anywhere}.imini a:hover{text-decoration:underline}.imini{line-height:1.45}.isrc{display:flex;flex-wrap:wrap;gap:4px 12px}.isrc .ok{color:var(--g)}.isrc .delayed{color:var(--y)}.isrc .pending{color:var(--m)}@media(max-width:900px){.ilink{padding:9px 12px}.ifilters .btn{padding:9px 12px;font-size:12px}}</style></head><body><div class="w" id="top">
 <div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="conns" role="status" aria-live="polite"><span id="binanceStatus" class="live warn" data-level="warn">● Binance 연결 중</span><span id="upbitStatus" class="live warn" data-level="warn">● Upbit 불러오는 중</span></div></div>
-<div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab" data-go="futuresPanel" role="button" tabindex="0">📈 선물</div><div class="tab soon" title="준비 중">📰 뉴스<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
+<div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab" data-go="futuresPanel" role="button" tabindex="0">📈 선물</div><div class="tab" data-go="intelPanel" role="button" tabindex="0">📰 뉴스</div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
 <div id="hero" class="hero"><div class="card">데이터 로딩...</div></div>
 <div id="updated" class="src" style="margin-top:8px">Binance 연결 대기 중</div>
 <div class="layout"><main>
 <div class="panel" id="radarPanel"><h2>🚨 지금 움직이는 코인 <span class="src">· Binance 1분봉 기준 단기 레이더</span></h2><div class="controls" role="group" aria-label="분석 구간"><button class="btn winbtn" data-win="1" aria-pressed="false">1분</button><button class="btn winbtn on" data-win="5" aria-pressed="true">5분</button><button class="btn winbtn" data-win="15" aria-pressed="false">15분</button></div><div id="radarInfo" class="src" style="margin-bottom:9px">데이터 준비 중</div><div id="signals" class="radar"><div class="signal">데이터를 모으는 중입니다.<div class="src">Binance 공식 1분봉을 기다리고 있습니다.</div></div></div><div class="foot">레이더 점수(0~100) = 가격 점수(최대 50: 변화율 ÷ 급변 기준, 2배 이상 만점) + 거래 점수(최대 50: 거래 활동 배수 1배=0점, 5배 이상 만점). 거래 활동 배수 = 현재 구간 거래대금 ÷ 직전 같은 길이 12개 구간 평균 거래대금. 급변 기준: 1분 ±0.5% · 5분 ±1.2% · 15분 ±2.0%. 상태는 데이터 상태 표시일 뿐 투자 권유가 아닙니다. 자세한 계산: docs/RADAR.md</div></div>
+<div class="panel" id="intelTop"><h2>📰 최근 중요 정보 <span class="src">· 정보 중요도 + 최신성 기준 상위</span></h2><div id="intelTopList" class="feed"><div class="feeditem"><span class="src">정보를 불러오는 중</span></div></div><div class="foot">공식 공지·뉴스 중 정보 중요도가 높고 최근인 항목입니다. 투자 방향 예측이 아닙니다. 전체는 상단 <b>📰 뉴스</b> 탭에서 볼 수 있습니다.</div></div>
 <div class="panel" id="futuresPanel"><h2>📈 선물 레이더 <span class="src">· Binance USDⓈ-M 무기한 · OI · Funding</span></h2><div class="fut-head"><span id="futStatus" class="live warn" data-level="warn">● 선물 연결 중</span><span id="futInfo" class="src">선물 계약 목록을 불러오는 중</span></div><div id="futCards" class="radar"><div class="signal">선물 데이터를 불러오는 중<div class="src">데이터가 없을 때는 추정값을 표시하지 않습니다.</div></div></div><div class="foot">선물시장 활동도(0~100) = OI 15분 변화(40) + 현물 15분 가격 변화(20) + 거래 활동(20) + Funding 절대값(20). 점수가 높을수록 선물시장에서 강한 활동이 관측됐다는 뜻이며, 상승·하락 예측이나 매매 신호가 아닙니다. "가격↑ · OI↑" 같은 표시는 관측된 가격·미결제약정 방향의 조합일 뿐입니다. OI 변화율은 계약 수량 기준, OI 금액은 계약 수량 × Mark Price. 자세한 계산: docs/FUTURES-RADAR.md</div></div>
+<div class="panel" id="intelPanel"><h2>📰 뉴스·공지 <span class="src">· Binance/Upbit 공식 공지 + 주요 뉴스</span></h2><div class="fut-head"><span id="intelStatus" class="live warn" data-level="warn">● 정보 연결 중</span><span id="intelInfo" class="src">정보를 불러오는 중</span></div><div class="ifilters" id="intelKind" role="group" aria-label="정보 종류"><button class="btn ifilter on" data-kind="all" aria-pressed="true">전체</button><button class="btn ifilter" data-kind="official" aria-pressed="false">공식</button><button class="btn ifilter" data-kind="news" aria-pressed="false">뉴스</button></div><div class="ifilters" id="intelCoin" role="group" aria-label="코인"><button class="btn ifilter on" data-coin="ALL" aria-pressed="true">전체 코인</button><button class="btn ifilter" data-coin="BTC" aria-pressed="false">BTC</button><button class="btn ifilter" data-coin="ETH" aria-pressed="false">ETH</button><button class="btn ifilter" data-coin="SOL" aria-pressed="false">SOL</button><button class="btn ifilter" data-coin="XRP" aria-pressed="false">XRP</button><button class="btn ifilter" data-coin="OTHER" aria-pressed="false">기타</button></div><div id="intelList" class="ilist"><div class="signal">정보를 불러오는 중<div class="src">출처가 없는 내용은 만들지 않고, 데이터가 없으면 비워 둡니다.</div></div></div><div id="intelSources" class="foot isrc"></div><div class="foot">정보 중요도(0~100) = 출처 신뢰도(공식 &gt; 뉴스) + 이벤트 종류(상장·상장폐지 등) + 관련 코인 규모 + 독립 출처 수 + 시장 반응. <b>정보의 중요도</b>이며 상승·하락 예측이나 매매 신호가 아닙니다. "공식 확인"은 거래소 공식 공지에서 직접 수집했다는 뜻입니다. 시장 반응 숫자는 실제 데이터로만 계산하며 없으면 표시하지 않습니다: Binance 감시 종목은 <b>지금 기준</b> 최근 5분/15분 가격·거래 활동·OI·Funding, "Upbit 게시 후/전"은 공지·기사 <b>게시 시각 기준</b> Upbit 원화 1분봉입니다. 자세한 규칙: docs/INTELLIGENCE.md</div></div>
 <div class="panel"><h2>🛰️ 이벤트 센터</h2><div class="radar">
 <div class="signal"><span class="hot">🔥 거래량 이상</span><br><div id="volumeEvent"><strong>데이터 수집 중</strong><div class="src">선택 구간 기준 거래대금 3배 이상 종목</div></div></div>
-<div class="signal"><span class="hot">📰 뉴스 발생</span><br><strong>준비 중</strong><div class="src">BlockMedia · 공식 거래소/프로젝트 · 글로벌 뉴스</div></div>
+<div class="signal"><span class="hot">📰 뉴스·공지 발생</span><br><div id="newsEvent"><strong>수집 중</strong><div class="src">Binance·Upbit 공식 공지 + BlockMedia · CoinDesk · Cointelegraph</div></div></div>
 <div class="signal"><span class="hot">📣 SNS 확산</span><br><strong>준비 중</strong><div class="src">Telegram · X · 국내 커뮤니티 언급을 시장 데이터와 결합할 예정</div></div>
 </div></div><div id="binancePanel" class="panel"><h2>🌎 Binance 거래대금 TOP</h2><table><thead><tr><th>코인</th><th>가격</th><th>24H</th><th>거래대금</th><th>거래량</th></tr></thead><tbody id="binanceBody"><tr><td colspan="5">불러오는 중...</td></tr></tbody></table><div class="foot">Binance 현물 USDT 마켓 감시 종목(24H 거래대금 상위) 중 상위 15개 · 거래량은 코인 수량</div></div>
 <div id="upbitPanel" class="panel"><h2>🇰🇷 Upbit 원화시장</h2><table><thead><tr><th>코인</th><th>현재가</th><th>24H</th><th>24H 거래대금</th></tr></thead><tbody id="upbitBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody></table><div class="foot">Upbit 공개 API · 30초마다 갱신</div></div>
@@ -22,16 +26,18 @@
 <div class="panel"><h2>📡 등록 정보원 · V3 <span class="soonbadge">연동 예정</span></h2><div class="feed"><div class="feeditem"><b>🇰🇷 BlockMedia</b><span class="src">국내 뉴스 · 중요도 높음 · 교차검증 대상</span></div><div class="feeditem"><b>WeCryptoTogether</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>CEN · emperorcoin</b><span class="src">Telegram · 정보/커뮤니티</span></div><div class="feeditem"><b>취미생활방</b><span class="src">Telegram · 국내 반응</span></div><div class="feeditem"><b>🇰🇷 국내 코인 커뮤니티</b><span class="src">언급량/심리 감지용</span></div><div class="feeditem"><b>𝕏 Crypto Radar</b><span class="src">공식계정 + 주요 계정 · 다음 단계</span></div></div></div>
 <div class="panel"><h2>🎯 신호 판정 방식</h2><div class="note">한 출처의 글만으로 판단하지 않습니다.<br>① 가격/거래량 이상징후<br>② 공식 발표 여부<br>③ 뉴스 교차확인<br>④ Telegram/X/커뮤니티 확산<br>⑤ 같은 시간대 발생 여부를 묶어 보여주는 구조입니다.</div></div><div class="panel"><h2>🤖 AI 브리핑 <span class="soonbadge">준비 중</span></h2><div class="feeditem"><b>준비 중</b><span class="src">AI 요약은 실제 데이터 검증 구조가 갖춰진 뒤 추가됩니다. 지금은 어떤 요약도 생성하지 않습니다.</span></div><div class="foot">정보 제공용 화면입니다. 특정 코인의 매수·매도를 자동 실행하지 않습니다.</div></div>
 </aside></div><div id="appVersion" class="ver">COIN RADAR</div></div>
-<script src="assets/radar-core.js?v=1.3.0"></script>
-<script src="assets/radar-engine.js?v=1.3.0"></script>
-<script src="assets/futures-engine.js?v=1.3.0"></script>
+<script src="assets/radar-core.js?v=1.4.0"></script>
+<script src="assets/radar-engine.js?v=1.4.0"></script>
+<script src="assets/futures-engine.js?v=1.4.0"></script>
+<script src="assets/intel-core.js?v=1.4.0"></script>
 <script>
 (function () {
   'use strict';
-  const APP_VERSION = '1.3.0'; // assets/radar-core.js · radar-engine.js · futures-engine.js 의 VERSION, script ?v= 와 같게 유지
+  const APP_VERSION = '1.4.0'; // assets/radar-core.js · radar-engine.js · futures-engine.js · intel-core.js 의 VERSION, script ?v= 와 같게 유지
   const C = window.RadarCore;
   const E = window.RadarEngine;
   const F = window.FuturesEngine;
+  const I = window.IntelCore;
   const $ = (id) => document.getElementById(id);
   // 주의: window.status 등 전역 이름과 충돌하지 않도록 요소는 항상 getElementById 로 가져옵니다.
   const el = {
@@ -452,7 +458,7 @@
   function sectionInView() {
     const line = $('tabs').getBoundingClientRect().bottom + 24;
     const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
-    for (const go of ['upbitPanel', 'binancePanel', 'futuresPanel']) {
+    for (const go of ['upbitPanel', 'binancePanel', 'futuresPanel', 'intelPanel']) {
       const r = $(go).getBoundingClientRect();
       if (r.top <= line && r.bottom > line) return go;
       if (atBottom && r.top < window.innerHeight && r.bottom > line) return go;
@@ -626,11 +632,136 @@
     }).join('');
   }
 
+  // ── 정보(공지/뉴스) 레이어 (Phase 6A) ─────────────
+  // Worker(/api/intelligence/*)가 D1 에 저장한 공식 공지·뉴스를 읽어 표시합니다. 이 기능이 실패해도 시세·레이더·선물은 계속 동작합니다.
+  // 시장 반응 숫자는 이 화면이 이미 받은 Binance 1분봉·선물 데이터(또는 Worker 의 Upbit 스냅샷)만 사용하고, 없으면 표시하지 않습니다.
+  const INTEL_KEY = 'coinradar.intel.filter';
+  const intel = { events: [], sources: [], loadedAt: 0, statusAt: 0, error: null, kind: 'all', coin: 'ALL' };
+  el.intelList = $('intelList');
+  el.intelTopList = $('intelTopList');
+  el.intelStatus = $('intelStatus');
+  el.intelInfo = $('intelInfo');
+  el.intelSources = $('intelSources');
+  el.newsEvent = $('newsEvent');
+  try {
+    const f = JSON.parse(safeStorage.get(INTEL_KEY) || 'null');
+    if (f && ['all', 'official', 'news'].includes(f.kind)) intel.kind = f.kind;
+    if (f && ['ALL', 'BTC', 'ETH', 'SOL', 'XRP', 'OTHER'].includes(f.coin)) intel.coin = f.coin;
+  } catch (e) { /* 저장된 필터가 없거나 손상됨 */ }
+
+  const validEvent = (e) => e && typeof e === 'object' && Number.isFinite(e.id) && typeof e.title === 'string' && Number.isFinite(e.importance)
+    && Array.isArray(e.symbols) && (e.published_at === null || Number.isFinite(e.published_at)) && Number.isFinite(e.first_seen_at);
+
+  async function intelGet(path) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const r = await fetch(I.API_BASE + path, { signal: ctrl.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function loadIntel() {
+    if (document.hidden) return;
+    try {
+      const b = await intelGet('/api/intelligence/events?limit=50');
+      if (!b || !Array.isArray(b.events)) throw new Error('형식 오류');
+      intel.events = b.events.filter(validEvent);
+      intel.loadedAt = Date.now();
+      intel.error = null;
+    } catch (e) {
+      intel.error = String((e && e.message) || e);
+    }
+    if (Date.now() - intel.statusAt > 110000) {
+      try {
+        const s = await intelGet('/api/intelligence/status');
+        if (s && Array.isArray(s.sources)) { intel.sources = s.sources; intel.statusAt = Date.now(); }
+      } catch (e) { /* 상태 조회 실패는 카드 표시에 영향 없음 */ }
+    }
+    renderIntel();
+  }
+
+  function spotMetrics(bsym, W, now) {
+    const r = E.analyze(candles, [bsym], W, now).rows.find((x) => x.symbol === bsym);
+    return r && r.metrics.status === 'ok' ? r.metrics : null;
+  }
+
+  // 이벤트 카드의 시장 반응: 실제로 가진 데이터만 (없으면 rows 가 비어 카드에서 숨김/안내)
+  function reactionFor(ev, now) {
+    let note = '';
+    for (const s of ev.symbols) {
+      const b = s + 'USDT';
+      const tracked = universe.includes(b);
+      const input = { upbit: (ev.market || []).find((m) => m.symbol === s) || null };
+      if (tracked) {
+        const m5 = spotMetrics(b, 5, now);
+        const m15 = spotMetrics(b, 15, now);
+        input.price5 = m5 ? m5.changePct : null;
+        input.price15 = m15 ? m15.changePct : null;
+        input.ratio = m15 ? m15.ratio : null;
+        if (fut.symbols.includes(b)) {
+          const c = F.evaluate(b, { series: fut.series.get(b), premium: fut.premium.get(b), updatedAt: fut.updated.get(b), spot: m15 ? { changePct: m15.changePct, ratio: m15.ratio } : null }, now);
+          if (!c.stale) { input.oi5 = c.oi5; input.oi15 = c.oi15; input.fundingPct = c.fundingPct; }
+        }
+      }
+      const rows = I.reactionRows(input);
+      if (rows.length) return { rows, note: '', symbol: s };
+      if (!note) note = tracked ? '데이터 수집 중' : 'Binance 감시 종목이 아니어서 시장 데이터 없음';
+    }
+    return { rows: [], note: ev.symbols.length ? note : '', symbol: '' };
+  }
+
+  function renderIntel() {
+    const now = Date.now();
+    const delayed = intel.sources.filter((s) => s.status === 'delayed');
+    let view;
+    if (intel.error && !intel.events.length) view = { level: 'err', text: '정보 서버 연결 실패' };
+    else if (intel.error) view = { level: 'warn', text: '정보 갱신 지연' };
+    else if (!intel.loadedAt) view = { level: 'warn', text: '정보 연결 중' };
+    else if (delayed.length) view = { level: 'warn', text: `정보 일부 지연 (${delayed.length}개 출처)` };
+    else view = { level: 'ok', text: '정보 정상' };
+    paintStatus(el.intelStatus, view);
+
+    const list = I.filterEvents(intel.events, intel.kind, intel.coin);
+    document.querySelectorAll('#intelKind .ifilter').forEach((b) => { const on = b.dataset.kind === intel.kind; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    document.querySelectorAll('#intelCoin .ifilter').forEach((b) => { const on = b.dataset.coin === intel.coin; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+    el.intelInfo.textContent = intel.loadedAt ? `${list.length}건 · 마지막 갱신 ${timeStr(intel.loadedAt)}` + (intel.error ? ' · 최신 정보를 받지 못했습니다' : '') : intel.error ? '정보 서버에 연결하지 못했습니다. 시세·레이더는 계속 동작합니다.' : '정보를 불러오는 중';
+    if (!intel.loadedAt && intel.error) {
+      el.intelList.innerHTML = '<div class=signal data-state=error>정보 서버에 연결하지 못했습니다<div class=src>잠시 후 자동으로 다시 시도합니다. 시세·레이더·선물은 영향 없이 동작합니다.</div></div>';
+    } else if (!intel.loadedAt) {
+      el.intelList.innerHTML = '<div class=signal data-state=loading>정보를 불러오는 중<div class=src>출처가 없는 내용은 만들지 않고, 데이터가 없으면 비워 둡니다.</div></div>';
+    } else if (!list.length) {
+      el.intelList.innerHTML = `<div class=signal data-state=empty>${intel.events.length ? '선택한 조건에 맞는 정보가 없습니다' : '아직 수집된 정보가 없습니다'}<div class=src>${intel.events.length ? '필터를 바꿔 보세요.' : 'Worker 가 공식 공지·뉴스를 수집하면 여기에 표시됩니다.'}</div></div>`;
+    } else {
+      el.intelList.innerHTML = list.slice(0, 20).map((ev) => I.cardHtml(ev, reactionFor(ev, now), now)).join('');
+    }
+    el.intelSources.innerHTML = intel.sources.length ? intel.sources.map((s) => `<span class="${I.esc(s.status)}">${I.esc(I.healthText(s, now))}</span>`).join('') : '';
+
+    const top = I.rankTop(intel.events, now, 5);
+    el.intelTopList.innerHTML = top.length ? top.map((ev) => I.miniHtml(ev, now)).join('')
+      : `<div class="feeditem"><span class="src">${intel.error && !intel.loadedAt ? '정보 서버에 연결하지 못했습니다' : intel.loadedAt ? '최근 48시간 안의 중요 정보가 없습니다' : '정보를 불러오는 중'}</span></div>`;
+
+    const day = intel.events.filter((e) => now - I.evTime(e) <= 86400000);
+    el.newsEvent.innerHTML = intel.loadedAt
+      ? `<strong>${day.length}건</strong><div class=src>최근 24시간 · 공식 ${day.filter((e) => e.source_type === 'official').length} · 뉴스 ${day.filter((e) => e.source_type !== 'official').length}</div>`
+      : '<strong>수집 중</strong><div class=src>Binance·Upbit 공식 공지 + BlockMedia · CoinDesk · Cointelegraph</div>';
+  }
+
+  document.querySelectorAll('#intelKind .ifilter, #intelCoin .ifilter').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.kind) intel.kind = b.dataset.kind;
+    if (b.dataset.coin) intel.coin = b.dataset.coin;
+    safeStorage.set(INTEL_KEY, JSON.stringify({ kind: intel.kind, coin: intel.coin }));
+    renderIntel();
+  }));
+
   // ── 버전 표시 (화면과 구성 파일 버전이 다르면 캐시 문제 안내) ──
-  if (C.VERSION === APP_VERSION && E.VERSION === APP_VERSION && F && F.VERSION === APP_VERSION) {
+  if (C.VERSION === APP_VERSION && E.VERSION === APP_VERSION && F && F.VERSION === APP_VERSION && I && I.VERSION === APP_VERSION) {
     el.version.textContent = `COIN RADAR v${APP_VERSION}`;
   } else {
-    el.version.textContent = `COIN RADAR v${APP_VERSION} · 구성 파일 v${C.VERSION || '?'}/${E.VERSION || '?'}/${(F && F.VERSION) || '?'} — 새로고침이 필요합니다`;
+    el.version.textContent = `COIN RADAR v${APP_VERSION} · 구성 파일 v${C.VERSION || '?'}/${E.VERSION || '?'}/${(F && F.VERSION) || '?'}/${(I && I.VERSION) || '?'} — 새로고침이 필요합니다`;
     el.version.classList.add('warn');
   }
 
@@ -646,6 +777,11 @@
   })();
   loadUpbit();
   setInterval(loadUpbit, 30000);
+  renderIntel();
+  loadIntel(); // 공식 공지·뉴스 (실패해도 다른 화면에 영향 없음)
+  setInterval(loadIntel, 60000);
+  setInterval(renderIntel, 15000); // '몇 분 전' 표시와 시장 반응 값 갱신
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - intel.loadedAt > 60000) loadIntel(); });
   setInterval(renderBinance, 1000); // 화면은 1초에 한 번만 다시 그림
   setInterval(renderStatus, 1000);
   setInterval(renderFutures, 1000); // 선물: '몇 초 전' 표시와 지연 판정
