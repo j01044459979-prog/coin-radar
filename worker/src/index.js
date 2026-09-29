@@ -1,24 +1,31 @@
 // COIN RADAR 백엔드 (Cloudflare Worker: coin-radar-engine)
 // Phase 0: /api/health, /debug/reachability
 // Phase 4: Cron(1분마다) Upbit KRW 24시간 감시 + 이상 이벤트 D1 저장 (docs/MONITOR.md)
+// Phase 6A: Crypto Intelligence (공식 공지 · 뉴스 수집, /api/intelligence/*) — docs/INTELLIGENCE.md
 // Phase 5: 외부 메신저 알림 제거. Binance 선물 레이더는 브라우저 전용 (Worker 는 Binance 를 호출하지 않음)
 // 이 파일에는 비밀키/토큰을 절대 넣지 않습니다. Cloudflare Secret(env)으로만 읽습니다.
 
 import { checkAllExchanges } from './reachability.js';
 import { json } from './response.js';
 import { runMonitor, monitorStatus } from './monitor.js';
+import { runIntelligence } from './intel/engine.js';
+import { handleIntelligence } from './intel/api.js';
 
 // 주의: 이 파일(진입점)에서는 default 외의 값을 export 하지 않습니다.
 //       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
 const SERVICE_NAME = 'coin-radar-engine';
-const PHASE = 5;
-const VERSION = '0.5.0';
+const PHASE = 5; // 기존 상태 응답과 호환을 위해 유지 (Phase 6A 는 VERSION 0.6.0 · /api/intelligence)
+const VERSION = '0.6.0';
+const INTEL_CRON = '*/2 * * * *'; // wrangler.toml 의 두 번째 Cron (정보 수집). 1분 Cron 은 기존 Upbit 감시
 
 const ENDPOINTS = {
   'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
   'GET /api/health': '서버가 정상 작동 중인지 확인',
   'GET /debug/reachability': 'Binance Spot / Binance Futures / Upbit 접속 가능 여부를 실제 요청으로 확인',
   'GET /api/monitor/status': 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 순위, 최근 이벤트, Cron 정상 여부)',
+  'GET /api/intelligence/events': '중요 정보 이벤트(같은 사건은 하나로 묶음). ?limit=1~50&symbol=BTC&source=official|news&min_importance=0~100',
+  'GET /api/intelligence/latest': '수집된 공지/뉴스 원본 항목 최신순 (같은 쿼리 지원)',
+  'GET /api/intelligence/status': '정보 출처별 수집 상태 (정상/지연/수집 전)',
   'GET /api/monitor/preview': 'Upbit 감시 계산을 지금 한 번 실행해 결과 미리보기 (저장·알림 없음, 1분에 1회)',
 };
 
@@ -117,6 +124,7 @@ export default {
       if (path === '/') return handleIndex();
       if (path === '/api/health') return handleHealth(request);
       if (path === '/debug/reachability') return await handleReachability(request);
+      if (path === '/api/intelligence' || path.startsWith('/api/intelligence/')) return await handleIntelligence(path, url, env || {}, Date.now());
       if (path === '/api/monitor/status') return json(await monitorStatus(env || {}, Date.now()));
       if (path === '/api/monitor/preview') return await handlePreview(env || {});
     } catch (err) {
@@ -132,6 +140,8 @@ export default {
   // Cron Trigger (wrangler.toml [triggers] crons = ["* * * * *"])
   async scheduled(controller, env, ctx) {
     const now = controller && controller.scheduledTime ? controller.scheduledTime : Date.now();
-    ctx.waitUntil(runMonitor(env, now));
+    // 두 Cron 은 서로 다른 실행이라 요청 수/CPU 제한이 따로 적용됩니다. 기존 1분 감시가 항상 우선입니다.
+    if (controller && controller.cron === INTEL_CRON) ctx.waitUntil(runIntelligence(env, now));
+    else ctx.waitUntil(runMonitor(env, now));
   },
 };

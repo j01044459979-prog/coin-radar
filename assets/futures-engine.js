@@ -10,7 +10,7 @@
 (function (root) {
   'use strict';
 
-  const VERSION = '1.3.0'; // radar-core.js / radar-engine.js VERSION 과 같게 유지
+  const VERSION = '1.4.0'; // radar-core.js / radar-engine.js VERSION 과 같게 유지
   const MIN = 60 * 1000;
 
   // ── 규칙 (여기 숫자만 바꾸면 기준이 바뀝니다) ─────────────────

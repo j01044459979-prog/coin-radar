@@ -18,7 +18,7 @@ class Stmt {
     const s = this.db.prepare(this.sql);
     if (/^\s*(SELECT|WITH)/i.test(this.sql)) return { results: s.all(...this.args) };
     const r = s.run(...this.args);
-    return { success: true, meta: { changes: r.changes } };
+    return { success: true, meta: { changes: r.changes, last_row_id: Number(r.lastInsertRowid) } };
   }
   async all() {
     return { results: this.db.prepare(this.sql).all(...this.args) };

@@ -107,7 +107,27 @@ function futuresRoute(mode, counter) {
   };
 }
 
-async function openPage({ upbitFail = false, viewport, initScript, wsMessages, klines = 'full', context, futures = 'ok' } = {}) {
+// ── Phase 6A: 정보(뉴스/공지) 테스트용 고정 응답 (표시 로직 검증용 입력이며 서비스 코드에는 들어가지 않음) ──
+function intelEvents(now) {
+  const base = { importance_base: 0, reaction_bonus: 0, item_count: 1, source_count: 1, updated_at: now, market: [] };
+  return [
+    { ...base, id: 1, title: 'Binance Will List Solana (SOL) with Seed Tag Applied', url: 'https://www.binance.com/en/support/announcement/abc123', category: 'listing', symbols: ['SOL'], importance: 68, verification: 'official', source: 'binance', source_type: 'official', sources: ['binance'], published_at: now - 6 * 60000, event_time: now - 6 * 60000, first_seen_at: now - 4 * 60000 },
+    { ...base, id: 2, title: 'Bitcoin ETF inflows hit a new record', url: 'https://www.coindesk.com/markets/btc-etf', category: 'regulation', symbols: ['BTC'], importance: 61, verification: 'multi', source: 'coindesk', source_type: 'news', sources: ['coindesk', 'cointelegraph'], source_count: 2, item_count: 2, published_at: now - 50 * 60000, event_time: now - 50 * 60000, first_seen_at: now - 45 * 60000 },
+    { ...base, id: 3, title: '[거래] 제트제트(ZZZ) KRW 마켓 디지털 자산 추가', url: 'https://upbit.com/service_center/notice?id=999', category: 'listing', symbols: ['ZZZ'], importance: 55, verification: 'official', source: 'upbit', source_type: 'official', sources: ['upbit'], published_at: now - 2 * 3600000, event_time: now - 2 * 3600000, first_seen_at: now - 2 * 3600000 },
+    { ...base, id: 4, title: '<img src=x onerror="window.__xss=1"> Dogecoin <script>window.__xss=2</script>news', url: 'javascript:window.__xss=3', category: 'general', symbols: ['XRP'], importance: 30, verification: 'news', source: 'blockmedia', source_type: 'news', sources: ['blockmedia'], published_at: null, event_time: now - 3 * 3600000, first_seen_at: now - 3 * 3600000 },
+    { ...base, id: 5, title: 'Fed holds rates steady', url: 'https://cointelegraph.com/news/fed', category: 'general', symbols: [], importance: 20, verification: 'news', source: 'cointelegraph', source_type: 'news', sources: ['cointelegraph'], published_at: now - 5 * 3600000, event_time: now - 5 * 3600000, first_seen_at: now - 5 * 3600000 },
+  ];
+}
+function intelStatus(now) {
+  return { status: 'ok', now, sources: [
+    { id: 'binance', label: 'Binance 공지', type: 'official', status: 'ok', last_success_at: now - 2 * 60000 },
+    { id: 'upbit', label: 'Upbit 공지', type: 'official', status: 'ok', last_success_at: now - 60000 },
+    { id: 'coindesk', label: 'CoinDesk', type: 'news', status: 'delayed', last_success_at: now - 17 * 60000 },
+    { id: 'blockmedia', label: 'BlockMedia', type: 'news', status: 'pending', last_success_at: null },
+  ] };
+}
+
+async function openPage({ upbitFail = false, viewport, initScript, wsMessages, klines = 'full', context, futures = 'ok', intel = 'ok' } = {}) {
   const page = context ? await context.newPage() : await browser.newPage(viewport ? { viewport } : {});
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -132,8 +152,17 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages, k
     const json = r.request().url().includes('market/all') ? upbitMarkets : upbitTicker;
     return r.fulfill({ json, headers: { 'access-control-allow-origin': '*' } });
   });
+  const intelCalls = { events: 0, status: 0 };
+  await page.route(/workers\.dev\/api\/intelligence/, (r) => {
+    const cors = { 'access-control-allow-origin': '*' };
+    const path = new URL(r.request().url()).pathname;
+    if (path.endsWith('/status')) intelCalls.status += 1;
+    else intelCalls.events += 1;
+    if (intel === 'fail') return r.fulfill({ status: 503, body: 'x', headers: cors });
+    return r.fulfill({ json: path.endsWith('/status') ? intelStatus(Date.now()) : { status: 'ok', count: 0, events: intel === 'empty' ? [] : intelEvents(Date.now()) }, headers: cors });
+  });
   await page.goto(base);
-  return { page, errors, sockets, futCalls };
+  return { page, errors, sockets, futCalls, intelCalls };
 }
 
 test('실시간 시세·상태 표시, 준비 중 기능 비활성', async () => {
@@ -453,7 +482,7 @@ test('선물 탭·카드: OI 금액·변화, Funding, 가격·OI 조합, 활동�
   assert.match(await page.textContent('#futInfo'), /선물 없음: APT/);
   assert.match(await page.textContent('#futCards'), /갱신 \d/);
   assert.doesNotMatch(await page.textContent('#futuresPanel'), /매수|매도|롱|숏|진입/);
-  assert.match(await page.textContent('#appVersion'), /v1\.3\.0/);
+  assert.match(await page.textContent('#appVersion'), /v1\.4\.0/);
   assert.deepEqual(errors, []);
   await page.close();
 });
@@ -517,6 +546,151 @@ test('데스크톱: 선물 레이더 표시', async () => {
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'desktop-futures.png') });
   const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
   assert.ok(sw <= iw);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// ── Phase 6A: 뉴스/정보 탭 ──
+
+test('뉴스 탭: 활성화(준비 중 아님), 이동·선택 표시, 카드·검증 배지·출처 상태', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 5);
+  assert.equal(await page.locator('.tab', { hasText: '뉴스' }).evaluate((n) => n.classList.contains('soon')), false);
+  assert.doesNotMatch(await page.textContent('#tabs'), /뉴스준비 중/);
+  await page.click('.tab[data-go="intelPanel"]');
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await page.$$eval('.tab.on', (ns) => ns.map((n) => n.dataset.go)), ['intelPanel']);
+  const card1 = await page.textContent('#intelList .icard[data-event="1"]');
+  assert.match(card1, /SOL/);
+  assert.match(card1, /공식 확인/);
+  assert.match(card1, /Binance · 6분 전/);
+  assert.match(card1, /KST/);
+  assert.match(card1, /Binance Will List Solana/);
+  assert.match(card1, /정보 중요도 68/);
+  assert.match(await page.textContent('#intelList .icard[data-event="2"]'), /복수 출처 확인/);
+  assert.match(await page.textContent('#intelList .icard[data-event="2"]'), /CoinDesk 외 1곳/);
+  assert.match(await page.textContent('#intelList .icard[data-event="4"]'), /게시 시간 미확인 · 수집 3시간 전/);
+  assert.match(await page.textContent('#intelSources'), /Binance 공지 정상 · 2분 전/);
+  assert.match(await page.textContent('#intelSources'), /CoinDesk 지연 · 17분 전/);
+  assert.match(await page.textContent('#intelSources'), /BlockMedia 수집 전/);
+  assert.match(await page.textContent('#intelStatus'), /일부 지연/);
+  assert.match(await page.textContent('#newsEvent'), /5건/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('뉴스 카드 보안: 원문 링크는 새 탭 + noopener noreferrer, 위험 URL 링크 없음, 제목 XSS 실행 안 됨', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 5);
+  const links = await page.$$eval('#intelList a', (as) => as.map((a) => ({ href: a.href, target: a.target, rel: a.rel })));
+  assert.equal(links.length, 4); // 위험 URL 인 4번 카드는 링크 없음
+  for (const l of links) {
+    assert.match(l.href, /^https:\/\//);
+    assert.equal(l.target, '_blank');
+    assert.match(l.rel, /noopener/);
+    assert.match(l.rel, /noreferrer/);
+  }
+  assert.equal(await page.$$eval('a[href^="javascript"]', (n) => n.length), 0);
+  assert.match(await page.textContent('#intelList .icard[data-event="4"]'), /원문 링크 없음/);
+  assert.equal(await page.$('#intelList img'), null);
+  assert.equal(await page.$('#intelList script'), null);
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.match(await page.textContent('#intelList .icard[data-event="4"] .ititle'), /<img src=x/); // 텍스트로 그대로 보임
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('시장 반응 연결: 감시 종목은 실제 가격·거래 활동·OI, 없는 코인은 안내만 (임의 숫자 없음)', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]')); // 1분봉 수집 완료
+  await page.waitForFunction(() => /OI 5분/.test(document.querySelector('#intelList .icard[data-event="1"]')?.textContent || ''), null, { timeout: 15000 });
+  const sol = await page.textContent('#intelList .icard[data-event="1"]');
+  assert.match(sol, /시장 반응 · SOL 기준/);
+  assert.match(sol, /가격 5분 \/ 15분\+3\.00% \/ \+3\.00%/);
+  assert.match(sol, /거래 활동\d+\.\d배/);
+  assert.match(sol, /OI 5분 \/ 15분/);
+  assert.match(sol, /Funding\+0\.0100%/);
+  const zzz = await page.textContent('#intelList .icard[data-event="3"]');
+  assert.match(zzz, /Binance 감시 종목이 아니어서 시장 데이터 없음/);
+  assert.doesNotMatch(zzz, /\d+\.\d+%/);
+  assert.equal(await page.$('#intelList .icard[data-event="5"] .ireact'), null); // 코인 없는 뉴스
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('필터: 전체/공식/뉴스 + 코인, 선택 상태 유지', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 5);
+  const ids = () => page.$$eval('#intelList .icard', (n) => n.map((x) => x.dataset.event));
+  await page.click('#intelKind [data-kind="official"]');
+  assert.deepEqual(await ids(), ['1', '3']);
+  assert.equal(await page.getAttribute('#intelKind [data-kind="official"]', 'aria-pressed'), 'true');
+  await page.click('#intelKind [data-kind="news"]');
+  assert.deepEqual(await ids(), ['2', '4', '5']);
+  await page.click('#intelKind [data-kind="all"]');
+  await page.click('#intelCoin [data-coin="BTC"]');
+  assert.deepEqual(await ids(), ['2']);
+  await page.click('#intelCoin [data-coin="OTHER"]');
+  assert.deepEqual(await ids(), ['3', '5']);
+  await page.click('#intelCoin [data-coin="XRP"]');
+  assert.deepEqual(await ids(), ['4']);
+  await page.click('#intelCoin [data-coin="ETH"]');
+  assert.match(await page.textContent('#intelList'), /선택한 조건에 맞는 정보가 없습니다/);
+  await page.click('#intelCoin [data-coin="SOL"]');
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 1);
+  assert.equal(await page.getAttribute('#intelCoin [data-coin="SOL"]', 'aria-pressed'), 'true'); // 새로고침 후에도 유지
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('전체 레이더: 최근 중요 정보 상위 표시 (중요도 + 최신성 순, 최대 5개, 링크 안전)', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#intelTopList .imini').length > 0);
+  const ids = await page.$$eval('#intelTopList .imini', (n) => n.map((x) => x.dataset.event));
+  assert.deepEqual(ids, ['1', '2', '3', '4', '5']);
+  assert.match(await page.textContent('#intelTopList .imini >> nth=0'), /SOL 공식 확인.*Binance · 6분 전 · 정보 중요도 68/);
+  assert.match(await page.textContent('#intelTopList .imini[data-event="4"]'), /\(수집 시각\)/);
+  assert.equal(await page.$$eval('#intelTopList a[href^="javascript"]', (n) => n.length), 0);
+  // 전체 레이더(맨 위)에서 시세 카드와 같은 화면에 보임
+  assert.ok(await page.$eval('#intelTop', (n) => n.getBoundingClientRect().top < 3000));
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('정보 서버 실패: 정보 영역만 오류 표시, 시세·레이더·선물은 정상', async () => {
+  const { page, errors } = await openPage({ intel: 'fail' });
+  await page.waitForFunction(() => document.getElementById('intelStatus').textContent.includes('연결 실패'));
+  assert.match(await page.textContent('#intelList'), /정보 서버에 연결하지 못했습니다/);
+  assert.match(await page.textContent('#intelTopList'), /정보 서버에 연결하지 못했습니다/);
+  await page.waitForFunction(() => document.getElementById('hero').textContent.includes('65,432.1'));
+  await page.waitForFunction(() => document.getElementById('connStatus').textContent.includes('Binance 실시간'));
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('정보가 아직 없을 때: 빈 상태 안내', async () => {
+  const { page, errors } = await openPage({ intel: 'empty' });
+  await page.waitForFunction(() => document.getElementById('intelList').textContent.includes('아직 수집된 정보가 없습니다'));
+  assert.match(await page.textContent('#newsEvent'), /0건/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('모바일 뉴스 탭: 카드 표시, 가로 스크롤 없음, 탭 고정', async () => {
+  const { page, errors } = await openPage({ viewport: { width: 390, height: 844 } });
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 5);
+  await page.click('.tab[data-go="intelPanel"]');
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await page.$$eval('.tab.on', (ns) => ns.map((n) => n.dataset.go)), ['intelPanel']);
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw, `scrollWidth ${sw} > innerWidth ${iw}`);
+  const over = await page.$$eval('#intelList .icard', (ns) => ns.filter((n) => n.getBoundingClientRect().right > window.innerWidth).length);
+  assert.equal(over, 0);
+  const linkH = await page.$eval('#intelList .ilink', (n) => n.getBoundingClientRect().height);
+  assert.ok(linkH >= 34, `원문 링크 터치 영역 ${linkH}`);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-intel.png') });
   assert.deepEqual(errors, []);
   await page.close();
 });
