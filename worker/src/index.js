@@ -1,26 +1,25 @@
 // COIN RADAR 백엔드 (Cloudflare Worker: coin-radar-engine)
 // Phase 0: /api/health, /debug/reachability
-// Phase 4: Cron(1분마다) Upbit KRW 24시간 감시 + 중요 이벤트 카카오톡 '나에게 보내기' 알림 (docs/MONITOR.md, docs/KAKAO.md)
+// Phase 4: Cron(1분마다) Upbit KRW 24시간 감시 + 이상 이벤트 D1 저장 (docs/MONITOR.md)
+// Phase 5: 외부 메신저 알림 제거. Binance 선물 레이더는 브라우저 전용 (Worker 는 Binance 를 호출하지 않음)
 // 이 파일에는 비밀키/토큰을 절대 넣지 않습니다. Cloudflare Secret(env)으로만 읽습니다.
 
 import { checkAllExchanges } from './reachability.js';
 import { json } from './response.js';
 import { runMonitor, monitorStatus } from './monitor.js';
-import { handleSetupPage, handleConnect, handleCallback, handleTestForm, handleTestApi } from './kakao-pages.js';
 
 // 주의: 이 파일(진입점)에서는 default 외의 값을 export 하지 않습니다.
 //       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
 const SERVICE_NAME = 'coin-radar-engine';
-const PHASE = 4;
-const VERSION = '0.4.0';
+const PHASE = 5;
+const VERSION = '0.5.0';
 
 const ENDPOINTS = {
   'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
   'GET /api/health': '서버가 정상 작동 중인지 확인',
   'GET /debug/reachability': 'Binance Spot / Binance Futures / Upbit 접속 가능 여부를 실제 요청으로 확인',
-  'GET /api/monitor/status': 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 이벤트, 카카오 알림 설정 여부, Cron 정상 여부)',
+  'GET /api/monitor/status': 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 순위, 최근 이벤트, Cron 정상 여부)',
   'GET /api/monitor/preview': 'Upbit 감시 계산을 지금 한 번 실행해 결과 미리보기 (저장·알림 없음, 1분에 1회)',
-  'GET /kakao/setup': '카카오톡 알림 연결·테스트 페이지 (ADMIN_TOKEN 필요)',
 };
 
 // /api/monitor/preview 는 Upbit 요청을 많이 보내므로 같은 인스턴스에서 1분에 한 번만 실제 실행
@@ -28,7 +27,7 @@ const previewCache = { at: 0, body: null };
 async function handlePreview(env) {
   const now = Date.now();
   if (previewCache.body && now - previewCache.at < 60000) return json({ ...previewCache.body, cached: true });
-  const run = await runMonitor(env, now, { notify: false, persist: false });
+  const run = await runMonitor(env, now, { persist: false });
   const body = {
     note: '저장·알림 없이 계산만 실행한 결과입니다. 상태는 데이터 상태 표시이며 투자 권유가 아닙니다.',
     ran_at: now,
@@ -110,17 +109,6 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '') || '/';
 
-    // 카카오 연결/테스트 (POST, ADMIN_TOKEN 확인)
-    if (request.method === 'POST') {
-      try {
-        if (path === '/kakao/connect') return await handleConnect(request, env || {});
-        if (path === '/kakao/test') return await handleTestForm(request, env || {});
-        if (path === '/api/admin/kakao-test') return await handleTestApi(request, env || {});
-      } catch (err) {
-        return json({ status: 'error', message: '서버 내부 오류가 발생했습니다.' }, 500);
-      }
-    }
-
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return json({ status: 'error', message: '이 서버는 GET 요청만 받습니다.' }, 405, { Allow: 'GET, HEAD' });
     }
@@ -131,8 +119,6 @@ export default {
       if (path === '/debug/reachability') return await handleReachability(request);
       if (path === '/api/monitor/status') return json(await monitorStatus(env || {}, Date.now()));
       if (path === '/api/monitor/preview') return await handlePreview(env || {});
-      if (path === '/kakao/setup') return await handleSetupPage(request, env || {});
-      if (path === '/kakao/callback') return await handleCallback(request, env || {});
     } catch (err) {
       return json({ status: 'error', message: '서버 내부 오류가 발생했습니다.', detail: String(err && err.message) }, 500);
     }

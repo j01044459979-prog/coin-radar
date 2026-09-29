@@ -1,9 +1,8 @@
 // 24시간 Upbit 감시 실행 (Cron 이 1분마다 호출)
-import { ALERT, STABLE_BASES, readConfig } from './config.js';
+import { STABLE_BASES, readConfig } from './config.js';
 import { fetchKrwTickers, fetchCandles } from './upbit.js';
 import { analyzeMarket, bestPerMarket, pickMarkets } from './monitor-engine.js';
-import { isEvent, decideAlerts, formatAlertMessage } from './alerts.js';
-import { sendKakaoMemo, maintainTokens, kakaoStatus } from './kakao.js';
+import { isEvent, importance } from './alerts.js';
 import * as store from './store.js';
 
 // D1 이 없을 때를 위한 같은 인스턴스 안의 마지막 실행 기록 (재시작되면 사라짐)
@@ -17,17 +16,18 @@ const compact = (r) => ({
   quote_vol: Math.round(r.metrics.quoteVol),
   score: r.score.score,
   labels: r.cls.labels.join(' + '),
+  important: importance(r).important,
   window_end: r.metrics.windowEnd,
 });
 
-// options: { fetchImpl, candleIntervalMs, notify(기본 true), persist(기본 true) }
+// options: { fetchImpl, candleIntervalMs, persist(기본 true) }
+// 외부 메신저(Telegram/카카오) 알림은 보내지 않습니다. 이상 이벤트는 D1 events 에 저장합니다.
 export async function runMonitor(env, now, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
-  const notify = options.notify !== false;
   const persist = options.persist !== false;
   const cfg = readConfig(env);
   const db = cfg.d1Configured && persist ? env.DB : null;
-  const run = { startedAt: now, finishedAt: now, ok: false, markets: 0, analyzed: 0, events: 0, alertsSent: 0, errors: [], summary: [], alerts: [], notes: [] };
+  const run = { startedAt: now, finishedAt: now, ok: false, markets: 0, analyzed: 0, events: 0, alertsSent: 0, errors: [], summary: [], notes: [] };
 
   try {
     const tickers = await fetchKrwTickers(fetchImpl);
@@ -49,38 +49,6 @@ export async function runMonitor(env, now, options = {}) {
       await store.saveEvents(db, events, now);
     }
 
-    // ── 카카오톡: 중요 이벤트만, 중복/쿨다운 확인 ──
-    if (!notify) {
-      run.notes.push('미리보기 실행: 알림 없음');
-    } else if (!db) {
-      run.notes.push('D1 미설정: 중복 알림 방지 기록을 저장할 수 없어 카카오톡 알림을 보내지 않습니다');
-    } else {
-      // Access Token 이 곧 만료되면 미리 갱신 (Refresh Token 도 자동 연장)
-      try {
-        const m = await maintainTokens(env, db, now, fetchImpl);
-        if (m && m.ok === false) run.notes.push('카카오 토큰 갱신 실패: ' + m.error);
-      } catch (err) {
-        run.notes.push('카카오 토큰 갱신 오류');
-      }
-      const kakao = await kakaoStatus(env, db, now);
-      const keys = best.map((r) => `${r.market}|${r.window}|${r.metrics.windowEnd}`);
-      const history = await store.loadAlertHistory(db, now, ALERT.cooldownMinutes, keys);
-      const decisions = decideAlerts(best, history, now);
-      for (const d of decisions) {
-        if (d.action !== 'send') {
-          run.alerts.push({ market: d.row.market, window: d.row.window, action: 'skip', why: d.why });
-          continue;
-        }
-        if (!kakao.ready) {
-          run.alerts.push({ market: d.row.market, window: d.row.window, action: 'skip', why: cfg.kakaoConfigured ? '카카오 미연결 (/kakao/setup 에서 연결)' : 'Kakao Secret 미설정' });
-          continue;
-        }
-        const res = await sendKakaoMemo(env, db, formatAlertMessage(d.row, now, { escalation: d.escalation }), now, fetchImpl);
-        await store.saveAlert(db, d.row, d.key, res.ok ? 'sent' : 'failed', res.ok ? d.reason : res.reason, now);
-        if (res.ok) run.alertsSent += 1;
-        run.alerts.push({ market: d.row.market, window: d.row.window, action: res.ok ? 'sent' : 'failed', why: res.ok ? d.reason : res.reason });
-      }
-    }
     run.ok = run.markets > 0 && run.analyzed > 0;
   } catch (err) {
     run.errors.push({ error: String(err && err.message) });
@@ -110,11 +78,10 @@ export async function monitorStatus(env, now) {
     cron: { schedule: '* * * * * (1분마다)', last_run_at: null, last_run_kst: null, seconds_since_last_run: null, healthy: false, last_ok_at: null, source: null },
     markets_watched: null,
     markets_setting: cfg.markets,
-    kakao: { configured: cfg.kakaoConfigured, ready: false },
+    notifications: '외부 메신저 알림 없음 (이상 이벤트는 recent_events 로 확인)',
     d1: { configured: cfg.d1Configured },
     latest_ranking: [],
     recent_events: [],
-    recent_alerts: [],
     notes: [],
   };
   let run = null;
@@ -128,20 +95,16 @@ export async function monitorStatus(env, now) {
       }
       out.cron.last_ok_at = s.lastOkAt;
       out.recent_events = s.events.map((e) => ({ detected_at: e.detected_at, market: e.market, window: e.win, change_pct: e.change_pct, ratio: e.ratio, score: e.score, labels: e.labels }));
-      out.recent_alerts = s.alerts.map((a) => ({ created_at: a.created_at, market: a.market, window: a.win, score: a.score, status: a.status, reason: a.reason }));
-      out.kakao = await kakaoStatus(env, env.DB, now);
     } catch (err) {
       out.notes.push('D1 조회 실패: ' + String(err && err.message));
     }
   } else {
-    out.notes.push('D1 미설정: 실행 기록/이벤트를 저장하지 않으며 카카오톡 알림도 보내지 않습니다 (docs/MONITOR.md 참고)');
+    out.notes.push('D1 미설정: 실행 기록/이벤트를 저장하지 않습니다 (docs/MONITOR.md 참고)');
     if (memory.lastRun) {
       run = memory.lastRun;
       out.cron.source = 'memory (이 인스턴스의 마지막 실행, 재시작 시 사라짐)';
     }
   }
-  if (!cfg.kakaoConfigured) out.notes.push('Kakao Secret(KAKAO_REST_API_KEY) 미설정: 알림을 건너뜁니다 (docs/KAKAO.md)');
-  else if (!out.kakao.ready) out.notes.push('카카오 계정 미연결: /kakao/setup 에서 한 번 연결해 주세요 (docs/KAKAO.md)');
   if (run) {
     const age = Math.round((now - run.startedAt) / 1000);
     out.cron.last_run_at = run.startedAt;

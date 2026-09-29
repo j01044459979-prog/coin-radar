@@ -3,7 +3,4 @@
 #        ".dev.vars" 는 .gitignore 에 들어 있어서 GitHub에 올라가지 않습니다.
 # 실제 서버(Cloudflare)에서는 이 파일이 아니라 대시보드의 "Secret" 으로 등록합니다. (docs/MONITOR.md)
 #
-# KAKAO_REST_API_KEY=
-# KAKAO_CLIENT_SECRET=
-# ADMIN_TOKEN=
-# KAKAO_REFRESH_TOKEN=   (선택: 보통은 /kakao/setup 에서 연결하므로 필요 없음)
+# (현재 필요한 비밀값 없음)

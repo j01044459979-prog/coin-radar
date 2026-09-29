@@ -108,6 +108,9 @@ test('버전: radar-core.js, index.html APP_VERSION, script ?v= 가 모두 같�
   const E = require('../assets/radar-engine.js');
   assert.equal(E.VERSION, C.VERSION, 'radar-engine.js VERSION 불일치');
   assert.ok(html.includes(`assets/radar-engine.js?v=${C.VERSION}"`), 'radar-engine script ?v= 불일치');
+  const FE = require('../assets/futures-engine.js');
+  assert.equal(FE.VERSION, C.VERSION, 'futures-engine.js VERSION 불일치');
+  assert.ok(html.includes(`assets/futures-engine.js?v=${C.VERSION}"`), 'futures-engine script ?v= 불일치');
 });
 
 test('처음 화면 문구에 거래소 이름 없는 "● 연결 중" 이 없음 (이전 버전 문구)', () => {

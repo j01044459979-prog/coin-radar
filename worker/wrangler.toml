@@ -30,8 +30,8 @@ region = "aws:ap-northeast-2"
 crons = ["* * * * *"]
 
 # 비밀이 아닌 설정값. (비밀값은 여기에 넣지 말고 Cloudflare Secret 으로 등록)
-# 필요한 Secret: KAKAO_REST_API_KEY, KAKAO_CLIENT_SECRET, ADMIN_TOKEN (docs/KAKAO.md)
-# MONITOR_MARKETS: 감시할 Upbit KRW 종목 수 (24H 거래대금 상위). 최대 18.
+# 필요한 Secret: 없음 (외부 메신저 알림 제거됨. 예전에 등록한 Secret 이 있어도 사용하지 않음)
+# MONITOR_MARKETS: 감시할 Upbit KRW 종목 수 (24H 거래대금 상위). 최대 20.
 [vars]
 MONITOR_MARKETS = "15"
 
@@ -40,7 +40,7 @@ MONITOR_MARKETS = "15"
 #
 # ⚠️ PR Preview 빌드에는 D1 을 연결하지 않습니다.
 #    Preview 는 위 [previews] 블록에 적힌 바인딩만 사용하므로(최상위 d1_databases 를 물려받지 않음),
-#    Preview 에서는 env.DB 가 없어 D1 저장·카카오톡 알림을 하지 않고 production D1 도 건드리지 않습니다.
+#    Preview 에서는 env.DB 가 없어 D1 저장을 하지 않고 production D1 도 건드리지 않습니다.
 #    ([previews] 에 d1_databases 를 추가하지 마세요.)
 [[d1_databases]]
 binding = "DB"

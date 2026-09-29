@@ -14,15 +14,12 @@ export const RULES = {
   score: { priceFullMult: 2, ratioFull: 5 },
 };
 
-// 카카오톡 알림 규칙 (중요 이벤트만)
-export const ALERT = {
+// '중요 이벤트' 표시 기준 (외부 알림 없음, 상태 화면 표시용)
+export const IMPORTANT = {
   minScore: 60, // 레이더 점수 60 이상일 때만 (과열은 항상 100점)
   surgeRatio: 5, // 거래 활동 5배 이상 = 급증
   // 현재 구간 거래대금 최소 기준 (원). 거래가 적은 종목의 작은 체결로 생기는 잡음 방지
   minWindowKrw: { 1: 50_000_000, 5: 200_000_000, 15: 500_000_000 },
-  cooldownMinutes: 30, // 같은 종목은 30분 동안 다시 알리지 않음 (단, 상태 등급이 올라가면 1회 허용)
-  maxPerRun: 3, // 한 번 실행에 최대 3건
-  maxPerHour: 10, // 1시간에 최대 10건
 };
 
 // Upbit 요청 설정
@@ -37,14 +34,13 @@ export const UPBIT = {
 export const STABLE_BASES = new Set(['USDT', 'USDC', 'USDS', 'USDE', 'DAI', 'TUSD', 'PYUSD', 'USD1', 'FDUSD']);
 
 export const DEFAULT_MARKETS = 15;
-// 무료 플랜 외부 요청 50개 제한: 시세 목록 약 4개 + 종목당 2개 × 18 + 카카오(토큰 갱신 1 + 알림 3건 × 최대 3) 10개 ≤ 50
-export const MAX_MARKETS = 18;
+// 무료 플랜 외부 요청 50개 제한: 시세 목록 약 4개 + 종목당 2개 × 20 = 44 ≤ 50
+export const MAX_MARKETS = 20;
 
 export function readConfig(env = {}) {
   const n = Number.parseInt(env.MONITOR_MARKETS, 10);
   return {
     markets: Number.isFinite(n) && n > 0 ? Math.min(n, MAX_MARKETS) : DEFAULT_MARKETS,
-    kakaoConfigured: Boolean(env.KAKAO_REST_API_KEY),
     d1Configured: Boolean(env.DB && typeof env.DB.prepare === 'function'),
   };
 }

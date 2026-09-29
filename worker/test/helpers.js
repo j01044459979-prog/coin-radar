@@ -93,33 +93,15 @@ export function makeUpbitFifteen(market, count, now, q = 15e8) {
   return out;
 }
 
-// Upbit + Kakao 가짜 fetch. specs: { 'KRW-SOL': { spike: {...} } }, fail: Set(market)
-// kakao: { memoStatus(기본 200), expireFirstMemo(첫 전송 401), refreshError('invalid_grant' 등), rotate(새 refresh_token 발급) }
-export function makeFetch({ now, specs = {}, markets = ['KRW-BTC', 'KRW-ETH', 'KRW-SOL', 'KRW-XRP', 'KRW-USDT'], fail = new Set(), kakao = {} } = {}) {
-  const calls = { upbit: 0, kakao: [], memo: [], token: [] };
-  let seq = kakao.seqStart || 0; // 발급 토큰 번호 (test-access-N)
-  let memoCount = 0;
-  const fn = async (input, init = {}) => {
+// Upbit 가짜 fetch. specs: { 'KRW-SOL': { spike: {...} } }, fail: Set(market)
+// Upbit 이외의 주소로 요청하면 테스트가 실패하도록 기록합니다 (외부 메신저 호출이 없어야 함).
+export function makeFetch({ now, specs = {}, markets = ['KRW-BTC', 'KRW-ETH', 'KRW-SOL', 'KRW-XRP', 'KRW-USDT'], fail = new Set() } = {}) {
+  const calls = { upbit: 0, other: [] };
+  const fn = async (input) => {
     const url = new URL(typeof input === 'string' ? input : input.url);
-    if (url.hostname === 'kauth.kakao.com' && url.pathname === '/oauth/token') {
-      const body = new URLSearchParams(init.body);
-      const req = Object.fromEntries(body);
-      calls.token.push(req);
-      if (kakao.refreshError && req.grant_type === 'refresh_token') return Response.json({ error: kakao.refreshError, error_description: 'x' }, { status: 400 });
-      if (kakao.codeError && req.grant_type === 'authorization_code') return Response.json({ error: kakao.codeError, error_code: 'KOE320' }, { status: 400 });
-      seq += 1;
-      const tok = { token_type: 'bearer', access_token: `test-access-${seq}`, expires_in: 21599 };
-      if (req.grant_type === 'authorization_code' || kakao.rotate) Object.assign(tok, { refresh_token: `test-refresh-${seq}`, refresh_token_expires_in: 5183999, scope: 'talk_message' });
-      return Response.json(tok);
-    }
-    if (url.hostname === 'kapi.kakao.com') {
-      memoCount += 1;
-      const auth = (init.headers && (init.headers.authorization || init.headers.Authorization)) || '';
-      const template = JSON.parse(new URLSearchParams(init.body).get('template_object'));
-      calls.memo.push({ auth, template });
-      if (kakao.expireFirstMemo && memoCount === 1) return Response.json({ msg: 'this access token does not exist', code: -401 }, { status: 401 });
-      const status = kakao.memoStatus || 200;
-      return status === 200 ? Response.json({ result_code: 0 }) : Response.json({ msg: 'error', code: -402 }, { status });
+    if (url.hostname !== 'api.upbit.com') {
+      calls.other.push(url.hostname);
+      return new Response('unexpected host', { status: 599 });
     }
     calls.upbit += 1;
     const p = url.pathname;
