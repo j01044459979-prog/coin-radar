@@ -362,7 +362,7 @@ function getMonthlySheets_(ss){
 
 /* =========================================================
    월 장표 열 구조 (데이터 10행부터)
-   장표가 원본이며 웹앱은 A/B/N 이후 영역에 쓰지 않음
+   장표가 원본이며 웹앱은 A/B 및 N~ 예산 영역에 쓰지 않음
 
    A 검수완료   B 메모     C No.     D 개통일
    E 고객       F CTN      G 종류    H 모델명
@@ -3182,12 +3182,13 @@ function parseActivationText(text){
 
 /* =========================================================
    개통 저장
-   기본 개통정보만 입력
+   기본 개통정보
    C No. / D 개통일 / E 고객 / F CTN
    G 종류 / H 모델명 / J 요금제 / M 직원명
+   + 기존대로 AL 카드 / AM 카드사 / AO 보험 / AP 부가 / AR 동판
 
-   A 검수완료, B 메모, N 총 확보금액 이후
-   금액·혜택 영역은 값/수식/서식 모두 건드리지 않음
+   A 검수완료, B 메모, N 총 확보금액부터
+   고객혜택·사용금액 등 예산 영역은 값/수식/서식 모두 건드리지 않음
 ========================================================= */
 
 function saveActivationText(text){
@@ -3362,8 +3363,8 @@ function saveActivationText(text){
 
 
     /*
-     * 기본 개통정보만 입력
-     * A/B, N 이후 영역은 쓰지 않음
+     * 기본 개통정보 입력
+     * A/B 및 N~ 예산 영역은 쓰지 않음
      */
 
     sh.getRange(
@@ -3423,6 +3424,68 @@ function saveActivationText(text){
       x.staff
     );
 
+
+    /*
+     * 카드/보험/부가/유선 (기존 저장 로직 유지)
+     * AL 카드 여부 → 리스크관리·직원별 카드 실적에 사용
+     * AM 카드사 / AO 보험 / AP 부가서비스 / AR 동판
+     */
+
+    if(
+      x.card&&
+      norm(x.card)!=='X'
+    ){
+
+      sh.getRange(
+        row,
+        38
+      )
+      .setValue(1);
+
+      sh.getRange(
+        row,
+        39
+      )
+      .setValue(
+        x.card
+      );
+    }
+
+    sh.getRange(
+      row,
+      41
+    )
+    .setValue(
+      norm(
+        x.insurance
+      )==='X'
+        ?'X'
+        :'O'
+    );
+
+    sh.getRange(
+      row,
+      42
+    )
+    .setValue(
+      norm(
+        x.addon
+      )==='X'
+        ?'X'
+        :'O'
+    );
+
+    sh.getRange(
+      row,
+      44
+    )
+    .setValue(
+      norm(
+        x.wired
+      )==='X'
+        ?'X'
+        :x.wired
+    );
 
     SpreadsheetApp.flush();
 
