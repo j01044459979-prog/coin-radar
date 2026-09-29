@@ -1,0 +1,1492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>관저중로점 AI 외부활동</title>
+
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:#f5f6f8;color:#17191c;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif}
+button,input,select,textarea{font-family:inherit}
+button{cursor:pointer}
+.app{max-width:620px;margin:0 auto;min-height:100vh;padding-bottom:92px}
+.header{position:sticky;top:0;z-index:20;padding:18px 18px 14px;background:rgba(255,255,255,.96);border-bottom:1px solid #eceef1;backdrop-filter:blur(10px)}
+.header-title{font-size:21px;font-weight:800}
+.header-sub{margin-top:5px;color:#777;font-size:12px}
+.page{display:none;padding:16px}
+.page.active{display:block}
+.card{background:#fff;border-radius:18px;padding:17px;margin-bottom:13px;box-shadow:0 2px 12px rgba(0,0,0,.045)}
+.card-title{font-size:17px;font-weight:800;margin-bottom:14px}
+.label{font-size:12px;font-weight:700;color:#666;margin:14px 0 7px}
+input,select,textarea{width:100%;border:1px solid #e1e4e8;background:#fafbfc;border-radius:12px;padding:13px;font-size:15px;outline:none}
+textarea{resize:vertical;min-height:80px}
+input:focus,select:focus,textarea:focus{border-color:#111;background:#fff}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+.primary{width:100%;border:0;border-radius:14px;background:#111;color:#fff;font-weight:800;font-size:16px;padding:15px;margin-top:15px}
+.secondary{width:100%;border:1px solid #ddd;border-radius:12px;background:#fff;color:#222;font-weight:700;padding:12px}
+.mini-btn{border:1px solid #ddd;background:#fff;border-radius:10px;padding:8px 11px;font-size:12px;font-weight:700}
+.apt-info{display:none;margin-top:12px;background:#f7f8fa;border-radius:13px;padding:13px;font-size:13px;line-height:1.8}
+.building-area{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.building{border:1px solid #ddd;background:#fff;border-radius:11px;padding:10px 13px;font-weight:700;font-size:14px}
+.building.selected{background:#111;color:#fff;border-color:#111}
+.empty-buildings{background:#fff6e5;border-radius:12px;padding:12px;font-size:13px;line-height:1.5}
+.activity{border-bottom:1px solid #eee;padding:13px 0}
+.activity:last-child{border-bottom:0}
+.activity-top{display:flex;justify-content:space-between;gap:10px}
+.activity-name{font-weight:800;font-size:15px}
+.activity-date{font-size:12px;color:#888;white-space:nowrap}
+.activity-body{font-size:13px;color:#555;margin-top:7px;line-height:1.65}
+.apt-card{border-bottom:1px solid #eee;padding:14px 0}
+.apt-card:last-child{border-bottom:0}
+.apt-name{font-weight:800;font-size:16px}
+.apt-meta{margin-top:5px;color:#666;font-size:12px;line-height:1.6}
+.apt-actions{margin-top:10px}
+.stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.stat{background:#fff;border-radius:16px;padding:16px}
+.stat-label{color:#777;font-size:12px}
+.stat-value{font-size:25px;font-weight:900;margin-top:6px}
+.daily{border-bottom:1px solid #eee;padding:13px 0}
+.daily:last-child{border-bottom:0}
+.daily-date{font-weight:800;margin-bottom:7px}
+.daily-values{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;text-align:center}
+.daily-box{background:#f7f8fa;border-radius:10px;padding:9px 4px}
+.daily-num{font-weight:800;font-size:16px}
+.daily-label{color:#777;font-size:10px;margin-top:3px}
+.qr-card{text-align:center}
+.qr-box{width:230px;max-width:100%;margin:15px auto;background:#fff;border:1px solid #eee;border-radius:16px;padding:15px}
+.qr-box img{width:100%;display:block}
+.qr-title{font-size:18px;font-weight:900}
+.qr-desc{font-size:13px;color:#666;line-height:1.6;margin-top:7px}
+.bottom-nav{position:fixed;z-index:50;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:620px;height:72px;display:grid;grid-template-columns:repeat(6,1fr);background:rgba(255,255,255,.97);border-top:1px solid #e7e7e7;backdrop-filter:blur(10px)}
+.nav-btn{border:0;background:transparent;font-size:10px;color:#888;font-weight:700;padding:2px}
+.nav-btn.active{color:#111;font-weight:900}
+.nav-icon{display:block;font-size:19px;margin-bottom:4px}
+.loading{position:fixed;z-index:100;inset:0;background:rgba(255,255,255,.82);display:flex;align-items:center;justify-content:center;font-weight:800}
+.toast{position:fixed;z-index:200;left:50%;bottom:90px;transform:translateX(-50%);background:#111;color:#fff;padding:11px 17px;border-radius:30px;font-size:13px;display:none;max-width:90%;text-align:center}
+.modal{position:fixed;z-index:150;inset:0;background:rgba(0,0,0,.4);display:none;align-items:flex-end;justify-content:center}
+.modal.open{display:flex}
+.modal-body{background:#fff;width:100%;max-width:620px;max-height:90vh;overflow-y:auto;border-radius:22px 22px 0 0;padding:20px}
+.modal-title{font-size:19px;font-weight:900;margin-bottom:15px}
+.close-btn{width:100%;margin-top:8px;border:0;padding:13px;border-radius:12px;background:#eee;font-weight:700}
+.hint{color:#888;font-size:11px;line-height:1.5;margin-top:5px}
+.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.section-head .card-title{margin:0}
+.search{margin-bottom:12px}
+
+.month-nav{display:grid;grid-template-columns:48px 1fr 48px;gap:8px;align-items:center;margin-bottom:14px}
+.month-nav button{border:1px solid #ddd;background:#fff;border-radius:12px;height:42px;font-size:20px;font-weight:900}
+.month-title{text-align:center;font-size:18px;font-weight:900}
+.staff-stat{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 0;border-bottom:1px solid #eee}
+.staff-stat:last-child{border-bottom:0}
+.staff-stat-name{font-size:16px;font-weight:900}
+.staff-stat-last{margin-top:5px;font-size:12px;color:#777}
+.staff-stat-count{min-width:64px;text-align:right;font-size:24px;font-weight:900}
+.staff-total{margin-top:12px;padding:15px;border-radius:14px;background:#f7f8fa;display:flex;justify-content:space-between;align-items:center;font-weight:900}
+</style>
+</head>
+
+<body>
+
+<div id="loading" class="loading">불러오는 중...</div>
+<div id="toast" class="toast"></div>
+
+<div class="app">
+
+<header class="header">
+  <div class="header-title">관저중로점 AI 외부활동</div>
+  <div class="header-sub">대전 서구 관저중로 98</div>
+</header>
+
+<!-- 오늘 -->
+<section id="page-home" class="page active">
+
+  <div class="card">
+
+    <div class="card-title">오늘 외부활동</div>
+
+    <div class="label">활동일</div>
+    <input id="activityDate" type="date">
+
+    <div class="label">담당자</div>
+    <select id="staff"></select>
+
+    <div class="label">아파트</div>
+    <select id="apartment" onchange="selectApartment()">
+      <option value="">아파트 선택</option>
+    </select>
+
+    <div id="aptInfo" class="apt-info"></div>
+
+    <div class="label">완료한 동</div>
+    <div id="buildingArea" class="building-area">
+      <div class="empty-buildings">아파트를 먼저 선택해주세요.</div>
+    </div>
+
+    <div class="label">아파트형식</div>
+    <select id="aptType">
+      <option>미확인</option>
+      <option>복도형</option>
+      <option>계단형</option>
+      <option>혼합형</option>
+    </select>
+
+    <div class="label">공동현관</div>
+    <select id="entrance">
+      <option>미확인</option>
+      <option>비밀번호 있음</option>
+      <option>비밀번호 없음</option>
+    </select>
+
+    <div class="label">활동메모</div>
+    <textarea id="activityMemo" placeholder="필요한 내용만 간단하게 입력"></textarea>
+
+    <button class="primary" onclick="saveActivity()">활동 저장</button>
+
+  </div>
+
+  <div class="card">
+    <div class="card-title">최근 활동</div>
+    <div id="homeRecent"></div>
+  </div>
+
+</section>
+
+
+<!-- 활동기록 -->
+<section id="page-history" class="page">
+
+  <div class="card">
+    <div class="card-title">일자별 활동기록</div>
+    <div id="historyList"></div>
+  </div>
+
+</section>
+
+
+<!-- 직원활동 -->
+<section id="page-staff" class="page">
+
+  <div class="card">
+
+    <div class="card-title">직원별 외부활동</div>
+
+    <div class="month-nav">
+
+      <button type="button" onclick="changeStaffMonth(-1)">
+        ‹
+      </button>
+
+      <div id="staffMonthTitle" class="month-title">
+        -
+      </div>
+
+      <button type="button" onclick="changeStaffMonth(1)">
+        ›
+      </button>
+
+    </div>
+
+    <div id="staffStatsList">
+      <div class="hint">불러오는 중...</div>
+    </div>
+
+    <div class="staff-total">
+      <span>해당 월 총 활동</span>
+      <span id="staffStatsTotal">0회</span>
+    </div>
+
+  </div>
+
+</section>
+
+
+<!-- 상권DB -->
+<section id="page-area" class="page">
+
+  <div class="card">
+
+    <div class="section-head">
+
+      <div class="card-title">상권 DB</div>
+
+      <button class="mini-btn" onclick="openAddApartment()">
+        + 아파트 추가
+      </button>
+
+    </div>
+
+    <input
+      id="aptSearch"
+      class="search"
+      placeholder="아파트 검색"
+      oninput="renderApartments()">
+
+    <div id="apartmentList"></div>
+
+  </div>
+
+</section>
+
+
+<!-- 분석 -->
+<section id="page-stats" class="page">
+
+  <div class="stats-grid">
+
+    <div class="stat">
+      <div class="stat-label">누적 활동</div>
+      <div id="totalActivities" class="stat-value">0</div>
+    </div>
+
+    <div class="stat">
+      <div class="stat-label">누적 활동 동</div>
+      <div id="totalBuildings" class="stat-value">0</div>
+    </div>
+
+    <div class="stat">
+      <div class="stat-label">홍보 QR 인입</div>
+      <div id="totalQr" class="stat-value">0</div>
+    </div>
+
+    <div class="stat">
+      <div class="stat-label">동당 QR 인입</div>
+      <div id="qrPerBuilding" class="stat-value">0</div>
+    </div>
+
+  </div>
+
+  <div class="card" style="margin-top:13px">
+    <div class="card-title">일자별 활동 성과</div>
+    <div id="dailyStats"></div>
+  </div>
+
+</section>
+
+
+<!-- QR -->
+<section id="page-qr" class="page">
+
+  <div class="card qr-card">
+
+    <div class="qr-title">QR① 매장 홍보</div>
+
+    <div class="qr-desc">
+      고객이 스캔하면 홍보 QR 인입이 자동으로 1회 기록된 후
+      관저중로점 홍보페이지로 이동합니다.
+    </div>
+
+    <div id="promoQr" class="qr-box">
+      배포 후 QR 생성 가능
+    </div>
+
+    <button class="secondary" onclick="openPromoLink()">
+      홍보 QR 테스트
+    </button>
+
+  </div>
+
+  <div class="card qr-card">
+
+    <div class="qr-title">QR② 단골등록</div>
+
+    <div class="qr-desc">
+      단골등록 및 KT상품 광고 문자수신 동의용입니다.
+      이 QR은 외부활동 인입으로 카운팅하지 않습니다.
+    </div>
+
+    <div id="regularQr" class="qr-box"></div>
+
+    <button class="secondary" onclick="openRegularLink()">
+      단골등록 페이지 열기
+    </button>
+
+  </div>
+
+</section>
+
+
+<!-- 하단 메뉴 -->
+<nav class="bottom-nav">
+
+  <button class="nav-btn active" onclick="goPage('home',this)">
+    <span class="nav-icon">⌂</span>
+    오늘
+  </button>
+
+  <button class="nav-btn" onclick="goPage('history',this)">
+    <span class="nav-icon">▤</span>
+    활동기록
+  </button>
+
+  <button class="nav-btn" onclick="goPage('staff',this)">
+    <span class="nav-icon">♙</span>
+    직원활동
+  </button>
+
+  <button class="nav-btn" onclick="goPage('area',this)">
+    <span class="nav-icon">⌖</span>
+    상권DB
+  </button>
+
+  <button class="nav-btn" onclick="goPage('stats',this)">
+    <span class="nav-icon">▥</span>
+    분석
+  </button>
+
+  <button class="nav-btn" onclick="goPage('qr',this)">
+    <span class="nav-icon">▦</span>
+    QR
+  </button>
+
+</nav>
+
+</div>
+
+
+<!-- 아파트 추가/수정 -->
+<div id="aptModal" class="modal">
+
+  <div class="modal-body">
+
+    <div id="aptModalTitle" class="modal-title">
+      아파트 추가
+    </div>
+
+    <input id="editAptId" type="hidden">
+
+    <div class="label">아파트명</div>
+    <input id="editAptName" placeholder="예: 원앙마을2단지">
+
+    <div class="label">주소</div>
+    <input id="editAptAddress" placeholder="대전 서구 관저동">
+
+    <div class="row">
+
+      <div>
+        <div class="label">총 세대수</div>
+        <input id="editHouseholds" type="number">
+      </div>
+
+      <div>
+        <div class="label">전체 동수</div>
+        <input id="editBuildingCount" type="number">
+      </div>
+
+    </div>
+
+    <div class="label">동 목록</div>
+    <textarea id="editBuildings" placeholder="201동, 202동, 203동"></textarea>
+
+    <div class="hint">
+      쉼표로 구분해주세요. 저장하면 오늘 활동 화면에서 동 버튼으로 표시됩니다.
+    </div>
+
+    <div class="label">아파트형식</div>
+
+    <select id="editType">
+      <option>미확인</option>
+      <option>복도형</option>
+      <option>계단형</option>
+      <option>혼합형</option>
+    </select>
+
+    <div class="label">공동현관</div>
+
+    <select id="editEntrance">
+      <option>미확인</option>
+      <option>비밀번호 있음</option>
+      <option>비밀번호 없음</option>
+    </select>
+
+    <div class="label">메모</div>
+    <textarea id="editMemo"></textarea>
+
+    <button class="primary" onclick="saveApartment()">
+      저장
+    </button>
+
+    <button class="close-btn" onclick="closeAptModal()">
+      닫기
+    </button>
+
+  </div>
+
+</div>
+
+
+<script>
+
+let APP={
+  staff:[],
+  apartments:[],
+  recent:[],
+  stats:{},
+  promoUrl:'',
+  regularUrl:''
+};
+
+let QRINFO={
+  promoTrackingUrl:'',
+  regularUrl:''
+};
+
+let selectedBuildings=[];
+
+let STAFF_MONTH={
+  year:new Date().getFullYear(),
+  month:new Date().getMonth()+1
+};
+
+
+document.addEventListener('DOMContentLoaded',function(){
+
+  document.getElementById('activityDate').value=
+    localDateString();
+
+  loadApp();
+
+});
+
+
+function localDateString(){
+
+  const d=new Date();
+
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+
+  return `${y}-${m}-${day}`;
+
+}
+
+
+function loadApp(){
+
+  showLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(data){
+
+      APP=data;
+
+      renderAll();
+
+      google.script.run
+        .withSuccessHandler(function(info){
+
+          QRINFO=info||{};
+
+          renderQr();
+
+          showLoading(false);
+
+        })
+        .withFailureHandler(function(){
+
+          showLoading(false);
+
+        })
+        .getQrInfo();
+
+    })
+    .withFailureHandler(handleError)
+    .getAppData();
+
+}
+
+
+function renderAll(){
+
+  renderStaff();
+  renderApartmentSelect();
+  renderRecent();
+  renderHistory();
+  renderApartments();
+  renderStats();
+  loadStaffStats();
+
+}
+
+
+/* 직원 담당자 */
+function renderStaff(){
+
+  const el=document.getElementById('staff');
+
+  const old=el.value;
+
+  el.innerHTML='<option value="">담당자 선택</option>';
+
+  APP.staff.forEach(function(name){
+
+    const option=document.createElement('option');
+
+    option.value=name;
+    option.textContent=name;
+
+    el.appendChild(option);
+
+  });
+
+  if(old && APP.staff.includes(old)){
+    el.value=old;
+  }
+
+}
+
+
+/* 직원 월별 활동 */
+function loadStaffStats(){
+
+  const title=document.getElementById('staffMonthTitle');
+
+  title.textContent=
+    `${STAFF_MONTH.year}년 ${STAFF_MONTH.month}월`;
+
+  google.script.run
+    .withSuccessHandler(renderStaffStats)
+    .withFailureHandler(handleError)
+    .getStaffMonthlyStats(
+      STAFF_MONTH.year,
+      STAFF_MONTH.month
+    );
+
+}
+
+
+function changeStaffMonth(diff){
+
+  let y=STAFF_MONTH.year;
+  let m=STAFF_MONTH.month+diff;
+
+  if(m<1){
+    y--;
+    m=12;
+  }
+
+  if(m>12){
+    y++;
+    m=1;
+  }
+
+  STAFF_MONTH.year=y;
+  STAFF_MONTH.month=m;
+
+  loadStaffStats();
+
+}
+
+
+function renderStaffStats(data){
+
+  const el=document.getElementById('staffStatsList');
+  const total=document.getElementById('staffStatsTotal');
+
+  const list=
+    data && Array.isArray(data.staff)
+      ? data.staff
+      : [];
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="hint">활동 데이터가 없습니다.</div>';
+
+    total.textContent='0회';
+
+    return;
+
+  }
+
+  el.innerHTML=list.map(function(item){
+
+    const last=
+      item.lastActivity
+        ? shortDate(item.lastActivity)
+        : '활동 없음';
+
+    return `
+      <div class="staff-stat">
+
+        <div>
+
+          <div class="staff-stat-name">
+            ${escapeHtml(item.staff)}
+          </div>
+
+          <div class="staff-stat-last">
+            최근 활동 : ${escapeHtml(last)}
+          </div>
+
+        </div>
+
+        <div class="staff-stat-count">
+          ${Number(item.count||0)}회
+        </div>
+
+      </div>
+    `;
+
+  }).join('');
+
+  total.textContent=
+    `${Number(data.total||0)}회`;
+
+}
+
+
+/* 아파트 선택 */
+function renderApartmentSelect(){
+
+  const el=document.getElementById('apartment');
+
+  const old=el.value;
+
+  el.innerHTML=
+    '<option value="">아파트 선택</option>';
+
+  APP.apartments.forEach(function(a){
+
+    const option=document.createElement('option');
+
+    option.value=a.id;
+
+    option.textContent=
+      a.households
+        ? `${a.name} · ${number(a.households)}세대`
+        : a.name;
+
+    el.appendChild(option);
+
+  });
+
+  if(
+    old &&
+    APP.apartments.some(function(a){
+      return a.id===old;
+    })
+  ){
+    el.value=old;
+  }
+
+}
+
+
+function selectApartment(){
+
+  selectedBuildings=[];
+
+  const id=
+    document.getElementById('apartment').value;
+
+  const info=
+    document.getElementById('aptInfo');
+
+  const area=
+    document.getElementById('buildingArea');
+
+  if(!id){
+
+    info.style.display='none';
+
+    area.innerHTML=
+      '<div class="empty-buildings">아파트를 먼저 선택해주세요.</div>';
+
+    return;
+
+  }
+
+  const apt=
+    APP.apartments.find(function(a){
+      return a.id===id;
+    });
+
+  if(!apt)return;
+
+  info.style.display='block';
+
+  info.innerHTML=`
+    <b>${escapeHtml(apt.name)}</b><br>
+    ${apt.households ? number(apt.households)+'세대' : '세대수 미확인'}
+    ·
+    ${apt.buildingCount ? apt.buildingCount+'개동' : '동수 미확인'}
+    <br>
+    최근활동 : ${apt.lastActivity ? shortDate(apt.lastActivity) : '없음'}
+  `;
+
+  document.getElementById('aptType').value=
+    apt.type||'미확인';
+
+  document.getElementById('entrance').value=
+    apt.entrance||'미확인';
+
+  renderBuildingButtons(apt);
+
+}
+
+
+function renderBuildingButtons(apt){
+
+  const area=
+    document.getElementById('buildingArea');
+
+  const buildings=
+    parseBuildings(apt.buildings);
+
+  if(!buildings.length){
+
+    area.innerHTML=`
+      <div class="empty-buildings">
+        아직 동 목록이 등록되지 않았습니다.<br>
+        <b>상권DB → 수정</b>에서 실제 동 번호를 먼저 입력해주세요.
+      </div>
+    `;
+
+    return;
+
+  }
+
+  area.innerHTML='';
+
+  buildings.forEach(function(b){
+
+    const btn=document.createElement('button');
+
+    btn.type='button';
+    btn.className='building';
+    btn.textContent=b;
+
+    btn.onclick=function(){
+
+      const index=
+        selectedBuildings.indexOf(b);
+
+      if(index>=0){
+
+        selectedBuildings.splice(index,1);
+        btn.classList.remove('selected');
+
+      }else{
+
+        selectedBuildings.push(b);
+        btn.classList.add('selected');
+
+      }
+
+    };
+
+    area.appendChild(btn);
+
+  });
+
+}
+
+
+/* 활동 저장 */
+function saveActivity(){
+
+  const data={
+
+    date:
+      document.getElementById('activityDate').value,
+
+    staff:
+      document.getElementById('staff').value,
+
+    apartmentId:
+      document.getElementById('apartment').value,
+
+    buildings:
+      selectedBuildings.slice(),
+
+    type:
+      document.getElementById('aptType').value,
+
+    entrance:
+      document.getElementById('entrance').value,
+
+    memo:
+      document.getElementById('activityMemo').value
+
+  };
+
+  if(!data.staff){
+
+    toast('담당자를 선택해주세요.');
+    return;
+
+  }
+
+  if(!data.apartmentId){
+
+    toast('아파트를 선택해주세요.');
+    return;
+
+  }
+
+  if(!data.buildings.length){
+
+    toast('완료한 동을 선택해주세요.');
+    return;
+
+  }
+
+  showLoading(true);
+
+  google.script.run
+    .withSuccessHandler(function(data){
+
+      APP=data;
+
+      selectedBuildings=[];
+
+      document.getElementById('apartment').value='';
+      document.getElementById('activityMemo').value='';
+      document.getElementById('aptInfo').style.display='none';
+
+      document.getElementById('buildingArea').innerHTML=
+        '<div class="empty-buildings">아파트를 먼저 선택해주세요.</div>';
+
+      renderAll();
+
+      showLoading(false);
+
+      toast('활동 저장 완료');
+
+    })
+    .withFailureHandler(handleError)
+    .saveActivity(data);
+
+}
+
+
+/* 최근 활동 */
+function renderRecent(){
+
+  const list=APP.recent||[];
+
+  const home=
+    document.getElementById('homeRecent');
+
+  if(!list.length){
+
+    home.innerHTML=
+      '<div class="hint">아직 활동기록이 없습니다.</div>';
+
+    return;
+
+  }
+
+  home.innerHTML=
+    list
+      .slice(0,5)
+      .map(activityHtml)
+      .join('');
+
+}
+
+
+function renderHistory(){
+
+  const el=
+    document.getElementById('historyList');
+
+  const list=APP.recent||[];
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="hint">아직 활동기록이 없습니다.</div>';
+
+    return;
+
+  }
+
+  el.innerHTML=
+    list.map(activityHtml).join('');
+
+}
+
+
+function activityHtml(a){
+
+  return `
+    <div class="activity">
+
+      <div class="activity-top">
+
+        <div class="activity-name">
+          ${escapeHtml(a.apartmentName)}
+        </div>
+
+        <div class="activity-date">
+          ${shortDate(a.date)}
+        </div>
+
+      </div>
+
+      <div class="activity-body">
+
+        ${escapeHtml(a.staff)}
+        · ${a.buildingCount}개동<br>
+
+        완료 :
+        ${escapeHtml(a.buildings)}
+
+        ${
+          a.memo
+            ? '<br>메모 : '+escapeHtml(a.memo)
+            : ''
+        }
+
+      </div>
+
+    </div>
+  `;
+
+}
+
+
+/* 상권 DB */
+function renderApartments(){
+
+  const el=
+    document.getElementById('apartmentList');
+
+  const search=
+    (
+      document.getElementById('aptSearch').value||''
+    ).trim().toLowerCase();
+
+  const list=
+    APP.apartments.filter(function(a){
+
+      return (
+        !search ||
+        a.name.toLowerCase().includes(search)
+      );
+
+    });
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="hint">검색 결과가 없습니다.</div>';
+
+    return;
+
+  }
+
+  el.innerHTML=
+    list.map(function(a){
+
+      return `
+        <div class="apt-card">
+
+          <div class="apt-name">
+            ${escapeHtml(a.name)}
+          </div>
+
+          <div class="apt-meta">
+
+            ${
+              a.households
+                ? number(a.households)+'세대'
+                : '세대수 미확인'
+            }
+
+            ·
+
+            ${
+              a.buildingCount
+                ? a.buildingCount+'개동'
+                : '동수 미확인'
+            }
+
+            <br>
+
+            ${escapeHtml(a.type||'미확인')}
+
+            · 공동현관
+
+            ${escapeHtml(a.entrance||'미확인')}
+
+            <br>
+
+            최근활동 :
+            ${
+              a.lastActivity
+                ? shortDate(a.lastActivity)
+                : '없음'
+            }
+
+          </div>
+
+          <div class="apt-actions">
+
+            <button
+              class="mini-btn"
+              onclick="openEditApartment('${a.id}')">
+              수정
+            </button>
+
+          </div>
+
+        </div>
+      `;
+
+    }).join('');
+
+}
+
+
+function openAddApartment(){
+
+  document.getElementById('aptModalTitle').textContent=
+    '아파트 추가';
+
+  clearApartmentForm();
+
+  document.getElementById('aptModal').classList.add('open');
+
+}
+
+
+function openEditApartment(id){
+
+  const a=
+    APP.apartments.find(function(x){
+      return x.id===id;
+    });
+
+  if(!a)return;
+
+  document.getElementById('aptModalTitle').textContent=
+    '아파트 수정';
+
+  document.getElementById('editAptId').value=a.id;
+  document.getElementById('editAptName').value=a.name;
+  document.getElementById('editAptAddress').value=a.address;
+  document.getElementById('editHouseholds').value=a.households;
+  document.getElementById('editBuildingCount').value=a.buildingCount;
+  document.getElementById('editBuildings').value=a.buildings;
+  document.getElementById('editType').value=a.type||'미확인';
+  document.getElementById('editEntrance').value=a.entrance||'미확인';
+  document.getElementById('editMemo').value=a.memo||'';
+
+  document.getElementById('aptModal').classList.add('open');
+
+}
+
+
+function closeAptModal(){
+
+  document.getElementById('aptModal').classList.remove('open');
+
+}
+
+
+function clearApartmentForm(){
+
+  [
+    'editAptId',
+    'editAptName',
+    'editAptAddress',
+    'editHouseholds',
+    'editBuildingCount',
+    'editBuildings',
+    'editMemo'
+  ].forEach(function(id){
+
+    document.getElementById(id).value='';
+
+  });
+
+  document.getElementById('editType').value='미확인';
+  document.getElementById('editEntrance').value='미확인';
+
+}
+
+
+function saveApartment(){
+
+  const data={
+
+    id:
+      document.getElementById('editAptId').value,
+
+    name:
+      document.getElementById('editAptName').value,
+
+    address:
+      document.getElementById('editAptAddress').value,
+
+    households:
+      document.getElementById('editHouseholds').value,
+
+    buildingCount:
+      document.getElementById('editBuildingCount').value,
+
+    buildings:
+      document.getElementById('editBuildings').value,
+
+    type:
+      document.getElementById('editType').value,
+
+    entrance:
+      document.getElementById('editEntrance').value,
+
+    memo:
+      document.getElementById('editMemo').value
+
+  };
+
+  if(!data.name.trim()){
+
+    toast('아파트명을 입력해주세요.');
+    return;
+
+  }
+
+  showLoading(true);
+
+  const runner=
+    google.script.run
+      .withSuccessHandler(function(result){
+
+        APP=result;
+
+        closeAptModal();
+
+        renderAll();
+
+        showLoading(false);
+
+        toast('저장 완료');
+
+      })
+      .withFailureHandler(handleError);
+
+  if(data.id){
+
+    runner.updateApartment(data);
+
+  }else{
+
+    runner.addApartment(data);
+
+  }
+
+}
+
+
+/* 통계 */
+function renderStats(){
+
+  const s=APP.stats||{};
+
+  document.getElementById('totalActivities').textContent=
+    number(s.totalActivities||0);
+
+  document.getElementById('totalBuildings').textContent=
+    number(s.totalBuildings||0);
+
+  document.getElementById('totalQr').textContent=
+    number(s.totalQr||0);
+
+  document.getElementById('qrPerBuilding').textContent=
+    s.qrPerBuilding||0;
+
+  const el=
+    document.getElementById('dailyStats');
+
+  const list=s.daily||[];
+
+  if(!list.length){
+
+    el.innerHTML=
+      '<div class="hint">아직 분석할 데이터가 없습니다.</div>';
+
+    return;
+
+  }
+
+  el.innerHTML=
+    list.map(function(d){
+
+      return `
+        <div class="daily">
+
+          <div class="daily-date">
+            ${shortDate(d.date)}
+          </div>
+
+          <div class="daily-values">
+
+            <div class="daily-box">
+              <div class="daily-num">
+                ${d.buildingCount}
+              </div>
+              <div class="daily-label">
+                활동 동
+              </div>
+            </div>
+
+            <div class="daily-box">
+              <div class="daily-num">
+                ${d.qrCount}
+              </div>
+              <div class="daily-label">
+                QR 인입
+              </div>
+            </div>
+
+            <div class="daily-box">
+              <div class="daily-num">
+                ${d.qrPerBuilding}
+              </div>
+              <div class="daily-label">
+                동당 인입
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      `;
+
+    }).join('');
+
+}
+
+
+/* QR */
+function renderQr(){
+
+  const promo=
+    document.getElementById('promoQr');
+
+  const regular=
+    document.getElementById('regularQr');
+
+  if(QRINFO.promoTrackingUrl){
+
+    promo.innerHTML=`
+      <img
+        alt="홍보 QR"
+        src="${qrImageUrl(QRINFO.promoTrackingUrl)}">
+    `;
+
+  }else{
+
+    promo.innerHTML=
+      '웹앱 배포 후 QR 생성 가능';
+
+  }
+
+  const regularUrl=
+    QRINFO.regularUrl||
+    APP.regularUrl;
+
+  if(regularUrl){
+
+    regular.innerHTML=`
+      <img
+        alt="단골등록 QR"
+        src="${qrImageUrl(regularUrl)}">
+    `;
+
+  }else{
+
+    regular.innerHTML=
+      '단골등록 주소가 없습니다.';
+
+  }
+
+}
+
+
+function qrImageUrl(text){
+
+  return (
+    'https://quickchart.io/qr'+
+    '?size=400'+
+    '&margin=2'+
+    '&text='+
+    encodeURIComponent(text)
+  );
+
+}
+
+
+function openPromoLink(){
+
+  if(!QRINFO.promoTrackingUrl){
+
+    toast('웹앱 배포 후 사용할 수 있습니다.');
+    return;
+
+  }
+
+  window.open(
+    QRINFO.promoTrackingUrl,
+    '_blank'
+  );
+
+}
+
+
+function openRegularLink(){
+
+  const url=
+    QRINFO.regularUrl||
+    APP.regularUrl;
+
+  if(!url){
+
+    toast('단골등록 주소가 없습니다.');
+    return;
+
+  }
+
+  window.open(url,'_blank');
+
+}
+
+
+/* 페이지 이동 */
+function goPage(name,btn){
+
+  document
+    .querySelectorAll('.page')
+    .forEach(function(p){
+      p.classList.remove('active');
+    });
+
+  document
+    .getElementById('page-'+name)
+    .classList.add('active');
+
+  document
+    .querySelectorAll('.nav-btn')
+    .forEach(function(b){
+      b.classList.remove('active');
+    });
+
+  btn.classList.add('active');
+
+  window.scrollTo(0,0);
+
+  if(name==='staff'){
+    loadStaffStats();
+  }
+
+  if(name==='qr'){
+    renderQr();
+  }
+
+}
+
+
+/* 공통 */
+function parseBuildings(value){
+
+  return String(value||'')
+    .split(/[,/\n]+/)
+    .map(function(v){
+      return v.trim();
+    })
+    .filter(Boolean);
+
+}
+
+
+function number(value){
+
+  return Number(value||0)
+    .toLocaleString('ko-KR');
+
+}
+
+
+function shortDate(value){
+
+  if(!value)return '';
+
+  const parts=
+    String(value).split('-');
+
+  if(parts.length<3){
+    return value;
+  }
+
+  return (
+    Number(parts[1])+
+    '월 '+
+    Number(parts[2])+
+    '일'
+  );
+
+}
+
+
+function escapeHtml(value){
+
+  return String(value||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
+
+}
+
+
+function showLoading(show){
+
+  document.getElementById('loading').style.display=
+    show ? 'flex' : 'none';
+
+}
+
+
+function toast(message){
+
+  const el=
+    document.getElementById('toast');
+
+  el.textContent=message;
+  el.style.display='block';
+
+  clearTimeout(window.__toastTimer);
+
+  window.__toastTimer=
+    setTimeout(function(){
+
+      el.style.display='none';
+
+    },2200);
+
+}
+
+
+function handleError(error){
+
+  showLoading(false);
+
+  const message=
+    error && error.message
+      ? error.message
+      : String(error||'오류가 발생했습니다.');
+
+  toast(message);
+
+}
+
+</script>
+
+</body>
+</html>
