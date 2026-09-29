@@ -34,11 +34,14 @@ crons = ["* * * * *"]
 [vars]
 MONITOR_MARKETS = "15"
 
-# D1 데이터베이스 연결 (선택, Telegram 알림을 쓰려면 필요)
-# 1) Cloudflare 대시보드에서 D1 데이터베이스를 만든 뒤 (docs/MONITOR.md 참고)
-# 2) 아래 3줄의 맨 앞 '#' 을 지우고 database_id 에 대시보드에 표시된 실제 ID 를 넣으세요.
-#    database_id 는 비밀번호가 아니지만, 임의 값을 넣으면 배포가 실패합니다.
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "coin-radar"
-# database_id = "여기에-대시보드의-Database-ID"
+# D1 데이터베이스 연결 (production 전용). 코드에서는 env.DB 로 사용합니다.
+# database_id 는 비밀번호가 아니며 공개 저장소에 있어도 됩니다 (접근은 Cloudflare 계정 권한으로 보호).
+#
+# ⚠️ PR Preview 빌드에는 D1 을 연결하지 않습니다.
+#    Preview 는 위 [previews] 블록에 적힌 바인딩만 사용하므로(최상위 d1_databases 를 물려받지 않음),
+#    Preview 에서는 env.DB 가 없어 D1 저장·Telegram 알림을 하지 않고 production D1 도 건드리지 않습니다.
+#    ([previews] 에 d1_databases 를 추가하지 마세요.)
+[[d1_databases]]
+binding = "DB"
+database_name = "coin-radar"
+database_id = "da52848c-cece-4580-bac2-c02d957fa468"
