@@ -7,6 +7,16 @@ const SPOT_HEADERS=[
 '2차목표','2차건당금액','3차목표','3차건당금액','순번'
 ];
 
+/*
+ * 스팟완료 기록 (월별 장표와 분리된 별도 시트)
+ * 스팟별 × 개통건별 완료 상태를 관리
+ */
+const SPOT_DONE_SHEET='스팟완료기록';
+
+const SPOT_DONE_HEADERS=[
+'스팟ID','개통월','CTN','고객명','개통일','완료','처리일시'
+];
+
 const RISK_HEADERS=[
 '등록일시','적용월','CTN','고객명','개통일','직원명','카드1','카드2','완료','메모'
 ];
@@ -1093,6 +1103,9 @@ function readSpots_(
 
   var list=[];
 
+  var doneMap=
+    readSpotDoneMap_(ss);
+
   rows.forEach(
     function(r,idx){
 
@@ -1213,7 +1226,8 @@ function readSpots_(
         calculateSpot_(
           f,
           cases,
-          today
+          today,
+          doneMap
         )
       );
     }
@@ -1298,7 +1312,8 @@ function spotTiers_(f){
 function calculateSpot_(
   f,
   cases,
-  today
+  today,
+  doneMap
 ){
 
   var eligible=
@@ -1315,21 +1330,74 @@ function calculateSpot_(
       }
     );
 
-  var count=
-    eligible.reduce(
-      function(sum,c){
+  /*
+   * 대상건 = 기간 내 + 실적기준 해당 개통건
+   * 예산 반영 건수(count) = 대상건 중 스팟완료 체크된 건만
+   */
+
+  var targets=
+    eligible
+    .filter(
+      function(c){
 
         return(
-          sum+
           (
             Number(
               c[f.metric]
             )||0
+          )>0
+        );
+      }
+    )
+    .map(
+      function(c){
+
+        return{
+          month:c.month,
+          date:c.date,
+          name:c.name,
+          phone:c.phone,
+          staff:c.staff,
+          done:
+            !!(
+              doneMap&&
+              doneMap[
+                spotDoneKey_(
+                  f.id,
+                  c.month,
+                  c.phone
+                )
+              ]
+            )
+        };
+      }
+    )
+    .sort(
+      function(a,b){
+
+        return(
+          String(a.date)
+          .localeCompare(
+            String(b.date)
+          )||
+          String(a.name)
+          .localeCompare(
+            String(b.name),
+            'ko'
           )
         );
-      },
-      0
+      }
     );
+
+  var doneCount=
+    targets.filter(
+      function(t){
+        return t.done;
+      }
+    ).length;
+
+  var count=
+    doneCount;
 
   var achieved=null;
 
@@ -1376,6 +1444,19 @@ function calculateSpot_(
       count:count,
       total:total,
       status:status,
+
+      targets:
+        targets,
+
+      targetCount:
+        targets.length,
+
+      doneCount:
+        doneCount,
+
+      pendingCount:
+        targets.length-
+        doneCount,
 
       appliedTier:
         achieved
@@ -1799,6 +1880,288 @@ function saveSpot(x){
       sequence:seq,
       row:row,
       month:month
+    };
+
+  }finally{
+
+    lock.releaseLock();
+  }
+}
+
+
+/* =========================================================
+   스팟완료 기록
+   월별 장표에는 쓰지 않고 '스팟완료기록' 시트에만 기록
+========================================================= */
+
+function spotDoneKey_(
+  spotId,
+  month,
+  tel
+){
+
+  return(
+    String(spotId||'').trim()+
+    '|'+
+    String(month||'').trim()+
+    '|'+
+    phone(tel)
+  );
+}
+
+function readSpotDoneMap_(ss){
+
+  var map={};
+
+  var sh=
+    ss.getSheetByName(
+      SPOT_DONE_SHEET
+    );
+
+  if(
+    !sh||
+    sh.getLastRow()<2
+  ){
+    return map;
+  }
+
+  sh.getRange(
+    2,
+    1,
+    sh.getLastRow()-1,
+    SPOT_DONE_HEADERS.length
+  )
+  .getValues()
+  .forEach(
+    function(r){
+
+      var done=
+        r[5]===true||
+        norm(r[5])==='TRUE';
+
+      if(done){
+
+        map[
+          spotDoneKey_(
+            r[0],
+            monthKey(r[1]),
+            r[2]
+          )
+        ]=true;
+      }
+    }
+  );
+
+  return map;
+}
+
+function ensureSpotDoneSheet_(ss){
+
+  var sh=
+    ss.getSheetByName(
+      SPOT_DONE_SHEET
+    );
+
+  if(!sh){
+
+    sh=
+      ss.insertSheet(
+        SPOT_DONE_SHEET
+      );
+
+    sh.getRange(
+      1,
+      1,
+      1,
+      SPOT_DONE_HEADERS.length
+    )
+    .setValues([
+      SPOT_DONE_HEADERS
+    ]);
+  }
+
+  return sh;
+}
+
+/*
+ * 스팟완료 체크/해제
+ * x = {spotId, month(개통월), phone, done}
+ * 대상건 여부를 서버에서 다시 확인한 뒤 기록
+ */
+function setSpotCompletion(x){
+
+  var lock=
+    LockService.getScriptLock();
+
+  lock.waitLock(30000);
+
+  try{
+
+    var spotId=
+      String(
+        x&&x.spotId||''
+      ).trim();
+
+    var month=
+      monthKey(
+        x&&x.month
+      );
+
+    var tel=
+      phone(
+        x&&x.phone
+      );
+
+    var done=
+      !!(x&&x.done);
+
+    if(
+      !spotId||
+      !/^20\d{2}-\d{2}$/.test(month)||
+      !/^01\d{8,9}$/.test(tel)
+    ){
+
+      throw new Error(
+        '스팟완료 처리 정보가 올바르지 않습니다.'
+      );
+    }
+
+    var ss=
+      SpreadsheetApp.openById(
+        SPREADSHEET_ID
+      );
+
+    var model=
+      readCases_(
+        ss,
+        month
+      );
+
+    var spot=
+      readSpots_(
+        ss,
+        model.cases,
+        todayString(),
+        month
+      )
+      .find(
+        function(s){
+          return s.id===spotId;
+        }
+      );
+
+    if(!spot){
+
+      throw new Error(
+        '스팟을 찾지 못했습니다. 새로고침 후 다시 시도해주세요.'
+      );
+    }
+
+    var target=
+      spot.targets.find(
+        function(t){
+
+          return(
+            t.month===month&&
+            t.phone===tel
+          );
+        }
+      );
+
+    if(!target){
+
+      throw new Error(
+        '해당 스팟의 대상 개통건이 아닙니다. 새로고침 후 확인해주세요.'
+      );
+    }
+
+    var sh=
+      ensureSpotDoneSheet_(ss);
+
+    var key=
+      spotDoneKey_(
+        spotId,
+        month,
+        tel
+      );
+
+    var row=0;
+
+    if(
+      sh.getLastRow()>=2
+    ){
+
+      var keys=
+        sh.getRange(
+          2,
+          1,
+          sh.getLastRow()-1,
+          3
+        )
+        .getValues();
+
+      for(
+        var i=0;
+        i<keys.length;
+        i++
+      ){
+
+        if(
+          spotDoneKey_(
+            keys[i][0],
+            monthKey(keys[i][1]),
+            keys[i][2]
+          )===key
+        ){
+
+          row=i+2;
+          break;
+        }
+      }
+    }
+
+    if(!row){
+
+      row=
+        sh.getLastRow()+1;
+    }
+
+    sh.getRange(
+      row,
+      2,
+      1,
+      2
+    )
+    .setNumberFormat('@');
+
+    sh.getRange(
+      row,
+      1,
+      1,
+      SPOT_DONE_HEADERS.length
+    )
+    .setValues([[
+      spotId,
+      month,
+      tel,
+      target.name,
+      target.date,
+      done,
+      Utilities.formatDate(
+        new Date(),
+        TZ,
+        'yyyy-MM-dd HH:mm:ss'
+      )
+    ]]);
+
+    SpreadsheetApp.flush();
+
+    return{
+      saved:true,
+      spotId:spotId,
+      month:month,
+      phone:tel,
+      done:done
     };
 
   }finally{

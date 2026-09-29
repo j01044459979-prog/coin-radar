@@ -478,6 +478,126 @@
       font-size:17px;
     }
 
+    /* 스팟 대상건 / 스팟완료 */
+    .spot-stats{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:6px;
+      margin-top:10px;
+    }
+
+    .spot-stat{
+      background:#f8fafc;
+      border-radius:10px;
+      padding:7px 4px;
+      text-align:center;
+    }
+
+    .spot-stat .k{
+      font-size:11px;
+      color:#6b7280;
+    }
+
+    .spot-stat .v{
+      font-size:14px;
+      font-weight:900;
+      margin-top:2px;
+      white-space:nowrap;
+    }
+
+    .spot-stat.done .v{color:#047857}
+    .spot-stat.pending .v{color:#b45309}
+
+    .spot-targets{
+      margin-top:10px;
+      border-top:1px solid #f0f0f0;
+      padding-top:6px;
+    }
+
+    .spot-targets summary{
+      font-size:12px;
+      font-weight:800;
+      color:#374151;
+      padding:4px 0;
+      cursor:pointer;
+    }
+
+    .spot-target{
+      display:grid;
+      grid-template-columns:22px 38px minmax(0,1fr) 98px 46px;
+      align-items:center;
+      gap:4px;
+      font-size:12.5px;
+      padding:7px 0;
+      border-bottom:1px solid #f3f4f6;
+    }
+
+    .spot-target:last-child{
+      border-bottom:0;
+    }
+
+    .spot-target input{
+      width:18px;
+      height:18px;
+      margin:0;
+    }
+
+    .spot-target .t-date{
+      color:#6b7280;
+      font-variant-numeric:tabular-nums;
+    }
+
+    .spot-target .t-name{
+      font-weight:800;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .spot-target .t-ctn{
+      font-variant-numeric:tabular-nums;
+      white-space:nowrap;
+    }
+
+    .spot-target .t-staff{
+      color:#374151;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      text-align:right;
+    }
+
+    .spot-target.done .t-name,
+    .spot-target.done .t-ctn{
+      color:#047857;
+    }
+
+    .spot-target-head{
+      font-size:11px;
+      color:#9ca3af;
+      font-weight:700;
+      padding:4px 0;
+    }
+
+    .spot-target-head span:last-child{
+      text-align:right;
+    }
+
+    .spot-empty{
+      font-size:12px;
+      color:#9ca3af;
+      padding:6px 0;
+    }
+
+    @media (max-width:340px){
+      .spot-target{
+        grid-template-columns:20px 34px minmax(0,1fr) 88px 42px;
+        font-size:11.5px;
+        gap:3px;
+      }
+      .spot-stat .v{font-size:12.5px}
+    }
+
     .preview{
       margin-top:12px;
       padding:14px;
@@ -1867,31 +1987,166 @@ function renderSpots(){
               ~
               ${esc(s.end)}
 
-              <br>
-
-              현재
-              ${Number(s.count||0)}건
               ·
               ${esc(s.status||'')}
 
             </div>
 
-            <div class="spot-result">
-
-              <div>
-                확보금액
+            <div class="spot-stats">
+              <div class="spot-stat">
+                <div class="k">대상</div>
+                <div class="v">${Number(s.targetCount||0)}건</div>
               </div>
-
-              <div class="spot-total">
-                ${money(s.total)}
+              <div class="spot-stat done">
+                <div class="k">완료</div>
+                <div class="v">${Number(s.doneCount||0)}건</div>
               </div>
-
+              <div class="spot-stat pending">
+                <div class="k">미완료</div>
+                <div class="v">${Number(s.pendingCount||0)}건</div>
+              </div>
+              <div class="spot-stat">
+                <div class="k">확정예산</div>
+                <div class="v">${money(s.total)}</div>
+              </div>
             </div>
+
+            ${renderSpotTargets(s)}
 
           </div>
         `
       )
       .join('');
+}
+
+
+function spotDateLabel(d){
+
+  const m=
+    String(d||'')
+      .match(/^\d{4}-(\d{2})-(\d{2})$/);
+
+  return m
+    ?m[1]+'/'+m[2]
+    :String(d||'-');
+}
+
+
+function ctnLabel(v){
+
+  const d=
+    String(v||'')
+      .replace(/\D/g,'');
+
+  if(d.length===11){
+    return d.slice(0,3)+'-'+d.slice(3,7)+'-'+d.slice(7);
+  }
+
+  if(d.length===10){
+    return d.slice(0,3)+'-'+d.slice(3,6)+'-'+d.slice(6);
+  }
+
+  return String(v||'');
+}
+
+
+function renderSpotTargets(s){
+
+  const targets=
+    s.targets||[];
+
+  if(!targets.length){
+
+    return`
+      <div class="spot-targets">
+        <div class="spot-empty">
+          기간·조건에 해당하는 개통건이 없습니다.
+        </div>
+      </div>
+    `;
+  }
+
+  return`
+    <details class="spot-targets" open>
+
+      <summary>
+        대상 개통건 ${targets.length}건
+      </summary>
+
+      <div class="spot-target spot-target-head">
+        <span>완료</span>
+        <span>날짜</span>
+        <span>고객명</span>
+        <span>CTN</span>
+        <span>개통자</span>
+      </div>
+
+      ${
+        targets
+          .map(
+            t=>`
+              <label class="spot-target ${t.done?'done':''}">
+                <input
+                  type="checkbox"
+                  ${t.done?'checked':''}
+                  data-spot="${esc(s.id)}"
+                  data-month="${esc(t.month)}"
+                  data-phone="${esc(t.phone)}"
+                  onchange="toggleSpotDone(this)"
+                >
+                <span class="t-date">${esc(spotDateLabel(t.date))}</span>
+                <span class="t-name">${esc(t.name)}</span>
+                <span class="t-ctn">${esc(ctnLabel(t.phone))}</span>
+                <span class="t-staff">${esc(t.staff)}</span>
+              </label>
+            `
+          )
+          .join('')
+      }
+
+    </details>
+  `;
+}
+
+
+function toggleSpotDone(el){
+
+  const done=
+    el.checked;
+
+  el.disabled=true;
+
+  google.script.run
+    .withSuccessHandler(
+      ()=>{
+
+        toast(
+          done
+            ?'스팟완료 처리'
+            :'스팟완료 해제'
+        );
+
+        loadData(
+          SELECTED_MONTH,
+          true
+        );
+      }
+    )
+    .withFailureHandler(
+      err=>{
+
+        el.checked=!done;
+        el.disabled=false;
+
+        fail(err);
+      }
+    )
+    .setSpotCompletion({
+      spotId:el.dataset.spot,
+      month:el.dataset.month,
+      phone:el.dataset.phone,
+      done:done
+    });
 }
 
 
