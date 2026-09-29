@@ -59,7 +59,7 @@ input:focus,select:focus,textarea:focus{border-color:#111;background:#fff}
 .qr-box img{width:100%;display:block}
 .qr-title{font-size:18px;font-weight:900}
 .qr-desc{font-size:13px;color:#666;line-height:1.6;margin-top:7px}
-.bottom-nav{position:fixed;z-index:50;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:620px;height:72px;display:grid;grid-template-columns:repeat(6,1fr);background:rgba(255,255,255,.97);border-top:1px solid #e7e7e7;backdrop-filter:blur(10px)}
+.bottom-nav{position:fixed;z-index:50;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:620px;height:72px;display:grid;grid-template-columns:repeat(4,1fr);background:rgba(255,255,255,.97);border-top:1px solid #e7e7e7;backdrop-filter:blur(10px)}
 .nav-btn{border:0;background:transparent;font-size:10px;color:#888;font-weight:700;padding:2px}
 .nav-btn.active{color:#111;font-weight:900}
 .nav-icon{display:block;font-size:19px;margin-bottom:4px}
@@ -202,34 +202,6 @@ input:focus,select:focus,textarea:focus{border-color:#111;background:#fff}
 </section>
 
 
-<!-- 상권DB -->
-<section id="page-area" class="page">
-
-  <div class="card">
-
-    <div class="section-head">
-
-      <div class="card-title">상권 DB</div>
-
-      <button class="mini-btn" onclick="openAddApartment()">
-        + 아파트 추가
-      </button>
-
-    </div>
-
-    <input
-      id="aptSearch"
-      class="search"
-      placeholder="아파트 검색"
-      oninput="renderApartments()">
-
-    <div id="apartmentList"></div>
-
-  </div>
-
-</section>
-
-
 <!-- 분석 -->
 <section id="page-stats" class="page">
 
@@ -265,48 +237,6 @@ input:focus,select:focus,textarea:focus{border-color:#111;background:#fff}
 </section>
 
 
-<!-- QR -->
-<section id="page-qr" class="page">
-
-  <div class="card qr-card">
-
-    <div class="qr-title">QR① 매장 홍보</div>
-
-    <div class="qr-desc">
-      고객이 스캔하면 홍보 QR 인입이 자동으로 1회 기록된 후
-      관저중로점 홍보페이지로 이동합니다.
-    </div>
-
-    <div id="promoQr" class="qr-box">
-      배포 후 QR 생성 가능
-    </div>
-
-    <button class="secondary" onclick="openPromoLink()">
-      홍보 QR 테스트
-    </button>
-
-  </div>
-
-  <div class="card qr-card">
-
-    <div class="qr-title">QR② 단골등록</div>
-
-    <div class="qr-desc">
-      단골등록 및 KT상품 광고 문자수신 동의용입니다.
-      이 QR은 외부활동 인입으로 카운팅하지 않습니다.
-    </div>
-
-    <div id="regularQr" class="qr-box"></div>
-
-    <button class="secondary" onclick="openRegularLink()">
-      단골등록 페이지 열기
-    </button>
-
-  </div>
-
-</section>
-
-
 <!-- 하단 메뉴 -->
 <nav class="bottom-nav">
 
@@ -325,19 +255,9 @@ input:focus,select:focus,textarea:focus{border-color:#111;background:#fff}
     직원활동
   </button>
 
-  <button class="nav-btn" onclick="goPage('area',this)">
-    <span class="nav-icon">⌖</span>
-    상권DB
-  </button>
-
   <button class="nav-btn" onclick="goPage('stats',this)">
     <span class="nav-icon">▥</span>
     분석
-  </button>
-
-  <button class="nav-btn" onclick="goPage('qr',this)">
-    <span class="nav-icon">▦</span>
-    QR
   </button>
 
 </nav>
@@ -956,6 +876,8 @@ function renderApartments(){
   const el=
     document.getElementById('apartmentList');
 
+  if(!el) return;
+
   const search=
     (
       document.getElementById('aptSearch').value||''
@@ -1271,6 +1193,8 @@ function renderQr(){
 
   const regular=
     document.getElementById('regularQr');
+
+  if(!promo||!regular) return;
 
   if(QRINFO.promoTrackingUrl){
 
