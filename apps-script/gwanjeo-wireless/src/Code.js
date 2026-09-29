@@ -361,110 +361,69 @@ function getMonthlySheets_(ss){
 
 
 /* =========================================================
-   검수완료 열 자동 준비
-   A = 검수완료
-   B = 메모
+   월 장표 열 구조 (데이터 10행부터)
+   장표가 원본이며 웹앱은 A/B/N 이후 영역에 쓰지 않음
+
+   A 검수완료   B 메모     C No.     D 개통일
+   E 고객       F CTN      G 종류    H 모델명
+   J 요금제     M 직원명   N 총 확보금액   Z 총 사용금액
 ========================================================= */
 
-function ensureReviewColumn_(sh){
+var CASE_HEADERS_=[
+  {col:1, label:'검수완료'},
+  {col:2, label:'메모'},
+  {col:3, label:'No'},
+  {col:4, label:'개통일'},
+  {col:5, label:'고객'},
+  {col:6, label:'CTN'},
+  {col:7, label:'종류'},
+  {col:8, label:'모델명'},
+  {col:10,label:'요금제'},
+  {col:13,label:'직원명'},
+  {col:14,label:'총확보금액'},
+  {col:26,label:'총사용금액'}
+];
 
-  if(!sh){
-    return;
-  }
+/*
+ * 헤더 위치 확인 (읽기 전용)
+ * 1~9행 중 해당 열에 기대하는 제목이 있는지만 확인
+ * 반환: 불일치 목록 (없으면 빈 배열)
+ */
+function checkCaseHeaders_(sh){
 
-  var headerA=
-    String(
-      sh.getRange(7,1)
-      .getDisplayValue()||''
-    ).trim();
+  var head=
+    sh.getRange(1,1,9,26)
+    .getDisplayValues();
 
-  var headerB=
-    String(
-      sh.getRange(7,2)
-      .getDisplayValue()||''
-    ).trim();
+  var problems=[];
 
-  var already=
-    norm(headerA)===
-    norm('검수완료');
+  CASE_HEADERS_.forEach(
+    function(h){
 
-  if(!already){
+      var text=
+        head.map(
+          function(r){
+            return norm(r[h.col-1]);
+          }
+        ).join('|');
 
-    sh.insertColumnBefore(1);
+      if(
+        text.indexOf(
+          norm(h.label)
+        )<0
+      ){
 
-    try{
-
-      var oldB=
-        sh.getRange(7,2);
-
-      oldB.copyTo(
-        sh.getRange(7,1),
-        SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
-        false
-      );
-
-    }catch(e){}
-
-    try{
-
-      var merged=
-        sh.getRange(
-          7,
-          1,
-          2,
-          1
+        problems.push(
+          sh.getRange(1,h.col)
+          .getA1Notation()
+          .replace(/\d+/,'')+
+          '열 \''+h.label+'\''
         );
+      }
+    }
+  );
 
-      merged.breakApart();
-      merged.merge();
-
-    }catch(e){}
-
-    sh.getRange(7,1)
-    .setValue('검수완료');
-
-    try{
-
-      sh.getRange(8,1)
-      .clearContent();
-
-    }catch(e){}
-  }
-
-  var currentB=
-    String(
-      sh.getRange(7,2)
-      .getDisplayValue()||''
-    ).trim();
-
-  if(
-    norm(currentB)===
-    norm('고객약속')||
-    norm(currentB)===
-    norm('고객약속사항')||
-    !currentB
-  ){
-
-    sh.getRange(7,2)
-    .setValue('메모');
-  }
-
-  var maxRows=
-    sh.getMaxRows();
-
-  if(maxRows>=10){
-
-    try{
-
-      sh.getRange(
-        10,
-        1,
-        maxRows-9,
-        1
-      ).insertCheckboxes();
-
-    }catch(e){}
-  }
+  return problems;
 }
 
 
@@ -510,7 +469,17 @@ function readCases_(
 
       var sh=info.sh;
 
-      ensureReviewColumn_(sh);
+      var headerProblems=
+        checkCaseHeaders_(sh);
+
+      if(headerProblems.length){
+
+        warnings.push(
+          info.title+
+          ' 헤더 확인 필요: '+
+          headerProblems.join(', ')
+        );
+      }
 
       if(
         sh.getLastRow()<10
@@ -653,31 +622,12 @@ function readCases_(
             '미지정';
 
 
-          /* ===============================================
-             고객혜택 확보금액
-             현재 장표 T열 ~ Y열 전체 합계
+          /*
+           * 확보금액 = N열 총 확보금액
+           */
 
-             T = r[19]
-             U = r[20]
-             V = r[21]
-             W = r[22]
-             X = r[23]
-             Y = r[24]
-          =============================================== */
-
-          var secured=0;
-
-          for(
-            var benefitCol=19;
-            benefitCol<=24;
-            benefitCol++
-          ){
-
-            secured+=
-              amount(
-                r[benefitCol]
-              );
-          }
+          var secured=
+            amount(r[13]);
 
 
           /*
@@ -703,9 +653,7 @@ function readCases_(
 
 
           /*
-           * Y열 개별값
-           * 고객혜택 확보 총액은 위에서
-           * T:Y 전체를 합산함
+           * Y열 고객혜택 개별값
            */
 
           var benefit=
@@ -795,8 +743,8 @@ function readCases_(
 
 
             /*
-             * 고객혜택 확보금액
-             * T:Y 합계
+             * 확보금액
+             * N열 총 확보금액
              */
 
             secured:
@@ -813,7 +761,7 @@ function readCases_(
 
 
             /*
-             * 개통건별 잔여
+             * 개통건별 잔여 = N - Z
              * 스팟은 개별 고객에게 배분하지 않음
              */
 
@@ -986,8 +934,6 @@ function saveCaseBudget(x){
         '대상 월별 시트를 찾지 못했습니다.'
       );
     }
-
-    ensureReviewColumn_(sh);
 
     var row=
       Number(x.row);
@@ -2544,7 +2490,7 @@ function getDashboardData(
 
   /* ===============================================
      고객혜택 확보금액
-     각 개통건의 T:Y 합계
+     각 개통건의 N열 총 확보금액 합계
   =============================================== */
 
   var benefitTotal=
@@ -2728,7 +2674,7 @@ function getDashboardData(
 
       /*
        * 고객혜택 확보
-       * T:Y
+       * N열 합계
        */
 
       benefitTotal:
@@ -2967,11 +2913,6 @@ function parseActivationText(text){
   var usedPhone=
     valueOf(
       /^중고폰\s*[:：]\s*(.*)$/i
-    );
-
-  var promise=
-    valueOf(
-      /^고객약속사항\s*[:：]\s*(.*)$/i
     );
 
   if(!dateText){
@@ -3233,9 +3174,6 @@ function parseActivationText(text){
     usedPhone:
       usedPhone||'X',
 
-    promise:
-      promise,
-
     warnings:
       warnings
   };
@@ -3244,10 +3182,12 @@ function parseActivationText(text){
 
 /* =========================================================
    개통 저장
-   A 검수완료 = 미입력
-   B 메모 = 미입력
-   T:Y 고객혜택 = 미입력
-   Z 및 금액영역 = 미입력
+   기본 개통정보만 입력
+   C No. / D 개통일 / E 고객 / F CTN
+   G 종류 / H 모델명 / J 요금제 / M 직원명
+
+   A 검수완료, B 메모, N 총 확보금액 이후
+   금액·혜택 영역은 값/수식/서식 모두 건드리지 않음
 ========================================================= */
 
 function saveActivationText(text){
@@ -3294,7 +3234,18 @@ function saveActivationText(text){
     var sh=
       target.sh;
 
-    ensureReviewColumn_(sh);
+    var headerProblems=
+      checkCaseHeaders_(sh);
+
+    if(headerProblems.length){
+
+      throw new Error(
+        target.title+
+        ' 장표 헤더가 예상과 다릅니다. 저장하지 않았습니다. ('+
+        headerProblems.join(', ')+
+        ')'
+      );
+    }
 
     var lastRow=
       Math.max(
@@ -3365,14 +3316,6 @@ function saveActivationText(text){
         sh.getMaxRows(),
         20
       );
-
-      sh.getRange(
-        row,
-        1,
-        20,
-        1
-      )
-      .insertCheckboxes();
     }
 
     var noCell=
@@ -3420,11 +3363,7 @@ function saveActivationText(text){
 
     /*
      * 기본 개통정보만 입력
-     *
-     * A 검수완료 건드리지 않음
-     * B 메모 건드리지 않음
-     * T:Y 고객혜택 확보 영역 건드리지 않음
-     * Z 총 사용금액 건드리지 않음
+     * A/B, N 이후 영역은 쓰지 않음
      */
 
     sh.getRange(
@@ -3484,67 +3423,6 @@ function saveActivationText(text){
       x.staff
     );
 
-
-    /*
-     * 고객혜택/사용금액 구간 이후의
-     * 카드/보험/부가/유선만 기존대로 저장
-     */
-
-    if(
-      x.card&&
-      norm(x.card)!=='X'
-    ){
-
-      sh.getRange(
-        row,
-        38
-      )
-      .setValue(1);
-
-      sh.getRange(
-        row,
-        39
-      )
-      .setValue(
-        x.card
-      );
-    }
-
-    sh.getRange(
-      row,
-      41
-    )
-    .setValue(
-      norm(
-        x.insurance
-      )==='X'
-        ?'X'
-        :'O'
-    );
-
-    sh.getRange(
-      row,
-      42
-    )
-    .setValue(
-      norm(
-        x.addon
-      )==='X'
-        ?'X'
-        :'O'
-    );
-
-    sh.getRange(
-      row,
-      44
-    )
-    .setValue(
-      norm(
-        x.wired
-      )==='X'
-        ?'X'
-        :x.wired
-    );
 
     SpreadsheetApp.flush();
 
