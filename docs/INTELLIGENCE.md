@@ -57,9 +57,9 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 |---|---|---|---|
 | Binance 공지 | `www.binance.com/bapi/composite/v1/public/cms/article/list/query` (catalog 48 신규 상장 · 161 상장폐지 · 49 최신 뉴스) | 2분 | 공개 CMS JSON. 문서화된 공식 API 는 아님. Worker 위치에 따라 451/403 차단 가능 → 그 경우 상태 "지연"으로만 표시 |
 | Upbit 공지 | `api-manager.upbit.com/api/v1/announcements` | 2분 | 업비트 공지 페이지가 쓰는 공개 JSON. 공식 문서화 API 는 아님 |
-| BlockMedia | `https://www.blockmedia.co.kr/feed` (RSS) | 5분 | |
-| CoinDesk | `https://www.coindesk.com/arc/outboundfeeds/rss` (RSS) | 5분 | |
-| Cointelegraph | `https://cointelegraph.com/rss` (RSS) | 5분 | |
+| BlockMedia | `https://www.blockmedia.co.kr/feed` (RSS) | 약 6분 | 실행마다 뉴스 1개씩 순환 |
+| CoinDesk | `https://www.coindesk.com/arc/outboundfeeds/rss` (RSS) | 약 6분 | 〃 |
+| Cointelegraph | `https://cointelegraph.com/rss` (RSS) | 약 6분 | 〃 |
 
 - RSS/JSON 만 사용하고 **HTML 스크래핑은 하지 않습니다.** 불안정하거나 조건이 불명확한 출처는 넣지 않았습니다.
 - API Key/Secret 은 없습니다. 요청에 `User-Agent: coin-radar-engine/6a (+저장소 URL)` 를 붙입니다.
@@ -69,14 +69,15 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 ### 저작권
 기사 전문은 저장하지 않습니다. 제목 + 공개 feed 의 짧은 설명(최대 280자, 태그 제거) + URL 만 저장하고 원문은 링크로 보냅니다.
 
-## 4. 수집 주기 · Cloudflare 무료 플랜
+## 4. 수집 주기 · Cron · Cloudflare 무료 플랜
 
-- Cron 2개 사용 (계정 한도 5개): `* * * * *` (기존 Upbit 감시), `*/2 * * * *` (정보 수집).
-- 정보 Cron 은 2분마다 깨어나 출처별 `last_attempt_at` 을 보고 **때가 된 출처만** 요청합니다 (공식 2분, 뉴스 5분).
-  연속 실패하면 그 출처의 간격을 늘립니다 (실패 n회 → 간격 × min(1+n, 4)).
-- 실행당 외부 요청: Binance 3 + Upbit 공지 1 + 뉴스 3 + Upbit 마켓 목록 1 + 시세 캔들 최대 4 = **최대 12개** (무료 한도 50개). 기존 감시는 별도 실행이라 각자 한도가 적용됩니다.
+- Cron 2개 사용 (계정 한도 5개): `* * * * *` (기존 Upbit 감시), `*/2 * * * *` (정보 수집). 표현식은 `worker/src/cron.js` 에 상수로 있고 `wrangler.toml` 과 일치하는지 테스트로 확인합니다.
+- **Cron 분기 규칙**: `controller.cron` 이 `* * * * *` 이거나 없으면 Upbit 감시, **그 밖의 모든 표현식은 정보 수집**입니다. (초기 버전은 `*/2 * * * *` 문자열과 정확히 같을 때만 수집하고 나머지는 감시로 보냈습니다.)
+- 정보 Cron 은 2분마다 깨어나 **공식 출처(Binance·Upbit)는 때가 되면 모두**, **뉴스(RSS)는 가장 오래 기다린 1개만** 수집합니다. 따라서 뉴스 3개 출처의 실제 주기는 약 6분입니다. 연속 실패/미완료면 그 출처의 간격을 늘립니다 (× min(1+n, 4)).
+- **CPU 제한(중요)**: 무료 플랜은 실행당 CPU 약 10ms 입니다. 피드 파싱·종목 분석이 이를 넘으면 Cloudflare 가 실행을 **오류 로그 외 흔적 없이 중단**할 수 있습니다. 그래서 (1) 실행당 뉴스 1개, (2) RSS 는 항목 앞부분(3.5KB)·25개만 읽고 기사 전문은 읽지 않음, (3) 종목 사전은 큰 정규식 대신 Map 조회, (4) **시작을 가장 먼저 D1 에 기록하고 출처마다 처리 직후 상태를 기록**합니다. 그래도 반복해서 미완료라면 status 의 `diagnostics.code = incomplete` 와 해당 출처의 "수집 미완료" 오류로 드러납니다 → `INTEL_DISABLED` 로 출처를 줄이거나 Workers Paid 로 전환하세요.
+- 실행당 외부 요청: Binance 3 + Upbit 공지 1 + 뉴스 1 + Upbit 마켓 목록 1 + 시세 캔들 최대 4 = **최대 10개** (무료 한도 50개). 기존 감시는 별도 실행이라 각자 한도가 적용됩니다.
 - D1 쓰기 상한: 출처당 새 항목 최대 30건/회, 시세 스냅샷 최대 12행/회, 이미 저장된 URL 은 분석하지 않고 건너뜀.
-- ⚠️ 무료 플랜 CPU 는 실행당 약 10ms 입니다. 새 항목이 거의 없는 평상시에는 피드 파싱 정도만 하지만, **처음 실행(첫 수집)** 이나 항목이 많을 때 초과할 수 있습니다. Cloudflare 로그에 `exceeded CPU` 가 반복되면 `INTEL_DISABLED` 로 출처를 줄이거나 Workers Paid 로 전환하세요. 실패해도 다음 실행에서 이어서 수집합니다.
+- 배포: Cloudflare Workers Builds 의 Deploy command 가 `npx wrangler deploy` 이면 `wrangler.toml` 의 Cron 이 배포 때 함께 등록됩니다 (`docs/SETUP.md`). `wrangler versions upload` 만 쓰는 설정이면 Cron 이 바뀌지 않으므로 대시보드 Triggers 에서 확인하세요.
 
 ## 5. D1 스키마
 
@@ -88,6 +89,7 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 | `event_clusters` | 같은 사건 묶음 (대표 제목/링크, 심볼, `importance_base` + `reaction_bonus` = `importance`, `verification`, 출처 목록, 건수, 최초 게시 `event_time`) | **60일** |
 | `event_market_snapshots` | 이벤트 시각 전후 Upbit 시세 (`price_at_pub`, `change_pre5`, `change_post5`, `change_post15`, `change_5m`, `change_15m`) | 클러스터와 함께 |
 | `source_health` | 출처별 마지막 시도/성공, 연속 실패, 오류 | 유지 (출처당 1행) |
+| `intel_meta` | 진단: Cron 실행 확인(`cron_seen:<표현식>`), collector 시작/완료/오류 | 유지 (소수의 행) |
 
 - 중복 방지: `url_key`(추적 파라미터·해시·`www.`·끝 `/` 제거한 URL) UNIQUE + `INSERT OR IGNORE`, 수집 전에 기존 키를 조회해 새 항목만 분석합니다.
 - 정리: 매시 정각 실행에서 `pruneIntel` (항목 30일, 클러스터 60일 + 스냅샷).
@@ -165,11 +167,26 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 - 게시 시간이 없는 출처는 `published_at = NULL` 이며 화면에 **"게시 시간 미확인 · 수집 N분 전"** 으로 표시해 수집 시각과 혼동하지 않게 합니다. 게시 시각이 현재보다 10분 넘게 미래이면 잘못된 값으로 보고 NULL 처리합니다.
 - 오래된 항목(뉴스 3일, 공식 7일 초과)은 저장하지 않습니다.
 
-## 13. Source Health · 실패 처리
+## 13. Source Health · 실패 처리 · 진단
 
-- 출처마다 독립 실행: 예외/timeout(8초)/형식 오류/깨진 피드가 다른 출처와 Worker 전체에 영향을 주지 않습니다.
-- `source_health`: 마지막 시도, 마지막 성공, 마지막 오류, 연속 실패 횟수.
-- 상태: **정상**(연속 실패 3회 미만이고 최근 성공이 주기의 3배 이내) / **지연**(연속 실패 3회 이상 또는 성공이 오래됨) / **수집 전**(한 번도 시도 안 함). 화면에 "Binance 공지 정상 · 2분 전", "CoinDesk 지연 · 17분 전" 형태로 표시합니다.
+- 출처마다 독립: 네트워크는 병렬(`allSettled`), 그 뒤 **출처마다 순서대로** 파싱 → 분석 → 저장 → 상태 기록을 각각 `try/catch` 로 감쌉니다. 한 출처의 예외/timeout(8초)/형식 오류/저장 오류가 다른 출처와 Worker 전체에 영향을 주지 않으며, 상태 기록 실패도 다른 출처의 기록을 막지 않습니다.
+- **수집 시작 전에** 이번 실행 대상 출처의 시도(`last_attempt_at`, `수집 미완료`)를 기록합니다. 실행이 도중에 중단돼도 "수집 준비 중"이 아니라 "수집 오류(미완료)"로 드러나고, 미완료가 반복되면 실패 횟수가 늘어납니다. 정상 완료하면 오류가 지워집니다.
+- 상태 (`/api/intelligence/status` 의 `sources[].status`, 화면 표기)
+  | status | 조건 | 화면 |
+  |---|---|---|
+  | `pending` | 한 번도 시도하지 않음 | **수집 준비 중** |
+  | `ok` | 최근 성공 | 정상 · N분 전 |
+  | `error` | 성공한 적 없이 시도만 있음 / 연속 실패 3회 이상 / 오래 성공이 없고 마지막 시도가 오류 | **수집 오류** · 마지막 성공 N분 전 |
+  | `delayed` | 성공 기록이 오래됐지만 오류 기록은 없음 | 지연 · N분 전 |
+- 화면 상단 상태: Worker API(`/events`) 호출 자체가 실패할 때만 **정보 서버 연결 실패**. 모든 출처가 pending 이면 **수집 준비 중**, 일부만 오류면 **일부 출처 수집 오류 (N개)**.
+- **진단 (`status.diagnostics`, 읽기 전용, 강제 수집 endpoint 없음)**: `last_cron_seen_at`, `last_cron_expression`, `crons_seen`(표현식별 마지막 실행 시각; 1분 감시 Cron 은 10분에 1번만 기록), `last_collector_started_at`, `last_collector_finished_at`, `last_collector_error`, 그리고 `code`/`hint`:
+  | code | 의미 |
+  |---|---|
+  | `cron_not_seen` | 정보 수집 Cron 실행 기록 없음 → Cloudflare Triggers 에 `*/2 * * * *` 등록/배포 확인 |
+  | `never_ran` | Cron 은 실행되는데 collector 가 한 번도 시작 못 함 → Worker 로그 확인 |
+  | `incomplete` | 시작했지만 완료 기록 없음 (90초 초과) → 실행 시간/CPU 제한 의심 |
+  | `error` | 마지막 실행에 오류 있음 (`last_collector_error`) |
+  | `ok` | 정상 |
 
 ## 14. Worker API (GET 전용)
 
@@ -199,7 +216,7 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 
 ## 17. 운영에서 확인할 것
 
-1. `https://coin-radar-engine.j01044459979.workers.dev/api/intelligence/status` — 각 출처 `status` 가 `ok` 인지 (배포 후 2~5분 기다린 뒤).
-2. 특정 출처가 `delayed` 이고 `last_error` 가 `HTTP 451/403` 이면 그 출처가 Worker 위치에서 차단된 것입니다 (Binance 공지 가능성 있음). 다른 출처에는 영향이 없습니다.
+1. `https://coin-radar-engine.j01044459979.workers.dev/api/intelligence/status` — `diagnostics.code` 와 각 출처 `status` 를 확인 (배포 후 2~8분 기다린 뒤).
+2. 특정 출처가 `error` 이고 `last_error` 가 `HTTP 451/403` 이면 그 출처가 Worker 위치에서 차단된 것입니다 (Binance 공지 가능성 있음). 다른 출처에는 영향이 없습니다.
 3. `/api/intelligence/events?limit=5` 에 항목이 있는지.
 4. 사이트 상단 **📰 뉴스** 탭.

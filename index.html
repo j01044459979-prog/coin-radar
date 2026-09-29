@@ -5,7 +5,7 @@
 /* Phase 1.1: 거래소별 상태, 선택된 탭, 고정 탭, 이동한 패널 강조 */
 .conns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.live{white-space:nowrap}.live.ok{color:var(--g);border-color:#1f5a3c}.live.warn{border-color:#5a4a1f}.live.err{border-color:#5a2029}.tabs{position:sticky;top:0;z-index:10;background:#061019;padding:8px 0;margin:7px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tab.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700;box-shadow:inset 0 -2px 0 var(--b)}.tab:not(.soon):not(.on):hover{border-color:#49708d}.panel,#top{scroll-margin-top:62px}.panel.flash{border-color:var(--b);box-shadow:0 0 0 2px rgba(102,170,255,.35);transition:box-shadow .3s,border-color .3s}.ver{color:var(--m);font-size:11px;text-align:center;margin:4px 0 12px}.ver.warn{color:var(--y)}.winbtn{cursor:pointer}.winbtn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.signal .state{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;margin-left:4px;white-space:nowrap}.signal .why{margin-top:6px;line-height:1.45}.lv-overheat .state{background:#4a1520;color:#ffb3bc}.lv-alert .state{background:#4a3a12;color:var(--y)}.lv-active .state{background:#12304a;color:#9cc8ff}.signal.lv-overheat{border-color:#6a2430}.signal.lv-alert{border-color:#5a4a1f}.src.lv-overheat{color:#ff9aa6}.src.lv-alert{color:var(--y)}.src.lv-active{color:#9cc8ff}.fcard .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:8px}.fgrid div{font-size:12px;min-width:0}.fgrid span{display:block;color:var(--m);font-size:10.5px}.fgrid b{font-size:13px;overflow-wrap:anywhere}.fgrid i{font-style:normal}.fgrid small{color:var(--m);font-size:10.5px}.fcard.stale{opacity:.55}.fut-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:9px}@media(max-width:900px){.conns{flex-direction:column;align-items:flex-end;gap:4px}.tab{padding:10px 13px;font-size:13px}}
 /* Phase 6A: 정보(공지/뉴스) 카드 */
-.ilist{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:9px}.icard{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px;min-width:0}.icard.v-official{border-color:#1f5a3c}.icard.v-multi{border-color:#3a4f72}.ihead{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.isym{font-size:17px}.ibadge{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;white-space:nowrap}.ibadge.v-official{background:#123a28;color:var(--g)}.ibadge.v-multi{background:#12304a;color:#9cc8ff}.ibadge.v-news{background:#1c2a36;color:var(--m)}.ibadge.v-unverified{background:#3a2a12;color:var(--y)}.ikind{font-size:10.5px;color:var(--m)}.itime{margin-top:5px}.ititle{margin:7px 0;font-size:14px;font-weight:700;line-height:1.4;overflow-wrap:anywhere}.imeta{margin-bottom:6px}.ichip{font-size:11px;padding:3px 7px;border-radius:8px;background:#0f2030;border:1px solid #1b2d3c;color:var(--m)}.ireact{margin:8px 0;padding:8px;background:#0a1722;border-radius:9px}.ifoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}.iscore{color:var(--t);font-size:14px}.ilink{color:var(--b);font-size:12px;text-decoration:none;padding:6px 9px;border:1px solid var(--line);border-radius:9px;white-space:nowrap}.ilink:hover{border-color:var(--b)}.ifilters{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.ifilters .btn{cursor:pointer}.ifilters .btn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.wait{color:var(--m)}.imini a{color:var(--t);text-decoration:none;overflow-wrap:anywhere}.imini a:hover{text-decoration:underline}.imini{line-height:1.45}.isrc{display:flex;flex-wrap:wrap;gap:4px 12px}.isrc .ok{color:var(--g)}.isrc .delayed{color:var(--y)}.isrc .pending{color:var(--m)}@media(max-width:900px){.ilink{padding:9px 12px}.ifilters .btn{padding:9px 12px;font-size:12px}}</style></head><body><div class="w" id="top">
+.ilist{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:9px}.icard{background:var(--p2);border:1px solid #1b2d3c;border-radius:13px;padding:12px;min-width:0}.icard.v-official{border-color:#1f5a3c}.icard.v-multi{border-color:#3a4f72}.ihead{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.isym{font-size:17px}.ibadge{font-size:11px;padding:3px 7px;border-radius:99px;background:#132534;white-space:nowrap}.ibadge.v-official{background:#123a28;color:var(--g)}.ibadge.v-multi{background:#12304a;color:#9cc8ff}.ibadge.v-news{background:#1c2a36;color:var(--m)}.ibadge.v-unverified{background:#3a2a12;color:var(--y)}.ikind{font-size:10.5px;color:var(--m)}.itime{margin-top:5px}.ititle{margin:7px 0;font-size:14px;font-weight:700;line-height:1.4;overflow-wrap:anywhere}.imeta{margin-bottom:6px}.ichip{font-size:11px;padding:3px 7px;border-radius:8px;background:#0f2030;border:1px solid #1b2d3c;color:var(--m)}.ireact{margin:8px 0;padding:8px;background:#0a1722;border-radius:9px}.ifoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px}.iscore{color:var(--t);font-size:14px}.ilink{color:var(--b);font-size:12px;text-decoration:none;padding:6px 9px;border:1px solid var(--line);border-radius:9px;white-space:nowrap}.ilink:hover{border-color:var(--b)}.ifilters{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}.ifilters .btn{cursor:pointer}.ifilters .btn.on{border-color:var(--b);background:#12304a;color:#fff;font-weight:700}.wait{color:var(--m)}.imini a{color:var(--t);text-decoration:none;overflow-wrap:anywhere}.imini a:hover{text-decoration:underline}.imini{line-height:1.45}.isrc{display:flex;flex-wrap:wrap;gap:4px 12px}.isrc .ok{color:var(--g)}.isrc .delayed{color:var(--y)}.isrc .pending{color:var(--m)}.isrc .error{color:var(--r)}@media(max-width:900px){.ilink{padding:9px 12px}.ifilters .btn{padding:9px 12px;font-size:12px}}</style></head><body><div class="w" id="top">
 <div class="top"><div><div class="brand">⚡ COIN RADAR <span class="hot">V3</span></div><div class="muted">개인용 실시간 코인 정보 레이더 · 주문 기능 없음</div></div><div id="connStatus" class="conns" role="status" aria-live="polite"><span id="binanceStatus" class="live warn" data-level="warn">● Binance 연결 중</span><span id="upbitStatus" class="live warn" data-level="warn">● Upbit 불러오는 중</span></div></div>
 <div class="tabs" id="tabs"><div class="tab on" data-go="top" role="button" tabindex="0" aria-current="true">🔥 전체 레이더</div><div class="tab" data-go="binancePanel" role="button" tabindex="0">🌎 Binance</div><div class="tab" data-go="upbitPanel" role="button" tabindex="0">🇰🇷 Upbit</div><div class="tab" data-go="futuresPanel" role="button" tabindex="0">📈 선물</div><div class="tab" data-go="intelPanel" role="button" tabindex="0">📰 뉴스</div><div class="tab soon" title="준비 중">📡 Telegram<span class="soonbadge">준비 중</span></div><div class="tab soon" title="준비 중">𝕏 X Radar<span class="soonbadge">준비 중</span></div></div>
 <div id="hero" class="hero"><div class="card">데이터 로딩...</div></div>
@@ -636,7 +636,7 @@
   // Worker(/api/intelligence/*)가 D1 에 저장한 공식 공지·뉴스를 읽어 표시합니다. 이 기능이 실패해도 시세·레이더·선물은 계속 동작합니다.
   // 시장 반응 숫자는 이 화면이 이미 받은 Binance 1분봉·선물 데이터(또는 Worker 의 Upbit 스냅샷)만 사용하고, 없으면 표시하지 않습니다.
   const INTEL_KEY = 'coinradar.intel.filter';
-  const intel = { events: [], sources: [], loadedAt: 0, statusAt: 0, error: null, kind: 'all', coin: 'ALL' };
+  const intel = { events: [], sources: [], diag: null, degraded: false, loadedAt: 0, statusAt: 0, error: null, kind: 'all', coin: 'ALL' };
   el.intelList = $('intelList');
   el.intelTopList = $('intelTopList');
   el.intelStatus = $('intelStatus');
@@ -670,6 +670,7 @@
       const b = await intelGet('/api/intelligence/events?limit=50');
       if (!b || !Array.isArray(b.events)) throw new Error('형식 오류');
       intel.events = b.events.filter(validEvent);
+      intel.degraded = b.status === 'degraded'; // Worker 는 응답했지만 D1 이 연결되지 않음
       intel.loadedAt = Date.now();
       intel.error = null;
     } catch (e) {
@@ -678,7 +679,7 @@
     if (Date.now() - intel.statusAt > 110000) {
       try {
         const s = await intelGet('/api/intelligence/status');
-        if (s && Array.isArray(s.sources)) { intel.sources = s.sources; intel.statusAt = Date.now(); }
+        if (s && Array.isArray(s.sources)) { intel.sources = s.sources; intel.diag = s.diagnostics || null; intel.statusAt = Date.now(); }
       } catch (e) { /* 상태 조회 실패는 카드 표시에 영향 없음 */ }
     }
     renderIntel();
@@ -716,13 +717,7 @@
 
   function renderIntel() {
     const now = Date.now();
-    const delayed = intel.sources.filter((s) => s.status === 'delayed');
-    let view;
-    if (intel.error && !intel.events.length) view = { level: 'err', text: '정보 서버 연결 실패' };
-    else if (intel.error) view = { level: 'warn', text: '정보 갱신 지연' };
-    else if (!intel.loadedAt) view = { level: 'warn', text: '정보 연결 중' };
-    else if (delayed.length) view = { level: 'warn', text: `정보 일부 지연 (${delayed.length}개 출처)` };
-    else view = { level: 'ok', text: '정보 정상' };
+    const view = I.overallStatus({ apiFailed: !!intel.error, hasData: !!intel.loadedAt, loaded: !!intel.loadedAt, degraded: intel.degraded, sources: intel.sources });
     paintStatus(el.intelStatus, view);
 
     const list = I.filterEvents(intel.events, intel.kind, intel.coin);
@@ -734,11 +729,13 @@
     } else if (!intel.loadedAt) {
       el.intelList.innerHTML = '<div class=signal data-state=loading>정보를 불러오는 중<div class=src>출처가 없는 내용은 만들지 않고, 데이터가 없으면 비워 둡니다.</div></div>';
     } else if (!list.length) {
-      el.intelList.innerHTML = `<div class=signal data-state=empty>${intel.events.length ? '선택한 조건에 맞는 정보가 없습니다' : '아직 수집된 정보가 없습니다'}<div class=src>${intel.events.length ? '필터를 바꿔 보세요.' : 'Worker 가 공식 공지·뉴스를 수집하면 여기에 표시됩니다.'}</div></div>`;
+      const em = I.emptyText({ hasEvents: intel.events.length > 0, sources: intel.sources });
+      el.intelList.innerHTML = `<div class=signal data-state=empty>${I.esc(em.title)}<div class=src>${I.esc(em.sub)}</div></div>`;
     } else {
       el.intelList.innerHTML = list.slice(0, 20).map((ev) => I.cardHtml(ev, reactionFor(ev, now), now)).join('');
     }
-    el.intelSources.innerHTML = intel.sources.length ? intel.sources.map((s) => `<span class="${I.esc(s.status)}">${I.esc(I.healthText(s, now))}</span>`).join('') : '';
+    el.intelSources.innerHTML = (intel.sources.length ? intel.sources.map((s) => `<span class="${I.esc(s.status)}"${s.last_error ? ` title="${I.esc(s.last_error)}"` : ''}>${I.esc(I.healthText(s, now))}</span>`).join('') : '')
+      + (intel.diag && intel.diag.code && !['ok', 'cron_not_seen'].includes(intel.diag.code) ? `<span class="src" data-diag="${I.esc(intel.diag.code)}">진단: ${I.esc(intel.diag.hint || '')}</span>` : '');
 
     const top = I.rankTop(intel.events, now, 5);
     el.intelTopList.innerHTML = top.length ? top.map((ev) => I.miniHtml(ev, now)).join('')
