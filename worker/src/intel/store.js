@@ -1,6 +1,8 @@
 // Crypto Intelligence D1 저장소 (binding: DB). 같은 SQL: migrations/0002_intelligence.sql
 // 모든 시각은 epoch milliseconds(UTC) 정수로 저장합니다. 값은 항상 bind 로만 전달합니다 (SQL 문자열 조립 없음).
 
+import { ensureSocialSchema, resetSocialSchemaFlagForTests } from './social-store.js';
+
 export const RETENTION = { itemsDays: 30, clustersDays: 60 };
 const DAY = 86400000;
 
@@ -83,13 +85,22 @@ export const INTEL_SCHEMA = [
 ];
 
 let ready = false;
-export async function ensureIntelSchema(db) {
-  if (ready) return;
-  await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
-  ready = true;
+let pending = null;
+export function ensureIntelSchema(db) {
+  if (ready) return Promise.resolve();
+  if (!pending) {
+    pending = (async () => {
+      await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
+      await ensureSocialSchema(db); // Phase 6B: 소셜 테이블 + 클러스터 컬럼 (이미 있으면 건너뜀)
+      ready = true;
+    })().finally(() => { pending = null; });
+  }
+  return pending;
 }
 export function resetIntelSchemaFlagForTests() {
   ready = false;
+  pending = null;
+  resetSocialSchemaFlagForTests();
 }
 
 export async function loadHealth(db) {
@@ -146,16 +157,19 @@ export function rowToCluster(r) {
     id: r.id, title: r.title, url: r.url, category: r.category, symbols: parseJson(r.symbols, []), importanceBase: r.importance_base, reactionBonus: r.reaction_bonus,
     importance: r.importance, verification: r.verification, source: r.source, sourceType: r.source_type, sources: parseJson(r.sources, []), itemCount: r.item_count,
     sourceCount: r.source_count, publishedKnown: !!r.published_known, eventTime: r.event_time, lastTime: r.last_time, firstSeenAt: r.first_seen_at, updatedAt: r.updated_at,
+    officialCount: r.official_count || 0, newsCount: r.news_count || 0, telegramCount: r.telegram_count || 0, communityCount: r.community_count || 0,
+    officialSeenAt: r.official_seen_at ?? null, socialSeenAt: r.social_seen_at ?? null, communitySeenAt: r.community_seen_at ?? null,
   };
 }
 
-const clusterArgs = (c) => [c.title, c.url, c.category, JSON.stringify(c.symbols), c.importanceBase, c.reactionBonus, c.importance, c.verification, c.source, c.sourceType, JSON.stringify(c.sources), c.itemCount, c.sourceCount, c.publishedKnown ? 1 : 0, c.eventTime, c.lastTime, c.firstSeenAt, c.updatedAt];
+const clusterArgs = (c) => [c.title, c.url, c.category, JSON.stringify(c.symbols), c.importanceBase, c.reactionBonus, c.importance, c.verification, c.source, c.sourceType, JSON.stringify(c.sources), c.itemCount, c.sourceCount, c.publishedKnown ? 1 : 0, c.eventTime, c.lastTime, c.firstSeenAt, c.updatedAt, c.officialCount || 0, c.newsCount || 0, c.telegramCount || 0, c.communityCount || 0, c.officialSeenAt ?? null, c.socialSeenAt ?? null, c.communitySeenAt ?? null];
 
 export async function insertCluster(db, c) {
   const r = await db
     .prepare(
-      `INSERT INTO event_clusters (title, url, category, symbols, importance_base, reaction_bonus, importance, verification, source, source_type, sources, item_count, source_count, published_known, event_time, last_time, first_seen_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO event_clusters (title, url, category, symbols, importance_base, reaction_bonus, importance, verification, source, source_type, sources, item_count, source_count, published_known, event_time, last_time, first_seen_at, updated_at,
+         official_count, news_count, telegram_count, community_count, official_seen_at, social_seen_at, community_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(...clusterArgs(c))
     .run();
@@ -166,7 +180,8 @@ export async function updateCluster(db, c) {
   await db
     .prepare(
       `UPDATE event_clusters SET title = ?, url = ?, category = ?, symbols = ?, importance_base = ?, reaction_bonus = ?, importance = ?, verification = ?, source = ?, source_type = ?, sources = ?,
-         item_count = ?, source_count = ?, published_known = ?, event_time = ?, last_time = ?, first_seen_at = ?, updated_at = ? WHERE id = ?`,
+         item_count = ?, source_count = ?, published_known = ?, event_time = ?, last_time = ?, first_seen_at = ?, updated_at = ?,
+         official_count = ?, news_count = ?, telegram_count = ?, community_count = ?, official_seen_at = ?, social_seen_at = ?, community_seen_at = ? WHERE id = ?`,
     )
     .bind(...clusterArgs(c), c.id)
     .run();

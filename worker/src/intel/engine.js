@@ -6,9 +6,13 @@ import { detectCategory, baseImportance, clusterImportance, verificationOf, reac
 import { findCluster } from './cluster.js';
 import { reactionFromCandles } from './market.js';
 import { enabledSources, fetchText } from './sources.js';
+import { ingestSocial, reconcileSocial, MAX_NEW_PER_RUN as SOCIAL_MAX_NEW } from './social.js';
+import * as sstore from './social-store.js';
 import * as store from './store.js';
 
-const MAX_NEWS_PER_RUN = 1; // 실행당 뉴스(RSS) 출처 수. 무료 플랜 CPU(10ms) 보호 — 2분마다 1개씩 돌아가며 수집
+// 실행당 CPU 예산 (출처마다 cost: 공식 0, Telegram 1, 커뮤니티 2, 뉴스 RSS 3). 무료 플랜 CPU(10ms) 보호 — 예산 안에서 가장 오래 기다린 출처부터 돌아가며 수집.
+// 6A 운영 수정 때 검증된 '뉴스 1개 + 공식'(= 3) 수준에 Telegram 1개를 더한 값. 유료 플랜이면 env.INTEL_BUDGET 으로 올릴 수 있음.
+export const DEFAULT_BUDGET = 4;
 
 const MAX_NEW_PER_SOURCE = 30; // 한 번에 저장할 새 항목 상한 (D1 쓰기 보호)
 const MAX_SNAPSHOT_MARKETS = 4; // 실행당 Upbit 캔들 요청 상한
@@ -52,6 +56,7 @@ function joinCluster(c, item, now) {
   c.symbols = [...new Set([...c.symbols, ...item.symbols])].slice(0, 6);
   if (!c.sources.some((s) => s.source === item.source)) c.sources.push({ source: item.source, sourceType: item.sourceType });
   c.itemCount += 1;
+  countSource(c, item);
   c.importanceBase = Math.max(c.importanceBase, item.importance);
   c.lastTime = Math.max(c.lastTime, item.eventTime);
   if (item.publishedAt) {
@@ -68,12 +73,24 @@ function joinCluster(c, item, now) {
   refreshCluster(c, now);
 }
 
+// 소스 종류별 집계와 관측 시각 (공식/뉴스). Telegram/커뮤니티는 social.js 의 attachToCluster
+function countSource(c, item) {
+  if (item.sourceType === 'official') {
+    c.officialCount = (c.officialCount || 0) + 1;
+    c.officialSeenAt = item.publishedAt ? Math.min(c.officialSeenAt || item.publishedAt, item.publishedAt) : c.officialSeenAt ?? null;
+  } else if (item.sourceType === 'news') {
+    c.newsCount = (c.newsCount || 0) + 1;
+  }
+}
+
 function newCluster(item, now) {
   const c = {
     id: null, title: item.title, url: item.url, category: item.category, symbols: item.symbols.slice(), importanceBase: item.importance, reactionBonus: 0, importance: 0,
     verification: 'unverified', source: item.source, sourceType: item.sourceType, sources: [{ source: item.source, sourceType: item.sourceType }], itemCount: 1, sourceCount: 1,
     publishedKnown: !!item.publishedAt, eventTime: item.eventTime, lastTime: item.eventTime, firstSeenAt: now, updatedAt: now,
+    officialCount: 0, newsCount: 0, telegramCount: 0, communityCount: 0, officialSeenAt: null, socialSeenAt: null, communitySeenAt: null,
   };
+  countSource(c, item);
   refreshCluster(c, now);
   return c;
 }
@@ -82,12 +99,22 @@ async function fetchJsonSafe(fetchImpl, url) {
   return JSON.parse(await fetchText(fetchImpl, url, 'application/json'));
 }
 
-// 이번 실행에서 다룰 출처: 때가 된 공식 출처는 모두, 뉴스는 가장 오래 기다린 것부터 maxNews 개
-export function selectSources(due, health, maxNews = MAX_NEWS_PER_RUN) {
+// 이번 실행에서 다룰 출처: 때가 된 공식 출처는 모두(cost 0), 나머지는 가장 오래 기다린 순서로 예산(cost 합계) 안에서
+export function selectSources(due, health, budget = DEFAULT_BUDGET) {
   const waited = (s) => (health.get(s.id) && health.get(s.id).last_attempt_at) || 0;
-  const official = due.filter((s) => s.type === 'official');
-  const others = due.filter((s) => s.type !== 'official').sort((a, b) => waited(a) - waited(b));
-  return [...official, ...others.slice(0, maxNews)];
+  const cost = (s) => s.cost ?? 3;
+  const free = due.filter((s) => cost(s) === 0);
+  const paid = due.filter((s) => cost(s) > 0).sort((a, b) => waited(a) - waited(b));
+  const picked = [];
+  let left = budget;
+  for (const s of paid) {
+    if (cost(s) <= left) {
+      picked.push(s);
+      left -= cost(s);
+    }
+  }
+  if (!picked.length && paid.length) picked.push(paid[0]); // 예산보다 큰 출처뿐이어도 가장 오래 기다린 1개는 실행 (굶지 않게)
+  return [...free, ...picked];
 }
 
 const errText = (err) => String((err && err.message) || err).slice(0, 200);
@@ -99,7 +126,44 @@ async function meta(db, key, value, now) {
   } catch { /* 진단 기록 실패는 무시 */ }
 }
 
-// options: { fetchImpl, force, maxNews, candleIntervalMs }
+// 공식 공지 / 뉴스: 파싱 → 분석 → 저장 → 클러스터
+async function processItemSource(f, { db, now, dict, clusters, touched, out, itemTouched }) {
+  const items = f.src.parse(f.raw, now);
+  const enriched = items.map((r) => enrichItem(r, f.src, now, dict)).filter(Boolean);
+  const known = await store.existingKeys(db, enriched.map((e) => e.urlKey));
+  const fresh = enriched.filter((e) => !known.has(e.urlKey)).sort((a, b) => a.eventTime - b.eventTime).slice(-MAX_NEW_PER_SOURCE);
+  out.duplicates += enriched.length - fresh.length;
+  let added = 0;
+  for (const item of fresh) {
+    const id = await store.insertItem(db, item);
+    if (!id) { out.duplicates += 1; continue; }
+    added += 1;
+    let c = findCluster(item, clusters);
+    if (c) {
+      joinCluster(c, item, now);
+    } else {
+      c = newCluster(item, now);
+      c.id = await store.insertCluster(db, c);
+      clusters.unshift(c);
+    }
+    touched.add(c);
+    itemTouched.add(c);
+    await store.setItemCluster(db, id, c.id);
+  }
+  out.new_items += added;
+  return { id: f.src.id, ok: true, fetched: items.length, new: added };
+}
+
+// Telegram / 커뮤니티: 이미 저장된 메시지는 파싱·분석하지 않고, 새 글만 저장 + 이벤트 클러스터에 집계로 연결 (social.js)
+async function processSocialSource(f, { db, now, dict, clusters, touched, out }) {
+  const known = f.src.peekIds ? await sstore.existingMessageIds(db, f.src.id, f.src.peekIds(f.raw)) : null;
+  const items = f.src.parse(f.raw, now, { skip: known, limit: SOCIAL_MAX_NEW });
+  const r = await ingestSocial(db, f.src, items, { now, dict, clusters, touched });
+  out.new_items += r.new;
+  return { id: f.src.id, ok: true, fetched: items.length, new: r.new, linked: r.linked };
+}
+
+// options: { fetchImpl, force, budget, candleIntervalMs }
 // 각 단계는 서로 독립입니다: 한 단계/한 출처의 실패가 다른 출처의 수집·기록을 막지 않습니다.
 export async function runIntelligence(env, now, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
@@ -127,7 +191,9 @@ export async function runIntelligence(env, now, options = {}) {
     }
     const active = enabledSources(env);
     const due = active.filter((s) => options.force || isDue(s, health.get(s.id), now));
-    const run = selectSources(due, health, options.maxNews ?? MAX_NEWS_PER_RUN);
+    const envBudget = Number(env && env.INTEL_BUDGET);
+    const budget = options.budget ?? (Number.isFinite(envBudget) && envBudget >= 1 ? Math.min(envBudget, 20) : DEFAULT_BUDGET);
+    const run = selectSources(due, health, budget);
     try {
       await store.markAttempts(db, run, now);
     } catch (err) {
@@ -136,7 +202,7 @@ export async function runIntelligence(env, now, options = {}) {
 
     // 1) 네트워크: 마켓 목록과 각 출처를 병렬로 받되 서로 실패가 전파되지 않음 (allSettled)
     const marketsP = fetchJsonSafe(fetchImpl, UPBIT_MARKETS).then((l) => (Array.isArray(l) ? l : []));
-    const rawsP = run.map((src) => Promise.resolve().then(() => src.fetchRaw(fetchImpl)).then((raw) => ({ src, raw }), (err) => ({ src, error: errText(err) })));
+    const rawsP = run.map((src) => Promise.resolve().then(() => src.fetchRaw(fetchImpl, env)).then((raw) => ({ src, raw }), (err) => ({ src, error: errText(err) })));
     let markets = [];
     try {
       markets = await marketsP;
@@ -155,33 +221,13 @@ export async function runIntelligence(env, now, options = {}) {
       out.errors.push('최근 클러스터 조회 실패: ' + errText(err));
     }
     const touched = new Set();
+    const itemTouched = new Set(); // 공식/뉴스 수집으로 새로 생기거나 바뀐 클러스터 (소셜 글 재연결 대상)
+    const ctx = { db, now, dict, clusters, touched, out, itemTouched };
     for (const f of fetched) {
       let result;
       try {
         if (f.error) throw new Error(f.error);
-        const items = f.src.parse(f.raw, now);
-        const enriched = items.map((r) => enrichItem(r, f.src, now, dict)).filter(Boolean);
-        const known = await store.existingKeys(db, enriched.map((e) => e.urlKey));
-        const fresh = enriched.filter((e) => !known.has(e.urlKey)).sort((a, b) => a.eventTime - b.eventTime).slice(-MAX_NEW_PER_SOURCE);
-        out.duplicates += enriched.length - fresh.length;
-        let added = 0;
-        for (const item of fresh) {
-          const id = await store.insertItem(db, item);
-          if (!id) { out.duplicates += 1; continue; }
-          added += 1;
-          let c = findCluster(item, clusters);
-          if (c) {
-            joinCluster(c, item, now);
-          } else {
-            c = newCluster(item, now);
-            c.id = await store.insertCluster(db, c);
-            clusters.unshift(c);
-          }
-          touched.add(c);
-          await store.setItemCluster(db, id, c.id);
-        }
-        out.new_items += added;
-        result = { id: f.src.id, ok: true, fetched: items.length, new: added };
+        result = f.src.pipeline === 'social' ? await processSocialSource(f, ctx) : await processItemSource(f, ctx);
       } catch (err) {
         result = { id: f.src.id, ok: false, error: errText(err) };
       }
@@ -190,6 +236,15 @@ export async function runIntelligence(env, now, options = {}) {
         await store.recordHealth(db, f.src, now, result.ok ? { ok: true, count: result.fetched } : { ok: false, error: result.error });
       } catch (err) {
         out.errors.push(`${f.src.id} 상태 기록 실패: ${errText(err)}`);
+      }
+    }
+
+    // 2-b) 공식/뉴스가 새로 생긴 경우: 이미 저장된 소셜 글 중 같은 사건을 연결하고 검증 상태를 맞춤 (Telegram 이 먼저 올라온 경우 포함)
+    if (itemTouched.size) {
+      try {
+        await reconcileSocial(db, [...itemTouched], { now, touched });
+      } catch (err) {
+        out.errors.push('소셜 재연결 실패: ' + errText(err));
       }
     }
 
@@ -210,6 +265,7 @@ export async function runIntelligence(env, now, options = {}) {
     if (new Date(now).getUTCMinutes() === 0) {
       try {
         await store.pruneIntel(db, now);
+        await sstore.pruneSocial(db, now);
       } catch (err) {
         out.errors.push('정리 실패: ' + errText(err));
       }

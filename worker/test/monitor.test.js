@@ -138,8 +138,12 @@ test('카카오/Telegram 경로 제거됨 (404/405)', async () => {
   for (const p of ['/kakao/connect', '/kakao/test', '/api/admin/kakao-test', '/api/admin/telegram-test']) {
     assert.equal((await worker.fetch(new Request('https://x.test' + p, { method: 'POST' }), env, {})).status, 405, p);
   }
-  const idx = JSON.stringify(await (await worker.fetch(new Request('https://x.test/'), {}, {})).json()).toLowerCase();
-  assert.ok(!idx.includes('kakao') && !idx.includes('telegram'));
+  // Phase 6B: 주소 목록에 Telegram '수집 결과 조회'(/api/intelligence/social)는 있지만 알림/관리자/발송 경로는 없어야 함
+  const body = await (await worker.fetch(new Request('https://x.test/'), {}, {})).json();
+  const idx = JSON.stringify(body).toLowerCase();
+  assert.ok(!idx.includes('kakao'));
+  assert.ok(!Object.keys(body.endpoints).some((k) => /telegram|kakao|admin|send|notify/i.test(k.split(' ')[1] || '')), '알림/발송/관리자 경로 없음');
+  assert.ok(Object.keys(body.endpoints).every((k) => k.startsWith('GET ')), '공개 endpoint 는 GET 전용');
 });
 
 // src 아래 모든 .js 파일 (하위 폴더 포함): [상대경로, 내용]
@@ -149,19 +153,21 @@ function allSources(dir = SRC, rel = '') {
   );
 }
 
-test('소스에 카카오/Telegram 코드·import 가 남아 있지 않음', () => {
+// Phase 6B: Telegram '공개 채널 수집'(intel/telegram.js)은 허용하지만, 알림 발송(Bot API/카카오)은 여전히 없어야 함
+test('소스에 카카오 코드가 없고, Telegram 알림 발송(Bot API·토큰·sendMessage) 코드가 없음', () => {
   for (const [f, text] of allSources()) {
-    assert.doesNotMatch(text, /from '\.\/(kakao|telegram)/, f);
-    assert.doesNotMatch(text, /KAKAO_|TELEGRAM_|ADMIN_TOKEN|kapi\.kakao|kauth\.kakao|api\.telegram/, f);
-    assert.ok(!/kakao|telegram/i.test(f), f);
+    assert.doesNotMatch(text, /from '\.\/(kakao|telegram-(alert|bot|notify))/, f);
+    assert.doesNotMatch(text, /KAKAO_|TELEGRAM_BOT|TELEGRAM_CHAT|BOT_TOKEN|ADMIN_TOKEN|kapi\.kakao|kauth\.kakao|api\.telegram\.org|sendMessage/, f);
+    assert.ok(!/kakao/i.test(f), f);
   }
 });
 
 // Binance 시세 API(현물·선물)는 Worker 에서 차단되므로 브라우저 전용. Phase 6A 의 Binance '공식 공지' 수집(intel/official.js)만 예외.
 test('Worker 는 Binance 시세 API 를 호출하지 않음 (공지 수집 intel/official.js 만 예외)', () => {
-  for (const [f, text] of allSources().filter(([x]) => x !== 'reachability.js' && x !== 'intel/official.js')) {
+  for (const [f, text] of allSources().filter(([x]) => x !== 'reachability.js' && x !== 'intel/official.js' && x !== 'intel/links.js')) {
     assert.doesNotMatch(text, /binance\.com|binance\.vision/, f);
   }
+  assert.doesNotMatch(allSources().find(([x]) => x === 'intel/links.js')[1], /fetch\(/); // 링크 분류용 도메인 목록일 뿐 요청하지 않음
   const official = allSources().find(([x]) => x === 'intel/official.js')[1];
   assert.doesNotMatch(official, /(api|fapi|dapi|data-api)\.binance|binance\.vision|\/api\/v3|\/fapi\//);
   assert.match(official, /www\.binance\.com\/bapi\/composite\/v1\/public\/cms/);
