@@ -1,6 +1,7 @@
 // COIN RADAR 백엔드 (Cloudflare Worker: coin-radar-engine)
 // Phase 0: /api/health, /debug/reachability
 // Phase 4: Cron(1분마다) Upbit KRW 24시간 감시 + 이상 이벤트 D1 저장 (docs/MONITOR.md)
+// Phase 6B: Telegram 공개 채널 · 국내 커뮤니티 관심도 (/api/intelligence/social|community|attention) — docs/SOCIAL-INTELLIGENCE.md
 // Phase 6A: Crypto Intelligence (공식 공지 · 뉴스 수집, /api/intelligence/*) — docs/INTELLIGENCE.md
 // Phase 5: 외부 메신저 알림 제거. Binance 선물 레이더는 브라우저 전용 (Worker 는 Binance 를 호출하지 않음)
 // 이 파일에는 비밀키/토큰을 절대 넣지 않습니다. Cloudflare Secret(env)으로만 읽습니다.
@@ -17,7 +18,7 @@ import { cronKind } from './cron.js';
 //       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
 const SERVICE_NAME = 'coin-radar-engine';
 const PHASE = 5; // 기존 상태 응답과 호환을 위해 유지 (Phase 6A 는 VERSION 0.6.0 · /api/intelligence)
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 const ENDPOINTS = {
   'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
@@ -26,7 +27,10 @@ const ENDPOINTS = {
   'GET /api/monitor/status': 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 순위, 최근 이벤트, Cron 정상 여부)',
   'GET /api/intelligence/events': '중요 정보 이벤트(같은 사건은 하나로 묶음). ?limit=1~50&symbol=BTC&source=official|news&min_importance=0~100',
   'GET /api/intelligence/latest': '수집된 공지/뉴스 원본 항목 최신순 (같은 쿼리 지원)',
-  'GET /api/intelligence/status': '정보 출처별 수집 상태 (정상/지연/수집 전)',
+  'GET /api/intelligence/status': '정보 출처별 수집 상태 + 진단 (공식·뉴스·Telegram·커뮤니티)',
+  'GET /api/intelligence/social': 'Telegram 공개 채널 최근 글 요약(excerpt). ?limit=1~50&symbol=SOL&channel=tg-blockmedia',
+  'GET /api/intelligence/community': '국내 커뮤니티 최근 글 요약 (기본 비활성). 같은 쿼리 지원',
+  'GET /api/intelligence/attention': '코인별 소셜 관심도(15분/1시간/6시간/24시간 개수·평소 대비 배수·점수). ?kind=telegram|community|all&limit&symbol',
   'GET /api/monitor/preview': 'Upbit 감시 계산을 지금 한 번 실행해 결과 미리보기 (저장·알림 없음, 1분에 1회)',
 };
 

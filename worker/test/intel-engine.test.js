@@ -8,6 +8,7 @@ import { cronKind, CRONS, MONITOR_CRON, INTEL_CRON } from '../src/cron.js';
 import { resetCronThrottleForTests, diagnostics } from '../src/intel/diag.js';
 import { markAttempts, loadHealth, INCOMPLETE } from '../src/intel/store.js';
 import { readFileSync } from 'node:fs';
+import { tgEmptyPage } from './fixtures/social-fixtures.js';
 import { resetIntelSchemaFlagForTests, pruneIntel } from '../src/intel/store.js';
 import { resetSchemaFlagForTests } from '../src/store.js';
 import { memory } from '../src/monitor.js';
@@ -63,13 +64,17 @@ function makeFetch(spec = {}, log = []) {
     if (h === 'api.upbit.com' && url.pathname.startsWith('/v1/candles/minutes/1')) return Response.json(candleRows(url.searchParams.get('market'), now, spec.pub || now - 20 * MIN));
     if (h === 'api-manager.upbit.com') return pick(spec.upbitNotice ?? upbitNotices([]));
     if (h === 'www.binance.com') return pick(spec.binance ?? { code: '000000', data: { catalogs: [{ articles: [] }] } });
+    if (h === 't.me') {
+      const user = url.pathname.split('/').pop();
+      return pick((spec.tg && spec.tg[user]) ?? tgEmptyPage(user));
+    }
     if (h === 'www.blockmedia.co.kr') return pick(spec.blockmedia ?? rss([]));
     if (h === 'www.coindesk.com') return pick(spec.coindesk ?? rss([]));
     if (h === 'cointelegraph.com') return pick(spec.cointelegraph ?? rss([]));
     return new Response('unexpected', { status: 599 });
   };
 }
-const run = (db, spec, extra = {}) => runIntelligence({ DB: db, ...(extra.env || {}) }, extra.now || NOW, { fetchImpl: makeFetch(spec, extra.log), force: true, maxNews: Infinity, candleIntervalMs: 0 });
+const run = (db, spec, extra = {}) => runIntelligence({ DB: db, ...(extra.env || {}) }, extra.now || NOW, { fetchImpl: makeFetch(spec, extra.log), force: true, budget: Infinity, candleIntervalMs: 0 });
 
 const bn = (code, title, t) => ({ code, title, releaseDate: t });
 const binanceBody = (arts) => ({ code: '000000', data: { catalogs: [{ articles: arts }] } });
@@ -98,7 +103,7 @@ test('공식 공지 + 뉴스 수집 → D1 저장, 카테고리/심볼/검증/�
   assert.equal(cl.find((c) => c.source === 'upbit').verification, 'official');
   assert.equal(cl.find((c) => c.source === 'coindesk').verification, 'news');
   // 헬스: 실행한 5개 출처 모두 기록 (수집 성공)
-  assert.equal(db.rows('SELECT * FROM source_health WHERE consecutive_failures = 0').length, 5);
+  assert.equal(db.rows('SELECT * FROM source_health WHERE consecutive_failures = 0').length, 9); // 공식 2 + 뉴스 3 + Telegram 4 (force 실행)
 });
 
 test('D1 중복 방지: 같은 항목 재수집 시 저장 안 됨, 추적 파라미터만 다른 URL 도 동일', async () => {
@@ -192,51 +197,54 @@ test('연속 실패: 3회 이상이면 health 가 수집 오류, 성공하면 �
   assert.equal(healthView(src, undefined, NOW).status, 'pending');
 });
 
-test('출처별 실행 주기: 공식 2분 · 뉴스 6분(실행마다 1개씩 순환), 실패 시 간격 증가', () => {
+test('출처별 실행 주기: 공식 2분 · Telegram 6분 · 뉴스 8분(예산 안에서 순환), 실패 시 간격 증가', () => {
   const off = SOURCES.find((s) => s.id === 'upbit');
   const news = SOURCES.find((s) => s.id === 'coindesk');
   assert.equal(off.intervalMs, 2 * MIN);
-  assert.equal(news.intervalMs, 6 * MIN);
+  assert.equal(news.intervalMs, 8 * MIN);
+  assert.equal(SOURCES.find((x) => x.id === 'tg-emperorcoin').intervalMs, 6 * MIN);
   assert.equal(isDue(news, undefined, NOW), true);
   assert.equal(isDue(news, { last_attempt_at: NOW - 2 * MIN, consecutive_failures: 0 }, NOW), false);
-  assert.equal(isDue(news, { last_attempt_at: NOW - 6 * MIN, consecutive_failures: 0 }, NOW), true);
-  assert.equal(isDue(news, { last_attempt_at: NOW - 7 * MIN, consecutive_failures: 2 }, NOW), false); // 3배 백오프
+  assert.equal(isDue(news, { last_attempt_at: NOW - 8 * MIN, consecutive_failures: 0 }, NOW), true);
+  assert.equal(isDue(news, { last_attempt_at: NOW - 9 * MIN, consecutive_failures: 2 }, NOW), false); // 3배 백오프
   assert.equal(isDue(off, { last_attempt_at: NOW - 2 * MIN, consecutive_failures: 0 }, NOW), true);
 });
 
-test('Cron 실행(force 없음): 공식은 매번, 뉴스는 실행마다 1개씩 돌아가며 (실행당 CPU 보호)', async () => {
+test('Cron 실행(force 없음): 공식은 매번, 나머지는 실행당 CPU 예산(4) 안에서 오래 기다린 순서로 순환', async () => {
   const db = new FakeD1();
-  const newsHosts = () => new Set();
-  const seen = [];
-  for (const dt of [0, 2, 4, 6]) {
+  const attempted = new Set();
+  for (let k = 0; k < 10; k += 1) { // 2분 간격 10번 = 20분
     const log = [];
-    await runIntelligence({ DB: db }, NOW + dt * MIN, { fetchImpl: makeFetch({}, log), candleIntervalMs: 0 });
+    const r = await runIntelligence({ DB: db }, NOW + k * 2 * MIN, { fetchImpl: makeFetch({}, log), candleIntervalMs: 0 });
     const ext = log.filter((l) => !l.startsWith('api.upbit.com'));
-    assert.equal(ext.filter((l) => l.startsWith('www.binance.com')).length, 3, `공식(Binance) +${dt}분`);
-    assert.equal(ext.filter((l) => l.startsWith('api-manager.upbit.com')).length, 1, `공식(Upbit) +${dt}분`);
-    const news = ext.filter((l) => /blockmedia|coindesk|cointelegraph/.test(l));
-    assert.ok(news.length <= 1, `뉴스는 실행당 최대 1개 (+${dt}분: ${news})`);
-    seen.push(...news);
+    assert.equal(ext.filter((l) => l.startsWith('www.binance.com')).length, 3, `공식(Binance) +${k * 2}분`);
+    assert.equal(ext.filter((l) => l.startsWith('api-manager.upbit.com')).length, 1, `공식(Upbit) +${k * 2}분`);
+    const ids = r.sources.map((x) => x.id).filter((id) => id !== 'binance' && id !== 'upbit');
+    const cost = ids.reduce((t, id) => t + SOURCES.find((x) => x.id === id).cost, 0);
+    assert.ok(cost <= 4, `실행당 예산 초과 (+${k * 2}분: ${ids} = ${cost})`);
+    assert.ok(ids.filter((id) => ['blockmedia', 'coindesk', 'cointelegraph'].includes(id)).length <= 1, '뉴스 RSS 는 실행당 최대 1개');
+    ids.forEach((id) => attempted.add(id));
   }
-  // 처음 3번의 실행에서 세 뉴스 출처가 모두 한 번씩 시도됨 (가장 오래 기다린 순서)
-  assert.deepEqual(new Set(seen.slice(0, 3)).size, 3);
-  void newsHosts;
+  // 20분 안에 뉴스 3개와 Telegram 4개가 모두 한 번 이상 시도됨 (굶는 출처 없음). 기본 비활성 Coinpan 은 제외.
+  assert.deepEqual([...attempted].sort(), ['blockmedia', 'coindesk', 'cointelegraph', 'tg-blockmedia', 'tg-emperorcoin', 'tg-enjoymyhobby', 'tg-wecryptotogether']);
 });
 
-test('selectSources: 공식은 모두, 뉴스는 가장 오래 기다린 것부터 maxNews 개', () => {
+test('selectSources: 공식(cost 0)은 모두, 나머지는 가장 오래 기다린 순서로 예산 안에서', () => {
   const by = (id) => SOURCES.find((s) => s.id === id);
-  const due = [by('binance'), by('upbit'), by('blockmedia'), by('coindesk'), by('cointelegraph')];
-  const health = new Map([['blockmedia', { last_attempt_at: NOW - 10 * MIN }], ['coindesk', { last_attempt_at: NOW - 30 * MIN }]]);
-  assert.deepEqual(selectSources(due, health).map((s) => s.id), ['binance', 'upbit', 'cointelegraph']); // 시도 기록이 없는 것이 가장 오래됨
-  assert.deepEqual(selectSources(due, health, 2).map((s) => s.id), ['binance', 'upbit', 'cointelegraph', 'coindesk']);
-  assert.deepEqual(selectSources(due, health, Infinity).length, 5);
+  const due = [by('binance'), by('upbit'), by('blockmedia'), by('coindesk'), by('cointelegraph'), by('tg-wecryptotogether'), by('tg-emperorcoin')];
+  const health = new Map([['blockmedia', { last_attempt_at: NOW - 10 * MIN }], ['coindesk', { last_attempt_at: NOW - 30 * MIN }], ['tg-emperorcoin', { last_attempt_at: NOW - 50 * MIN }]]);
+  // 시도 기록 없는 cointelegraph(3) → 다음으로 오래된 것 중 남은 예산(1)에 맞는 Telegram(1)
+  assert.deepEqual(selectSources(due, health).map((s) => s.id), ['binance', 'upbit', 'cointelegraph', 'tg-wecryptotogether']);
+  assert.deepEqual(selectSources(due, health, 1).map((s) => s.id), ['binance', 'upbit', 'tg-wecryptotogether']);
+  assert.equal(selectSources(due, health, Infinity).length, 7);
+  assert.deepEqual(selectSources([by('coindesk')], new Map(), 1).map((s) => s.id), ['coindesk']); // 예산보다 큰 출처도 단독 실행은 허용
 });
 
 test('INTEL_DISABLED 로 특정 출처를 끌 수 있음', async () => {
   const db = new FakeD1();
   const log = [];
   await run(db, {}, { env: { INTEL_DISABLED: 'coindesk, blockmedia' }, log });
-  assert.equal(log.some((l) => /coindesk|blockmedia/.test(l)), false);
+  assert.equal(log.some((l) => /^(www\.coindesk\.com|www\.blockmedia\.co\.kr)/.test(l)), false);
 });
 
 test('시장 반응 연결: Upbit 원화 마켓이 있는 코인은 실제 1분봉으로 스냅샷 저장, 중요도 가점', async () => {
@@ -266,7 +274,7 @@ test('시장 데이터 없음: 원화 마켓이 없는 코인/시세 요청 실�
   assert.equal(db.rows('SELECT * FROM event_market_snapshots').length, 0);
   const later = makeFetch({ coindesk: rss([{ title: 'Solana rises again', link: 'https://www.coindesk.com/sol2', t: NOW + 59 * MIN }]), now: NOW + 60 * MIN });
   const r2 = await runIntelligence({ DB: db }, NOW + 60 * MIN, {
-    force: true, maxNews: Infinity, candleIntervalMs: 0,
+    force: true, budget: Infinity, candleIntervalMs: 0,
     fetchImpl: (u, init) => (String(u).includes('/candles/') ? Promise.resolve(new Response('x', { status: 429 })) : later(u, init)),
   });
   assert.equal(r2.snapshots, 0);
@@ -277,7 +285,7 @@ test('시장 데이터 없음: 원화 마켓이 없는 코인/시세 요청 실�
 test('마켓 목록 실패해도 기본 사전으로 수집 계속', async () => {
   const db = new FakeD1();
   const f = makeFetch({ coindesk: rss([{ title: 'Bitcoin hits new high', link: 'https://www.coindesk.com/btc', t: NOW - MIN }]) });
-  const r = await runIntelligence({ DB: db }, NOW, { force: true, maxNews: Infinity, candleIntervalMs: 0, fetchImpl: (u, i) => (String(u).includes('market/all') ? Promise.reject(new Error('net down')) : f(u, i)) });
+  const r = await runIntelligence({ DB: db }, NOW, { force: true, budget: Infinity, candleIntervalMs: 0, fetchImpl: (u, i) => (String(u).includes('market/all') ? Promise.reject(new Error('net down')) : f(u, i)) });
   assert.equal(r.new_items, 1);
   assert.deepEqual(JSON.parse(db.rows('SELECT symbols FROM intelligence_items')[0].symbols), ['BTC']);
 });
@@ -386,7 +394,9 @@ test('API status: 출처별 정상/수집 준비 중/수집 오류 표시', asyn
   assert.equal(by.coindesk.consecutive_failures, 4);
   assert.equal(by.upbit.status, 'ok'); // 마지막 성공이 1분 전
   assert.equal(by.upbit.last_success_at, NOW + 30 * MIN);
-  assert.deepEqual(body.disabled, ['blockmedia']);
+  assert.ok(body.disabled.includes('blockmedia') && body.disabled.includes('coinpan')); // Coinpan 은 기본 비활성
+  assert.match(body.disabled_sources.find((d) => d.id === 'blockmedia').reason, /INTEL_DISABLED/);
+  assert.match(body.disabled_sources.find((d) => d.id === 'coinpan').reason, /INTEL_ENABLE/);
   assert.equal(by.blockmedia, undefined);
 });
 
@@ -557,9 +567,9 @@ test('저장 단계에서 예외가 나도(클러스터 테이블 손상) 전체
     upbitNotice: upbitNotices([{ id: 3, title: '[거래] 솔라나(SOL) KRW 마켓 디지털 자산 추가', t: NOW - MIN }]),
     blockmedia: rss([{ title: 'Ethereum news today', link: 'https://www.blockmedia.co.kr/e', t: NOW - MIN }]),
   }, { now: NOW + 10 * MIN });
-  assert.equal(r.sources.length, 5);
+  assert.equal(r.sources.length, 9); // 공식 2 + 뉴스 3 + Telegram 4
   const health = db.rows('SELECT source, last_error, last_attempt_at FROM source_health');
-  assert.equal(health.length, 5); // 5개 모두 기록
+  assert.equal(health.length, 9); // 모두 기록
   assert.ok(health.find((x) => x.source === 'upbit').last_error); // 저장 실패는 해당 출처의 오류로 기록
   assert.ok(db.rows("SELECT * FROM intel_meta WHERE key = 'last_collector_finished_at'").length === 1);
   assert.match(db.rows("SELECT value FROM intel_meta WHERE key = 'last_collector_error'")[0].value, /클러스터/);
@@ -627,7 +637,7 @@ test('큰 RSS(기사 전문 포함 약 440KB)도 항목 25개만 앞부분에서
 test('시장 반응 연결이 실패해도 수집 결과와 출처 상태는 정상 기록', async () => {
   const db = new FakeD1();
   const f = makeFetch({ upbitNotice: upbitNotices([{ id: 8, title: '[거래] 솔라나(SOL) KRW 마켓 디지털 자산 추가', t: NOW - MIN }]) });
-  const r = await runIntelligence({ DB: db }, NOW, { force: true, maxNews: Infinity, candleIntervalMs: 0, fetchImpl: (u, i) => (String(u).includes('/candles/') ? Promise.reject(new Error('candles down')) : f(u, i)) });
+  const r = await runIntelligence({ DB: db }, NOW, { force: true, budget: Infinity, candleIntervalMs: 0, fetchImpl: (u, i) => (String(u).includes('/candles/') ? Promise.reject(new Error('candles down')) : f(u, i)) });
   assert.equal(r.new_items, 1);
   assert.equal(db.rows("SELECT last_error FROM source_health WHERE source = 'upbit'")[0].last_error, null);
 });

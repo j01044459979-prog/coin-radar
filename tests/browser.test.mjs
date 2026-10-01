@@ -111,18 +111,37 @@ function futuresRoute(mode, counter) {
 function intelEvents(now) {
   const base = { importance_base: 0, reaction_bonus: 0, item_count: 1, source_count: 1, updated_at: now, market: [] };
   return [
-    { ...base, id: 1, title: 'Binance Will List Solana (SOL) with Seed Tag Applied', url: 'https://www.binance.com/en/support/announcement/abc123', category: 'listing', symbols: ['SOL'], importance: 68, verification: 'official', source: 'binance', source_type: 'official', sources: ['binance'], published_at: now - 6 * 60000, event_time: now - 6 * 60000, first_seen_at: now - 4 * 60000 },
+    { ...base, id: 1, counts: { official: 1, news: 0, telegram: 3, community: 1 }, timeline: { first_seen_at: now - 4 * 60000, official_seen_at: now - 6 * 60000, social_seen_at: now - 5 * 60000, community_seen_at: now - 3 * 60000 }, title: 'Binance Will List Solana (SOL) with Seed Tag Applied', url: 'https://www.binance.com/en/support/announcement/abc123', category: 'listing', symbols: ['SOL'], importance: 68, verification: 'official', source: 'binance', source_type: 'official', sources: ['binance'], published_at: now - 6 * 60000, event_time: now - 6 * 60000, first_seen_at: now - 4 * 60000 },
     { ...base, id: 2, title: 'Bitcoin ETF inflows hit a new record', url: 'https://www.coindesk.com/markets/btc-etf', category: 'regulation', symbols: ['BTC'], importance: 61, verification: 'multi', source: 'coindesk', source_type: 'news', sources: ['coindesk', 'cointelegraph'], source_count: 2, item_count: 2, published_at: now - 50 * 60000, event_time: now - 50 * 60000, first_seen_at: now - 45 * 60000 },
     { ...base, id: 3, title: '[거래] 제트제트(ZZZ) KRW 마켓 디지털 자산 추가', url: 'https://upbit.com/service_center/notice?id=999', category: 'listing', symbols: ['ZZZ'], importance: 55, verification: 'official', source: 'upbit', source_type: 'official', sources: ['upbit'], published_at: now - 2 * 3600000, event_time: now - 2 * 3600000, first_seen_at: now - 2 * 3600000 },
     { ...base, id: 4, title: '<img src=x onerror="window.__xss=1"> Dogecoin <script>window.__xss=2</script>news', url: 'javascript:window.__xss=3', category: 'general', symbols: ['XRP'], importance: 30, verification: 'news', source: 'blockmedia', source_type: 'news', sources: ['blockmedia'], published_at: null, event_time: now - 3 * 3600000, first_seen_at: now - 3 * 3600000 },
     { ...base, id: 5, title: 'Fed holds rates steady', url: 'https://cointelegraph.com/news/fed', category: 'general', symbols: [], importance: 20, verification: 'news', source: 'cointelegraph', source_type: 'news', sources: ['cointelegraph'], published_at: now - 5 * 3600000, event_time: now - 5 * 3600000, first_seen_at: now - 5 * 3600000 },
   ];
 }
+function socialAttention(now) {
+  const st = (c, ratio, state) => ({ count: c, ratio, state });
+  return [
+    { kind: 'telegram', symbol: 'SOL', score: 82, partial: false, channels_1h: 3, last_at: now - 4 * 60000, verification: 'official', stats: { '15m': st(2, null, 'insufficient'), '1h': st(12, 3.4, 'ok'), '6h': st(14, null, 'insufficient'), '24h': st(31, null, 'count_only') }, clusters: [{ id: 1, title: 'Binance Will List Solana (SOL) with Seed Tag Applied', verification: 'official', importance: 68, url: 'https://www.binance.com/en/support/announcement/abc123' }] },
+    { kind: 'telegram', symbol: 'DOGE', score: 41, partial: true, channels_1h: 2, last_at: now - 9 * 60000, verification: 'unverified', stats: { '15m': st(1, null, 'insufficient'), '1h': st(3, null, 'insufficient'), '6h': st(4, null, 'insufficient'), '24h': st(6, null, 'count_only') }, clusters: [] },
+    { kind: 'telegram', symbol: 'ZZZ', score: 9, partial: true, channels_1h: 1, last_at: now - 50 * 60000, verification: 'unverified', stats: { '15m': st(0, null, 'insufficient'), '1h': st(1, null, 'insufficient'), '6h': st(1, null, 'insufficient'), '24h': st(1, null, 'count_only') }, clusters: [] },
+    { kind: 'community', symbol: 'XRP', score: 74, partial: false, channels_1h: 1, last_at: now - 2 * 60000, verification: 'unverified', stats: { '15m': st(8, 3.1, 'ok'), '1h': st(14, 2.2, 'ok'), '6h': st(20, null, 'insufficient'), '24h': st(33, null, 'count_only') }, clusters: [] },
+  ];
+}
+function socialItems(now, kind) {
+  if (kind === 'community') return [{ id: 31, kind, source: 'coinpan', channel: 'Coinpan', url: 'https://coinpan.com/free/7000001', title: '리플 XRP 어떻게 보세요', excerpt: '', published_at: null, collected_at: now - 3 * 60000, symbols: ['XRP'], category: 'general', links: [], views: null, comments: 12, verification: 'unverified', cluster_id: null }];
+  return [
+    { id: 21, kind, source: 'tg-wecryptotogether', channel: 'WeCryptoTogether', url: 'https://t.me/WeCryptoTogether/101', title: null, excerpt: '업비트 솔라나 SOL 원화마켓 상장', published_at: now - 5 * 60000, collected_at: now - 4 * 60000, symbols: ['SOL'], category: 'listing', links: [], views: 1200, comments: null, verification: 'official', cluster_id: 1 },
+    { id: 22, kind, source: 'tg-emperorcoin', channel: 'emperorcoin', url: 'javascript:window.__xss=9', title: null, excerpt: '<img src=x onerror="window.__xss=7"> DOGE <script>window.__xss=8</script> 급등', published_at: now - 9 * 60000, collected_at: now - 8 * 60000, symbols: ['DOGE'], category: 'general', links: [], views: null, comments: null, verification: 'unverified', cluster_id: null },
+  ];
+}
 function intelStatus(now, mode = 'ok') {
   const mk = (id, label, status, last, err) => ({ id, label, type: 'x', status, last_success_at: last, last_error: err || null });
-  if (mode === 'pending') return { status: 'degraded', now, diagnostics: { code: 'cron_not_seen', hint: '정보 수집 Cron 실행 기록이 없습니다' }, sources: ['Binance 공지', 'Upbit 공지', 'BlockMedia', 'CoinDesk', 'Cointelegraph'].map((l, i) => mk('s' + i, l, 'pending', null)) };
-  if (mode === 'errors') return { status: 'degraded', now, diagnostics: { code: 'error', hint: '마지막 collector 실행에 오류가 있었습니다' }, sources: [mk('binance', 'Binance 공지', 'error', null, 'HTTP 451'), mk('upbit', 'Upbit 공지', 'ok', now - 60000), mk('coindesk', 'CoinDesk', 'error', now - 30 * 60000, 'HTTP 503'), mk('blockmedia', 'BlockMedia', 'pending', null)] };
-  return { status: 'ok', now, sources: [
+  const tgSrc = (st) => ['WeCryptoTogether', 'emperorcoin', 'enjoymyhobby', 'blockmedia'].map((n, i) => ({ ...mk('tg' + i, 'Telegram · ' + n, st[i], st[i] === 'ok' ? now - (3 + i) * 60000 : null, st[i] === 'error' ? 'HTTP 451' : null), type: 'social' }));
+  const disabled_sources = [{ id: 'coinpan', label: 'Coinpan (국내 커뮤니티)', reason: 'RSS/robots/이용조건 미확인' }];
+  if (mode === 'pending') return { status: 'degraded', now, disabled_sources, diagnostics: { code: 'cron_not_seen', hint: '정보 수집 Cron 실행 기록이 없습니다' }, sources: [...['Binance 공지', 'Upbit 공지', 'BlockMedia', 'CoinDesk', 'Cointelegraph'].map((l, i) => mk('s' + i, l, 'pending', null)), ...tgSrc(['pending', 'pending', 'pending', 'pending'])] };
+  if (mode === 'errors') return { status: 'degraded', now, diagnostics: { code: 'error', hint: '마지막 collector 실행에 오류가 있었습니다' }, disabled_sources, sources: [mk('binance', 'Binance 공지', 'error', null, 'HTTP 451'), mk('upbit', 'Upbit 공지', 'ok', now - 60000), mk('coindesk', 'CoinDesk', 'error', now - 30 * 60000, 'HTTP 503'), mk('blockmedia', 'BlockMedia', 'pending', null), ...tgSrc(['error', 'error', 'error', 'pending'])] };
+  return { status: 'ok', now, disabled_sources, sources: [
+    ...tgSrc(['ok', 'ok', 'error', 'pending']),
     { id: 'binance', label: 'Binance 공지', type: 'official', status: 'ok', last_success_at: now - 2 * 60000 },
     { id: 'upbit', label: 'Upbit 공지', type: 'official', status: 'ok', last_success_at: now - 60000 },
     { id: 'coindesk', label: 'CoinDesk', type: 'news', status: 'delayed', last_success_at: now - 17 * 60000 },
@@ -163,6 +182,9 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages, k
     else intelCalls.events += 1;
     if (intel === 'fail') return r.fulfill({ status: 503, body: 'x', headers: cors });
     const noEvents = intel === 'empty' || intel === 'pending' || intel === 'errors';
+    if (path.endsWith('/attention')) return r.fulfill({ json: { status: 'ok', attention: noEvents ? [] : socialAttention(Date.now()) }, headers: cors });
+    if (path.endsWith('/social')) return r.fulfill({ json: { status: 'ok', items: noEvents ? [] : socialItems(Date.now(), 'telegram') }, headers: cors });
+    if (path.endsWith('/community')) return r.fulfill({ json: { status: 'ok', items: noEvents ? [] : socialItems(Date.now(), 'community') }, headers: cors });
     return r.fulfill({ json: path.endsWith('/status') ? intelStatus(Date.now(), intel) : { status: 'ok', count: 0, events: noEvents ? [] : intelEvents(Date.now()) }, headers: cors });
   });
   await page.goto(base);
@@ -486,7 +508,7 @@ test('선물 탭·카드: OI 금액·변화, Funding, 가격·OI 조합, 활동�
   assert.match(await page.textContent('#futInfo'), /선물 없음: APT/);
   assert.match(await page.textContent('#futCards'), /갱신 \d/);
   assert.doesNotMatch(await page.textContent('#futuresPanel'), /매수|매도|롱|숏|진입/);
-  assert.match(await page.textContent('#appVersion'), /v1\.4\.0/);
+  assert.match(await page.textContent('#appVersion'), /v1\.5\.0/);
   assert.deepEqual(errors, []);
   await page.close();
 });
@@ -726,6 +748,181 @@ test('일부 출처 수집 오류: 해당 출처만 "수집 오류"로 표시, �
   assert.equal(await page.getAttribute('#intelSources .error >> nth=0', 'title'), 'HTTP 451');
   assert.match(await page.textContent('#intelList'), /수집 오류가 있습니다/);
   assert.match(await page.textContent('#intelSources'), /진단: 마지막 collector 실행에 오류/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+// ── Phase 6B: Telegram · 국내 커뮤니티 ──
+
+test('Telegram 탭 활성화(준비 중 아님): 탭 이동·선택, 소셜 관심도 카드, 검증 배지, 정보 중요도와 분리', async () => {
+  const { page, errors } = await openPage();
+  assert.equal(await page.locator('.tab', { hasText: 'Telegram' }).evaluate((n) => n.classList.contains('soon')), false);
+  assert.equal(await page.locator('.tab.soon').count(), 1); // X Radar 만 준비 중
+  assert.match(await page.textContent('.tab.soon'), /X Radar/);
+  await page.waitForFunction(() => document.querySelectorAll('#tgAttention .icard').length === 3);
+  await page.click('.tab[data-go="socialPanel"]');
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await page.$$eval('.tab.on', (ns) => ns.map((n) => n.dataset.go)), ['socialPanel']);
+  const sol = await page.textContent('#tgAttention .icard[data-symbol="SOL"]');
+  assert.match(sol, /Telegram/);
+  assert.match(sol, /공식 확인/);
+  assert.match(sol, /12건 · 평균 대비 3\.4배/);
+  assert.match(sol, /15분2건 · 데이터 축적 중/);
+  assert.match(sol, /3개 채널\(1시간\)/);
+  assert.match(sol, /소셜 관심도 82\/100/);
+  assert.match(sol, /연결 이벤트 · Binance Will List Solana/);
+  assert.match(sol, /화제성 · 사실 확인 아님/);
+  assert.doesNotMatch(sol, /정보 중요도/); // 정보 중요도와 소셜 관심도를 섞지 않음
+  const doge = await page.textContent('#tgAttention .icard[data-symbol="DOGE"]');
+  assert.match(doge, /미확인/);
+  assert.match(doge, /일부 요소 수집 중/);
+  assert.match(await page.textContent('#cmAttention .icard[data-symbol="XRP"]'), /국내 커뮤니티.*8건 · 평균 대비 3\.1배.*소셜 관심도 74\/100/s);
+  assert.match(await page.textContent('#cmAttention .icard[data-symbol="XRP"]'), /미확인/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 카드 시장 반응: 감시 종목은 실제 가격·거래 활동, 감시 종목이 아니면 안내만 (글에서 숫자를 만들지 않음)', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  await page.waitForFunction(() => /가격 5분/.test(document.querySelector('#tgAttention .icard[data-symbol="SOL"]')?.textContent || ''), null, { timeout: 15000 });
+  const sol = await page.textContent('#tgAttention .icard[data-symbol="SOL"]');
+  assert.match(sol, /시장 반응 · SOL 기준/);
+  assert.match(sol, /\+3\.00% \/ \+3\.00%/);
+  assert.match(sol, /거래 활동\d+\.\d배/);
+  const zzz = await page.textContent('#tgAttention .icard[data-symbol="ZZZ"]');
+  assert.match(zzz, /Binance 감시 종목이 아니어서 시장 데이터 없음/);
+  assert.doesNotMatch(zzz, /\d+\.\d+%/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('최근 Telegram/커뮤니티 글: excerpt 만, 새 탭 링크, XSS 실행 안 됨, 위험 URL 은 링크 없음', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#tgMessages .imsg').length === 2);
+  const m1 = await page.textContent('#tgMessages .imsg[data-item="21"]');
+  assert.match(m1, /WeCryptoTogether · SOL/);
+  assert.match(m1, /공식 확인/);
+  assert.match(m1, /업비트 솔라나 SOL 원화마켓 상장/);
+  assert.match(m1, /5분 전/);
+  const link = await page.$eval('#tgMessages .imsg[data-item="21"] a', (a) => ({ href: a.href, target: a.target, rel: a.rel }));
+  assert.equal(link.target, '_blank');
+  assert.match(link.rel, /noopener/);
+  assert.match(link.rel, /noreferrer/);
+  assert.equal(await page.$('#tgMessages .imsg[data-item="22"] a'), null); // javascript: URL → 링크 없음
+  assert.equal(await page.$('#tgMessages img'), null);
+  assert.equal(await page.$('#tgMessages script'), null);
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.match(await page.textContent('#tgMessages .imsg[data-item="22"] .imsgtext'), /<img src=x/); // 텍스트로만 보임
+  assert.match(await page.textContent('#cmMessages .imsg[data-item="31"]'), /게시 시간 미확인 · 수집 3분 전/);
+  assert.equal(await page.$$eval('#socialPanel a[href^="javascript"]', (n) => n.length), 0);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('전체 레이더 소셜 신호 + 이벤트 센터 SNS 확산: 급증/동시 언급/공식 연결만, 관심 낮은 코인은 제외', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#socialSignalList .imini').length > 0);
+  const tags = await page.$$eval('#socialSignalList .imini', (n) => n.map((x) => x.dataset.signal));
+  assert.deepEqual(tags, ['SOL', 'XRP', 'DOGE']); // 이유 많은 순 → 점수 순. ZZZ(관심 낮음)는 제외
+  const first = await page.textContent('#socialSignalList .imini[data-signal="SOL"]');
+  assert.match(first, /SOL · Telegram 3\.4x/);
+  assert.match(first, /공식 공지 연결/);
+  assert.match(first, /언급 급증/);
+  assert.match(first, /소셜 관심도 82/);
+  const sns = await page.textContent('#snsEvent');
+  assert.match(sns, /3종목/);
+  assert.match(sns, /SOL · Telegram 3\.4x/);
+  assert.match(sns, /XRP · 커뮤니티 3\.1x/);
+  assert.match(sns, /DOGE · Telegram 2개 채널 동시 언급/);
+  assert.doesNotMatch(await page.textContent('#socialSignalList'), /ZZZ/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 출처 상태: 채널별 정상/수집 오류/수집 준비 중 + Coinpan 비활성 이유, 뉴스 패널 상태와 분리', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.getElementById('socialSources').textContent.includes('Telegram'));
+  const t = await page.textContent('#socialSources');
+  assert.match(t, /Telegram · WeCryptoTogether 정상 · 3분 전/);
+  assert.match(t, /Telegram · enjoymyhobby 수집 오류 · 아직 성공 기록 없음/);
+  assert.match(t, /Telegram · blockmedia 수집 준비 중/);
+  assert.match(t, /Coinpan \(국내 커뮤니티\) 비활성/);
+  assert.equal(await page.getAttribute('#socialSources .error', 'title'), 'HTTP 451');
+  assert.match(await page.textContent('#socialStatus'), /일부 출처 수집 오류 \(1개\)/);
+  // 뉴스 패널에는 Telegram 출처가 섞이지 않음
+  assert.doesNotMatch(await page.textContent('#intelSources'), /Telegram/);
+  assert.match(await page.textContent('#intelStatus'), /일부 출처 수집 오류 \(1개\)/); // 뉴스 출처 기준 (CoinDesk)
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 첫 수집 전(pending): "수집 준비 중", 커뮤니티 비활성 안내, 신호 없음 — "연결 실패" 아님', async () => {
+  const { page, errors } = await openPage({ intel: 'pending' });
+  await page.waitForFunction(() => document.getElementById('socialStatus').textContent.includes('수집 준비 중'));
+  assert.doesNotMatch(await page.textContent('#socialStatus'), /연결 실패/);
+  assert.match(await page.textContent('#tgAttention'), /수집 준비 중/);
+  assert.match(await page.textContent('#cmAttention'), /국내 커뮤니티 수집은 아직 꺼져 있습니다/);
+  assert.match(await page.textContent('#snsEvent'), /수집 준비 중/);
+  assert.equal(await page.locator('#socialSources .pending').count(), 4);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 출처 전부 오류: 해당 출처만 수집 오류, Worker API 는 정상이므로 서버 연결 실패 아님', async () => {
+  const { page, errors } = await openPage({ intel: 'errors' });
+  await page.waitForFunction(() => document.getElementById('socialSources').textContent.includes('수집 오류'));
+  assert.doesNotMatch(await page.textContent('#socialStatus'), /서버 연결 실패/);
+  assert.match(await page.textContent('#tgAttention'), /수집 오류|아직 언급이 쌓이지/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 API 실패: 소셜 영역만 "정보 서버 연결 실패", 시세·뉴스·선물 영역은 정상 동작', async () => {
+  const { page, errors } = await openPage({ intel: 'fail' });
+  await page.waitForFunction(() => document.getElementById('socialStatus').textContent.includes('정보 서버 연결 실패'));
+  assert.match(await page.textContent('#tgAttention'), /연결하지 못했습니다/);
+  assert.match(await page.textContent('#snsEvent'), /연결 실패/);
+  await page.waitForFunction(() => document.getElementById('hero').textContent.includes('65,432.1'));
+  await page.waitForFunction(() => document.querySelector('#signals [data-symbol]'));
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('소셜 데이터가 비어 있으면(첫 수집 후 언급 없음) 빈 상태 안내', async () => {
+  const { page, errors } = await openPage({ intel: 'empty' });
+  await page.waitForFunction(() => /아직 언급이 쌓이지 않았습니다|수집 준비 중|꺼져/.test(document.getElementById('tgAttention').textContent));
+  assert.match(await page.textContent('#tgMessages'), /아직 수집된 Telegram 글이 없습니다/);
+  assert.equal(await page.$$eval('#tgAttention .icard', (n) => n.length), 0);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('이벤트 카드: 소스 종류별 집계와 관측 순서(인과관계 아님) 표시', async () => {
+  const { page, errors } = await openPage();
+  await page.waitForFunction(() => document.querySelectorAll('#intelList .icard').length === 5);
+  const c = await page.textContent('#intelList .icard[data-event="1"]');
+  assert.match(c, /공식 1 · Telegram 3 · 커뮤니티 1/);
+  assert.match(c, /관측 순서 공식 \d\d:\d\d → Telegram \d\d:\d\d → 커뮤니티 \d\d:\d\d/);
+  assert.equal(await page.getAttribute('#intelList .icard[data-event="1"] .iorder', 'title'), '먼저 관측된 순서일 뿐 인과관계가 아닙니다');
+  assert.doesNotMatch(await page.textContent('#intelList .icard[data-event="2"]'), /관측 순서/); // 소셜 없는 이벤트
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('모바일 Telegram·커뮤니티: 카드/글 표시, 가로 스크롤 없음, 탭 고정', async () => {
+  const { page, errors } = await openPage({ viewport: { width: 390, height: 844 } });
+  await page.waitForFunction(() => document.querySelectorAll('#tgAttention .icard').length === 3);
+  await page.click('.tab[data-go="socialPanel"]');
+  await page.waitForTimeout(1500);
+  assert.deepEqual(await page.$$eval('.tab.on', (ns) => ns.map((n) => n.dataset.go)), ['socialPanel']);
+  const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+  assert.ok(sw <= iw, `scrollWidth ${sw} > innerWidth ${iw}`);
+  const over = await page.$$eval('#socialPanel .icard, #socialPanel .imsg', (ns) => ns.filter((n) => n.getBoundingClientRect().right > window.innerWidth).length);
+  assert.equal(over, 0);
+  const tabsTop = await page.$eval('#tabs', (n) => n.getBoundingClientRect().top);
+  assert.ok(tabsTop >= 0 && tabsTop <= 2);
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-social.png') });
   assert.deepEqual(errors, []);
   await page.close();
 });
