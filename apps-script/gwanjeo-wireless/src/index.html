@@ -268,6 +268,18 @@
       border-bottom:0;
     }
 
+    .emp-table tfoot td{
+      border-top:2px solid #d1d5db;
+      border-bottom:0;
+      background:#f8fafc;
+      font-weight:900;
+      color:#111827;
+    }
+
+    .emp-table tfoot .emp-name{
+      background:#f8fafc;
+    }
+
     @media (max-width:340px){
       .emp-table{font-size:12px}
       .emp-table thead th{font-size:10px;letter-spacing:-0.4px}
@@ -1722,6 +1734,23 @@ function renderEmployees(){
               .join('')
           }
         </tbody>
+        <tfoot>
+          <tr>
+            <td class="emp-name">총합</td>
+            ${
+              ['post','mnp','choice','house','second','card']
+                .map(
+                  k=>`<td>${
+                    rows.reduce(
+                      (sum,r)=>sum+(Number(r[k])||0),
+                      0
+                    )
+                  }</td>`
+                )
+                .join('')
+            }
+          </tr>
+        </tfoot>
       </table>
     </div>
   `;

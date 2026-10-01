@@ -3762,47 +3762,6 @@ function saveActivationText(text){
       );
     }
 
-    var noCell=
-      sh.getRange(
-        row,
-        3
-      );
-
-    var no=
-      Number(
-        noCell.getValue()
-      )||0;
-
-    if(!no){
-
-      var maxNo=0;
-
-      if(row>10){
-
-        sh.getRange(
-          10,
-          3,
-          row-10,
-          1
-        )
-        .getValues()
-        .forEach(
-          function(v){
-
-            maxNo=
-              Math.max(
-                maxNo,
-                Number(v[0])||0
-              );
-          }
-        );
-      }
-
-      no=
-        maxNo+1;
-
-      noCell.setValue(no);
-    }
 
 
     /*
@@ -3930,6 +3889,19 @@ function saveActivationText(text){
         :x.wired
     );
 
+    /*
+     * C No. = 개통 데이터(E/F)가 있는 행만 1부터 연속 부여
+     */
+    renumberCaseNo_(sh);
+
+    var no=
+      Number(
+        sh.getRange(
+          row,
+          3
+        ).getValue()
+      )||0;
+
     SpreadsheetApp.flush();
 
     return{
@@ -3954,3 +3926,621 @@ function saveActivationText(text){
     lock.releaseLock();
   }
 }
+
+
+/* =========================================================
+   No. 재부여 / 개통일 정렬
+   - No.(C열)는 표시용 순번. 개통건 식별은 개통월+CTN 사용
+   - 개통 데이터(E 고객 또는 F CTN)가 있는 행만 1부터 연속 번호
+   - 정렬은 행 전체를 이동(moveRows)하므로 한 행의 데이터는 항상 함께 이동
+   - 정렬은 메뉴 실행 / 야간 자동 실행에서만 수행 (입력 중 행 이동 방지)
+========================================================= */
+
+function isCaseMonthSheet_(sh){
+
+  var mk=
+    monthKey(
+      sh.getName()
+    );
+
+  return(
+    /^20\d{2}-\d{2}$/.test(mk)&&
+    mk>='2026-09'
+  );
+}
+
+function isCaseRow_(e,f){
+
+  return(
+    String(e==null?'':e).trim()!==''||
+    String(f==null?'':f).trim()!==''
+  );
+}
+
+function lastCaseRow_(sh){
+
+  var last=
+    sh.getLastRow();
+
+  if(last<10){
+    return 9;
+  }
+
+  var ef=
+    sh.getRange(
+      10,
+      5,
+      last-9,
+      2
+    )
+    .getValues();
+
+  for(
+    var i=ef.length-1;
+    i>=0;
+    i--
+  ){
+
+    if(
+      isCaseRow_(
+        ef[i][0],
+        ef[i][1]
+      )
+    ){
+      return 10+i;
+    }
+  }
+
+  return 9;
+}
+
+/*
+ * C열 No. 재부여 (값만 변경, 행 이동 없음)
+ * - 데이터 행: 1,2,3... 연속
+ * - 빈 행: 숫자로 남아 있던 No.만 지움 (다른 글자는 보존)
+ * - C열에 수식이 있으면 수식 보호를 위해 건너뜀
+ */
+function renumberCaseNo_(sh){
+
+  var last=
+    sh.getLastRow();
+
+  if(last<10){
+    return{changed:0};
+  }
+
+  var n=
+    last-9;
+
+  var cRange=
+    sh.getRange(
+      10,
+      3,
+      n,
+      1
+    );
+
+  var hasFormula=
+    cRange
+    .getFormulas()
+    .some(
+      function(r){
+        return String(r[0]||'')!=='';
+      }
+    );
+
+  if(hasFormula){
+
+    return{
+      changed:0,
+      skipped:'C열에 수식이 있어 No. 정리를 건너뛰었습니다.'
+    };
+  }
+
+  var vals=
+    sh.getRange(
+      10,
+      3,
+      n,
+      4
+    )
+    .getValues();
+
+  var seq=0;
+  var changed=0;
+
+  var out=
+    vals.map(
+      function(r){
+
+        var cur=r[0];
+        var next=cur;
+
+        if(
+          isCaseRow_(
+            r[2],
+            r[3]
+          )
+        ){
+
+          seq++;
+          next=seq;
+
+        }else if(
+          cur!==''&&
+          cur!==null&&
+          /^\s*\d+\s*$/.test(String(cur))
+        ){
+
+          next='';
+        }
+
+        if(
+          String(next)!==String(cur)
+        ){
+          changed++;
+        }
+
+        return[next];
+      }
+    );
+
+  if(changed){
+    cRange.setValues(out);
+  }
+
+  return{
+    changed:changed,
+    count:seq
+  };
+}
+
+/*
+ * 같은 장표 안의 다른 데이터 행을 참조하는 수식이 있는지 확인
+ * (누계식 등은 정렬 시 의미가 바뀔 수 있으므로 정렬 중단)
+ */
+function findCrossRowFormula_(
+  formulas,
+  firstRow,
+  lastRow,
+  sheetName
+){
+
+  var re=
+    /(?<![A-Za-z0-9_$'!])((?:'[^']*'|[A-Za-z0-9_가-힣.]+)!)?\$?[A-Z]{1,3}\$?(\d+)(?![\d(A-Za-z_])/g;
+
+  for(
+    var i=0;
+    i<formulas.length;
+    i++
+  ){
+
+    var own=
+      firstRow+i;
+
+    for(
+      var j=0;
+      j<formulas[i].length;
+      j++
+    ){
+
+      var f=
+        String(
+          formulas[i][j]||''
+        );
+
+      if(!f){
+        continue;
+      }
+
+      var m;
+
+      re.lastIndex=0;
+
+      while(
+        (m=re.exec(f))!==null
+      ){
+
+        if(m[1]){
+
+          var ref=
+            m[1]
+            .slice(0,-1)
+            .replace(/^'|'$/g,'');
+
+          if(ref!==sheetName){
+            continue;
+          }
+        }
+
+        var r=
+          Number(m[2]);
+
+        if(
+          r>=firstRow&&
+          r<=lastRow&&
+          r!==own
+        ){
+
+          return(
+            sh_a1_(own,j+1)+
+            ' 수식이 다른 행('+r+'행)을 참조'
+          );
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+function sh_a1_(row,col){
+
+  var s='';
+  var c=col;
+
+  while(c>0){
+
+    var m=(c-1)%26;
+    s=String.fromCharCode(65+m)+s;
+    c=Math.floor((c-1)/26);
+  }
+
+  return s+row;
+}
+
+/*
+ * 개통일 오름차순 정렬 + No. 재부여
+ * - 같은 날짜는 기존 순서 유지 (안정 정렬)
+ * - 개통일 없는 데이터 행은 날짜 있는 행 뒤, 빈 행은 맨 뒤
+ * - 안전 확인 실패 시 아무것도 바꾸지 않고 사유 반환
+ */
+function tidyCaseSheet_(sh){
+
+  var result={
+    sheet:sh.getName(),
+    moved:0,
+    sorted:false,
+    renumbered:0,
+    undated:0,
+    skipped:''
+  };
+
+  var headerProblems=
+    checkCaseHeaders_(sh);
+
+  if(headerProblems.length){
+
+    result.skipped=
+      '헤더 확인 필요: '+
+      headerProblems.join(', ');
+
+    return result;
+  }
+
+  var lastData=
+    lastCaseRow_(sh);
+
+  if(lastData>=11){
+
+    var n=
+      lastData-9;
+
+    var lastCol=
+      sh.getLastColumn();
+
+    var block=
+      sh.getRange(
+        10,
+        1,
+        n,
+        lastCol
+      );
+
+    var mergedMulti=
+      block
+      .getMergedRanges()
+      .some(
+        function(r){
+          return r.getNumRows()>1;
+        }
+      );
+
+    if(mergedMulti){
+
+      result.skipped=
+        '데이터 구간에 여러 행 병합 셀이 있어 정렬하지 않았습니다.';
+
+      return result;
+    }
+
+    var cross=
+      findCrossRowFormula_(
+        block.getFormulas(),
+        10,
+        lastData,
+        sh.getName()
+      );
+
+    if(cross){
+
+      result.skipped=
+        '정렬 중단: '+cross;
+
+      return result;
+    }
+
+    var mk=
+      monthKey(
+        sh.getName()
+      );
+
+    var vals=
+      sh.getRange(
+        10,
+        4,
+        n,
+        3
+      )
+      .getValues();
+
+    var items=
+      vals.map(
+        function(r,i){
+
+          var data=
+            isCaseRow_(
+              r[1],
+              r[2]
+            );
+
+          var d=
+            data
+              ?dateValue(r[0],mk)
+              :'';
+
+          return{
+            id:i,
+            group:
+              !data
+                ?2
+                :d
+                  ?0
+                  :1,
+            date:d
+          };
+        }
+      );
+
+    result.undated=
+      items.filter(
+        function(x){
+          return x.group===1;
+        }
+      ).length;
+
+    var order=
+      items
+      .slice()
+      .sort(
+        function(a,b){
+
+          if(a.group!==b.group){
+            return a.group-b.group;
+          }
+
+          if(
+            a.group===0&&
+            a.date!==b.date
+          ){
+            return a.date<b.date?-1:1;
+          }
+
+          return a.id-b.id;
+        }
+      )
+      .map(
+        function(x){
+          return x.id;
+        }
+      );
+
+    var current=
+      items.map(
+        function(x){
+          return x.id;
+        }
+      );
+
+    for(
+      var i=0;
+      i<order.length;
+      i++
+    ){
+
+      var pos=
+        current.indexOf(
+          order[i]
+        );
+
+      if(pos!==i){
+
+        sh.moveRows(
+          sh.getRange(
+            10+pos,
+            1
+          ),
+          10+i
+        );
+
+        current.splice(pos,1);
+        current.splice(i,0,order[i]);
+
+        result.moved++;
+      }
+    }
+
+    result.sorted=true;
+  }
+
+  var rn=
+    renumberCaseNo_(sh);
+
+  result.renumbered=
+    rn.changed||0;
+
+  if(rn.skipped){
+    result.skipped=rn.skipped;
+  }
+
+  SpreadsheetApp.flush();
+
+  return result;
+}
+
+function tidyCaseSheetLocked_(sh){
+
+  var lock=
+    LockService.getScriptLock();
+
+  lock.waitLock(30000);
+
+  try{
+
+    return tidyCaseSheet_(sh);
+
+  }finally{
+
+    lock.releaseLock();
+  }
+}
+
+/*
+ * 야간 자동 실행용 (트리거에서 호출)
+ * 최근 2개 월 시트만 정리
+ */
+function tidyRecentMonthSheets(){
+
+  var ss=
+    SpreadsheetApp.openById(
+      SPREADSHEET_ID
+    );
+
+  return getMonthlySheets_(ss)
+  .slice(0,2)
+  .map(
+    function(info){
+      return tidyCaseSheetLocked_(info.sh);
+    }
+  );
+}
+
+/*
+ * 장표 메뉴
+ */
+function onOpen(){
+
+  SpreadsheetApp
+  .getUi()
+  .createMenu('무선장표')
+  .addItem(
+    '현재 시트: 개통일 정렬 + No. 정리',
+    'menuTidyActiveSheet'
+  )
+  .addToUi();
+}
+
+function menuTidyActiveSheet(){
+
+  var ui=
+    SpreadsheetApp.getUi();
+
+  var sh=
+    SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getActiveSheet();
+
+  if(!isCaseMonthSheet_(sh)){
+
+    ui.alert(
+      '월별 무선장표 시트(26년 9월 이후)에서 실행해주세요.'
+    );
+
+    return;
+  }
+
+  var ok=
+    ui.alert(
+      sh.getName()+' 정리',
+      '개통일 순으로 행 전체를 정렬하고 No.를 1부터 다시 매깁니다.\n다른 사람이 이 시트를 입력 중이 아닐 때 실행해주세요.',
+      ui.ButtonSet.OK_CANCEL
+    );
+
+  if(ok!==ui.Button.OK){
+    return;
+  }
+
+  var r=
+    tidyCaseSheetLocked_(sh);
+
+  ui.alert(
+    r.skipped&&!r.sorted
+      ?'정리하지 않았습니다.\n'+r.skipped
+      :'정리 완료\n이동한 행: '+r.moved+
+        '\nNo. 변경: '+r.renumbered+
+        (r.undated?'\n개통일 확인 필요: '+r.undated+'건 (맨 뒤로 정렬)':'')+
+        (r.skipped?'\n참고: '+r.skipped:'')
+  );
+}
+
+/*
+ * 장표 직접 입력 시 No.만 자동 재부여 (행 이동 없음)
+ * C~F열(No./개통일/고객/CTN) 10행 이후 수정 시에만 동작
+ */
+function onEdit(e){
+
+  try{
+
+    if(!e||!e.range){
+      return;
+    }
+
+    var sh=
+      e.range.getSheet();
+
+    if(!isCaseMonthSheet_(sh)){
+      return;
+    }
+
+    var r1=e.range.getRow();
+    var r2=r1+e.range.getNumRows()-1;
+    var c1=e.range.getColumn();
+    var c2=c1+e.range.getNumColumns()-1;
+
+    if(
+      r2<10||
+      c2<3||
+      c1>6
+    ){
+      return;
+    }
+
+    var lock=
+      LockService.getScriptLock();
+
+    if(!lock.tryLock(5000)){
+      return;
+    }
+
+    try{
+
+      renumberCaseNo_(sh);
+
+    }finally{
+
+      lock.releaseLock();
+    }
+
+  }catch(err){}
+}
+
