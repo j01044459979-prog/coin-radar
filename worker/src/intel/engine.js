@@ -8,6 +8,8 @@ import { reactionFromCandles } from './market.js';
 import { enabledSources, fetchText } from './sources.js';
 import * as store from './store.js';
 
+const MAX_NEWS_PER_RUN = 1; // 실행당 뉴스(RSS) 출처 수. 무료 플랜 CPU(10ms) 보호 — 2분마다 1개씩 돌아가며 수집
+
 const MAX_NEW_PER_SOURCE = 30; // 한 번에 저장할 새 항목 상한 (D1 쓰기 보호)
 const MAX_SNAPSHOT_MARKETS = 4; // 실행당 Upbit 캔들 요청 상한
 const MAX_SNAPSHOT_ROWS = 12; // 실행당 시세 스냅샷 D1 쓰기 상한
@@ -80,7 +82,25 @@ async function fetchJsonSafe(fetchImpl, url) {
   return JSON.parse(await fetchText(fetchImpl, url, 'application/json'));
 }
 
-// options: { fetchImpl, force, candleIntervalMs }
+// 이번 실행에서 다룰 출처: 때가 된 공식 출처는 모두, 뉴스는 가장 오래 기다린 것부터 maxNews 개
+export function selectSources(due, health, maxNews = MAX_NEWS_PER_RUN) {
+  const waited = (s) => (health.get(s.id) && health.get(s.id).last_attempt_at) || 0;
+  const official = due.filter((s) => s.type === 'official');
+  const others = due.filter((s) => s.type !== 'official').sort((a, b) => waited(a) - waited(b));
+  return [...official, ...others.slice(0, maxNews)];
+}
+
+const errText = (err) => String((err && err.message) || err).slice(0, 200);
+
+// 진단 기록은 실패해도 수집을 막지 않습니다
+async function meta(db, key, value, now) {
+  try {
+    await store.setMeta(db, key, value, now);
+  } catch { /* 진단 기록 실패는 무시 */ }
+}
+
+// options: { fetchImpl, force, maxNews, candleIntervalMs }
+// 각 단계는 서로 독립입니다: 한 단계/한 출처의 실패가 다른 출처의 수집·기록을 막지 않습니다.
 export async function runIntelligence(env, now, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const out = { ok: false, ran_at: now, sources: [], new_items: 0, duplicates: 0, clusters_touched: 0, snapshots: 0, errors: [] };
@@ -91,109 +111,153 @@ export async function runIntelligence(env, now, options = {}) {
   }
   try {
     await store.ensureIntelSchema(db);
-    const health = await store.loadHealth(db);
+  } catch (err) {
+    out.errors.push('D1 스키마 준비 실패: ' + errText(err));
+    return out;
+  }
+
+  // 0) 아무 작업도 하기 전에 "시작" 을 기록: 이후 종료(CPU/시간 제한)되면 시작만 있고 완료가 없는 흔적이 남음
+  await meta(db, 'last_collector_started_at', now, now);
+  try {
+    let health = new Map();
+    try {
+      health = await store.loadHealth(db);
+    } catch (err) {
+      out.errors.push('source_health 조회 실패(전체를 대상으로 진행): ' + errText(err));
+    }
     const active = enabledSources(env);
     const due = active.filter((s) => options.force || isDue(s, health.get(s.id), now));
+    const run = selectSources(due, health, options.maxNews ?? MAX_NEWS_PER_RUN);
+    try {
+      await store.markAttempts(db, run, now);
+    } catch (err) {
+      out.errors.push('시도 기록 실패: ' + errText(err));
+    }
 
-    // 거래소 마켓 목록: 심볼 사전(한글/영문 이름)과 Upbit KRW 시세 연결에 사용. 실패하면 기본 사전만 사용.
+    // 1) 네트워크: 마켓 목록과 각 출처를 병렬로 받되 서로 실패가 전파되지 않음 (allSettled)
+    const marketsP = fetchJsonSafe(fetchImpl, UPBIT_MARKETS).then((l) => (Array.isArray(l) ? l : []));
+    const rawsP = run.map((src) => Promise.resolve().then(() => src.fetchRaw(fetchImpl)).then((raw) => ({ src, raw }), (err) => ({ src, error: errText(err) })));
     let markets = [];
     try {
-      const list = await fetchJsonSafe(fetchImpl, UPBIT_MARKETS);
-      if (Array.isArray(list)) markets = list;
+      markets = await marketsP;
     } catch (err) {
-      out.errors.push('마켓 목록 실패(기본 사전 사용): ' + String(err && err.message));
+      out.errors.push('마켓 목록 실패(기본 사전 사용): ' + errText(err));
     }
+    const fetched = await Promise.all(rawsP);
     const dict = buildDictionary(markets);
     const krw = new Map(markets.filter((m) => typeof m.market === 'string' && m.market.startsWith('KRW-')).map((m) => [m.market.slice(4), m.market]));
 
-    // 1) 출처별 독립 수집 (한 출처의 실패/시간 초과가 다른 출처에 영향 없음)
-    const fetched = await Promise.all(
-      due.map(async (src) => {
-        try {
-          const items = await src.fetchItems(fetchImpl, now);
-          return { src, items };
-        } catch (err) {
-          return { src, error: String((err && err.message) || err).slice(0, 200) };
-        }
-      }),
-    );
-
-    // 2) 분석 + 저장 + 클러스터
-    const clusters = await store.loadRecentClusters(db, now);
+    // 2) 출처마다 순서대로: 파싱 → 분석 → 저장 → 상태 기록. 어느 단계가 실패해도 그 출처만 오류로 기록하고 다음 출처로 진행
+    let clusters = [];
+    try {
+      clusters = await store.loadRecentClusters(db, now);
+    } catch (err) {
+      out.errors.push('최근 클러스터 조회 실패: ' + errText(err));
+    }
     const touched = new Set();
     for (const f of fetched) {
-      if (f.error) {
-        out.sources.push({ id: f.src.id, ok: false, error: f.error });
-        await store.recordHealth(db, f.src, now, { ok: false, error: f.error });
-        continue;
-      }
-      const enriched = f.items.map((r) => enrichItem(r, f.src, now, dict)).filter(Boolean);
-      const known = await store.existingKeys(db, enriched.map((e) => e.urlKey));
-      const fresh = enriched.filter((e) => !known.has(e.urlKey)).sort((a, b) => a.eventTime - b.eventTime).slice(-MAX_NEW_PER_SOURCE);
-      out.duplicates += enriched.length - fresh.length;
-      let added = 0;
-      for (const item of fresh) {
-        const id = await store.insertItem(db, item);
-        if (!id) { out.duplicates += 1; continue; }
-        added += 1;
-        let c = findCluster(item, clusters);
-        if (c) {
-          joinCluster(c, item, now);
-        } else {
-          c = newCluster(item, now);
-          c.id = await store.insertCluster(db, c);
-          clusters.unshift(c);
-        }
-        touched.add(c);
-        await store.setItemCluster(db, id, c.id);
-      }
-      out.new_items += added;
-      out.sources.push({ id: f.src.id, ok: true, fetched: f.items.length, new: added });
-      await store.recordHealth(db, f.src, now, { ok: true, count: f.items.length });
-    }
-
-    // 3) 시장 반응 연결: 최근 이벤트의 관련 코인 중 Upbit 원화 마켓이 있는 것만 (실제 1분봉으로 계산)
-    const snapTargets = clusters
-      .filter((c) => now - (c.publishedKnown ? c.eventTime : c.firstSeenAt) <= SNAPSHOT_WINDOW_MS && c.symbols.some((s) => krw.has(s)))
-      .sort((a, b) => b.importance - a.importance);
-    const marketList = [];
-    for (const c of snapTargets) for (const s of c.symbols) if (krw.has(s) && !marketList.includes(krw.get(s)) && marketList.length < MAX_SNAPSHOT_MARKETS) marketList.push(krw.get(s));
-    const candleCache = new Map();
-    for (const m of marketList) {
+      let result;
       try {
-        if (candleCache.size) await sleep(options.candleIntervalMs ?? 130);
-        candleCache.set(m, await fetchJsonSafe(fetchImpl, `https://api.upbit.com/v1/candles/minutes/1?market=${m}&count=100`));
+        if (f.error) throw new Error(f.error);
+        const items = f.src.parse(f.raw, now);
+        const enriched = items.map((r) => enrichItem(r, f.src, now, dict)).filter(Boolean);
+        const known = await store.existingKeys(db, enriched.map((e) => e.urlKey));
+        const fresh = enriched.filter((e) => !known.has(e.urlKey)).sort((a, b) => a.eventTime - b.eventTime).slice(-MAX_NEW_PER_SOURCE);
+        out.duplicates += enriched.length - fresh.length;
+        let added = 0;
+        for (const item of fresh) {
+          const id = await store.insertItem(db, item);
+          if (!id) { out.duplicates += 1; continue; }
+          added += 1;
+          let c = findCluster(item, clusters);
+          if (c) {
+            joinCluster(c, item, now);
+          } else {
+            c = newCluster(item, now);
+            c.id = await store.insertCluster(db, c);
+            clusters.unshift(c);
+          }
+          touched.add(c);
+          await store.setItemCluster(db, id, c.id);
+        }
+        out.new_items += added;
+        result = { id: f.src.id, ok: true, fetched: items.length, new: added };
       } catch (err) {
-        out.errors.push(`시세 ${m}: ${String(err && err.message).slice(0, 80)}`);
+        result = { id: f.src.id, ok: false, error: errText(err) };
       }
-    }
-    for (const c of snapTargets) {
-      if (out.snapshots >= MAX_SNAPSHOT_ROWS) break;
-      const changes = [];
-      for (const s of c.symbols) {
-        const m = krw.get(s);
-        const raw = m && candleCache.get(m);
-        if (!raw) continue;
-        const r = reactionFromCandles(raw, c.publishedKnown ? c.eventTime : null, now);
-        if (!r) continue;
-        await store.upsertSnapshot(db, { clusterId: c.id, symbol: s, market: m, takenAt: now, publishedAt: c.publishedKnown ? c.eventTime : null, ...r });
-        out.snapshots += 1;
-        changes.push(r.change_post15, r.change_15m);
-      }
-      const bonus = reactionBonus(changes);
-      if (changes.length && bonus !== c.reactionBonus) {
-        c.reactionBonus = bonus;
-        refreshCluster(c, now);
-        touched.add(c);
+      out.sources.push(result);
+      try {
+        await store.recordHealth(db, f.src, now, result.ok ? { ok: true, count: result.fetched } : { ok: false, error: result.error });
+      } catch (err) {
+        out.errors.push(`${f.src.id} 상태 기록 실패: ${errText(err)}`);
       }
     }
 
-    for (const c of touched) await store.updateCluster(db, c);
+    // 3) 시장 반응 연결: 실패해도 수집 결과에는 영향 없음
+    try {
+      await attachMarketReaction(db, clusters, krw, touched, now, fetchImpl, options, out);
+    } catch (err) {
+      out.errors.push('시장 반응 연결 실패: ' + errText(err));
+    }
+    for (const c of touched) {
+      try {
+        await store.updateCluster(db, c);
+      } catch (err) {
+        out.errors.push('클러스터 저장 실패: ' + errText(err));
+      }
+    }
     out.clusters_touched = touched.size;
-    if (new Date(now).getUTCMinutes() === 0) await store.pruneIntel(db, now);
-    out.ok = out.sources.some((s) => s.ok) || due.length === 0;
+    if (new Date(now).getUTCMinutes() === 0) {
+      try {
+        await store.pruneIntel(db, now);
+      } catch (err) {
+        out.errors.push('정리 실패: ' + errText(err));
+      }
+    }
+    out.ok = out.sources.some((s) => s.ok) || run.length === 0;
   } catch (err) {
-    out.errors.push(String((err && err.message) || err));
+    out.errors.push(errText(err));
   }
+  // 마지막: 완료와 오류 요약 기록
+  await meta(db, 'last_collector_error', out.errors.length ? out.errors.slice(0, 3).join(' | ') : '', now);
+  await meta(db, 'last_collector_finished_at', Date.now() > now ? Date.now() : now, now);
   return out;
+}
+
+async function attachMarketReaction(db, clusters, krw, touched, now, fetchImpl, options, out) {
+  // 3) 시장 반응 연결: 최근 이벤트의 관련 코인 중 Upbit 원화 마켓이 있는 것만 (실제 1분봉으로 계산)
+  const snapTargets = clusters
+    .filter((c) => now - (c.publishedKnown ? c.eventTime : c.firstSeenAt) <= SNAPSHOT_WINDOW_MS && c.symbols.some((s) => krw.has(s)))
+    .sort((a, b) => b.importance - a.importance);
+  const marketList = [];
+  for (const c of snapTargets) for (const s of c.symbols) if (krw.has(s) && !marketList.includes(krw.get(s)) && marketList.length < MAX_SNAPSHOT_MARKETS) marketList.push(krw.get(s));
+  const candleCache = new Map();
+  for (const m of marketList) {
+    try {
+      if (candleCache.size) await sleep(options.candleIntervalMs ?? 130);
+      candleCache.set(m, await fetchJsonSafe(fetchImpl, `https://api.upbit.com/v1/candles/minutes/1?market=${m}&count=100`));
+    } catch (err) {
+      out.errors.push(`시세 ${m}: ${String(err && err.message).slice(0, 80)}`);
+    }
+  }
+  for (const c of snapTargets) {
+    if (out.snapshots >= MAX_SNAPSHOT_ROWS) break;
+    const changes = [];
+    for (const s of c.symbols) {
+      const m = krw.get(s);
+      const raw = m && candleCache.get(m);
+      if (!raw) continue;
+      const r = reactionFromCandles(raw, c.publishedKnown ? c.eventTime : null, now);
+      if (!r) continue;
+      await store.upsertSnapshot(db, { clusterId: c.id, symbol: s, market: m, takenAt: now, publishedAt: c.publishedKnown ? c.eventTime : null, ...r });
+      out.snapshots += 1;
+      changes.push(r.change_post15, r.change_15m);
+    }
+    const bonus = reactionBonus(changes);
+    if (changes.length && bonus !== c.reactionBonus) {
+      c.reactionBonus = bonus;
+      refreshCluster(c, now);
+      touched.add(c);
+    }
+  }
 }

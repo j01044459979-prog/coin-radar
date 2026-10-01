@@ -10,13 +10,14 @@ import { json } from './response.js';
 import { runMonitor, monitorStatus } from './monitor.js';
 import { runIntelligence } from './intel/engine.js';
 import { handleIntelligence } from './intel/api.js';
+import { recordCronSeen } from './intel/diag.js';
+import { cronKind } from './cron.js';
 
 // 주의: 이 파일(진입점)에서는 default 외의 값을 export 하지 않습니다.
 //       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
 const SERVICE_NAME = 'coin-radar-engine';
 const PHASE = 5; // 기존 상태 응답과 호환을 위해 유지 (Phase 6A 는 VERSION 0.6.0 · /api/intelligence)
 const VERSION = '0.6.0';
-const INTEL_CRON = '*/2 * * * *'; // wrangler.toml 의 두 번째 Cron (정보 수집). 1분 Cron 은 기존 Upbit 감시
 
 const ENDPOINTS = {
   'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
@@ -137,11 +138,13 @@ export default {
     );
   },
 
-  // Cron Trigger (wrangler.toml [triggers] crons = ["* * * * *"])
+  // Cron Trigger (wrangler.toml [triggers] crons = ["* * * * *", "*/2 * * * *"]) — 표현식 분기는 src/cron.js
   async scheduled(controller, env, ctx) {
     const now = controller && controller.scheduledTime ? controller.scheduledTime : Date.now();
-    // 두 Cron 은 서로 다른 실행이라 요청 수/CPU 제한이 따로 적용됩니다. 기존 1분 감시가 항상 우선입니다.
-    if (controller && controller.cron === INTEL_CRON) ctx.waitUntil(runIntelligence(env, now));
-    else ctx.waitUntil(runMonitor(env, now));
+    const cron = controller && controller.cron;
+    // 어떤 Cron 이 실제로 실행됐는지 기록(진단용, 실패해도 예외를 던지지 않음)을 같은 waitUntil 안에서 함께 실행합니다.
+    // 두 Cron 은 서로 다른 실행이라 요청 수/CPU 제한이 따로 적용됩니다. 기존 1분 Upbit 감시가 항상 우선입니다.
+    const job = cronKind(cron) === 'intel' ? runIntelligence(env, now) : runMonitor(env, now);
+    ctx.waitUntil(Promise.all([job, recordCronSeen(env, cron, now)]));
   },
 };

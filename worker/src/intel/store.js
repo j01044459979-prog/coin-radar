@@ -63,6 +63,12 @@ export const INTEL_SCHEMA = [
     change_15m REAL,
     PRIMARY KEY (cluster_id, symbol)
   )`,
+  // 진단용 키-값 (Cron 이 실제로 실행됐는지, collector 가 시작/완료했는지). 값은 짧은 문자열만.
+  `CREATE TABLE IF NOT EXISTS intel_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS source_health (
     source TEXT PRIMARY KEY,
     source_type TEXT NOT NULL,
@@ -234,4 +240,33 @@ export async function existingKeys(db, keys) {
     for (const row of r.results) found.add(row.url_key);
   }
   return found;
+}
+
+// ── 진단 (Phase 6A 운영 수정) ──
+export const INCOMPLETE = '수집 미완료: 시작 기록만 있고 완료 기록 없음 (실행 시간/CPU 제한 의심)';
+
+export async function setMeta(db, key, value, now) {
+  await db
+    .prepare(`INSERT INTO intel_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+    .bind(key, String(value).slice(0, 300), now)
+    .run();
+}
+
+export async function loadMeta(db) {
+  const r = await db.prepare(`SELECT key, value, updated_at FROM intel_meta`).all();
+  return new Map(r.results.map((x) => [x.key, x]));
+}
+
+// 수집을 시작하기 '전에' 이번에 다룰 출처의 시도 기록을 남깁니다 (한 번의 batch).
+// 실행 도중 종료(CPU/시간 제한 등)되어도 "수집 준비 중" 이 아니라 "수집 미완료" 로 드러나고, 미완료가 반복되면 실패 횟수가 늘어 간격이 넓어집니다.
+export async function markAttempts(db, sources, now) {
+  if (!sources.length) return;
+  const stmt = db.prepare(
+    `INSERT INTO source_health (source, source_type, label, interval_ms, last_attempt_at, last_success_at, last_error, consecutive_failures, last_item_count)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, 0, 0)
+     ON CONFLICT(source) DO UPDATE SET source_type = excluded.source_type, label = excluded.label, interval_ms = excluded.interval_ms,
+       consecutive_failures = CASE WHEN source_health.last_error = ? THEN source_health.consecutive_failures + 1 ELSE source_health.consecutive_failures END,
+       last_attempt_at = excluded.last_attempt_at, last_error = excluded.last_error`,
+  );
+  await db.batch(sources.map((s) => stmt.bind(s.id, s.type, s.label, s.intervalMs, now, INCOMPLETE, INCOMPLETE)));
 }

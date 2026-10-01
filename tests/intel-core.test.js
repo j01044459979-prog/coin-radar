@@ -141,8 +141,39 @@ test('한 줄 요약(전체 레이더): 게시 시간 없는 항목은 수집 �
   assert.match(I.miniHtml(ev({ published_at: null }), NOW), /\(수집 시각\)/);
 });
 
-test('출처 상태 문구', () => {
+test('출처 상태 문구: 정상 / 지연 / 수집 오류 / 수집 준비 중 (첫 수집 전과 장애를 구분)', () => {
   assert.equal(I.healthText({ label: 'Binance 공지', status: 'ok', last_success_at: NOW - 2 * MIN }, NOW), 'Binance 공지 정상 · 2분 전');
   assert.equal(I.healthText({ label: 'CoinDesk', status: 'delayed', last_success_at: NOW - 17 * MIN }, NOW), 'CoinDesk 지연 · 17분 전');
-  assert.equal(I.healthText({ label: 'BlockMedia', status: 'pending', last_success_at: null }, NOW), 'BlockMedia 수집 전');
+  assert.equal(I.healthText({ label: 'BlockMedia', status: 'pending', last_success_at: null }, NOW), 'BlockMedia 수집 준비 중');
+  assert.equal(I.healthText({ label: 'Binance 공지', status: 'error', last_success_at: null }, NOW), 'Binance 공지 수집 오류 · 아직 성공 기록 없음');
+  assert.equal(I.healthText({ label: 'CoinDesk', status: 'error', last_success_at: NOW - 30 * MIN }, NOW), 'CoinDesk 수집 오류 · 마지막 성공 30분 전');
+});
+
+const S = (...st) => st.map((status, i) => ({ id: 's' + i, label: 'S' + i, status }));
+
+test('전체 상태: Worker API 실패일 때만 "정보 서버 연결 실패"', () => {
+  assert.deepEqual(I.overallStatus({ apiFailed: true, hasData: false, loaded: false, sources: [] }), { level: 'err', text: '정보 서버 연결 실패' });
+  assert.equal(I.overallStatus({ apiFailed: true, hasData: true, loaded: true, sources: S('ok') }).text, '정보 갱신 지연'); // 이전 데이터가 있으면 서버 실패로 단정하지 않음
+  // 출처가 전부 오류여도 API 는 응답한 것이므로 서버 연결 실패가 아님
+  assert.doesNotMatch(I.overallStatus({ apiFailed: false, loaded: true, sources: S('error', 'error') }).text, /서버 연결 실패/);
+});
+
+test('전체 상태: 첫 수집 전(pending) = 수집 준비 중, "정보 정상" 으로 표시하지 않음', () => {
+  assert.deepEqual(I.overallStatus({ loaded: true, sources: S('pending', 'pending', 'pending', 'pending', 'pending') }), { level: 'warn', text: '수집 준비 중' });
+  assert.equal(I.overallStatus({ loaded: false, sources: [] }).text, '정보 연결 중');
+});
+
+test('전체 상태: 일부 출처만 오류면 그 개수만 표시, 전부 정상이면 정보 정상, 전부 오류면 모든 출처 수집 오류', () => {
+  assert.deepEqual(I.overallStatus({ loaded: true, sources: S('ok', 'error', 'ok', 'pending', 'ok') }), { level: 'warn', text: '일부 출처 수집 오류 (1개)' });
+  assert.equal(I.overallStatus({ loaded: true, sources: S('ok', 'ok', 'pending') }).text, '정보 정상');
+  assert.equal(I.overallStatus({ loaded: true, sources: S('error', 'error', 'pending') }).text, '모든 출처 수집 오류');
+  assert.equal(I.overallStatus({ loaded: true, degraded: true, sources: [] }).text, '정보 저장소(D1) 미연결');
+  assert.equal(I.overallStatus({ loaded: true, sources: [] }).text, '정보 정상'); // status API 만 실패한 경우 이벤트 목록은 정상
+});
+
+test('빈 목록 안내: 수집 준비 중 / 출처 오류 / 필터 결과 없음', () => {
+  assert.equal(I.emptyText({ hasEvents: false, sources: S('pending', 'pending') }).title, '수집 준비 중');
+  assert.match(I.emptyText({ hasEvents: false, sources: S('error', 'pending') }).sub, /수집 오류/);
+  assert.equal(I.emptyText({ hasEvents: false, sources: S('ok') }).title, '아직 수집된 정보가 없습니다');
+  assert.equal(I.emptyText({ hasEvents: true, sources: S('ok') }).title, '선택한 조건에 맞는 정보가 없습니다');
 });

@@ -28,35 +28,34 @@ export const AMBIGUOUS = new Set(['ONE', 'AI', 'IN', 'US', 'IT', 'ON', 'UP', 'GO
 // 코인이 아닌 약어 (사전에 있어도 무시)
 export const NOT_COINS = new Set(['ETF', 'SEC', 'USD', 'USA', 'CEO', 'CFO', 'FBI', 'DOJ', 'IPO', 'NFT', 'DEX', 'CEX', 'FUD', 'ATH', 'API', 'KRW', 'EUR', 'GBP', 'JPY', 'CFTC', 'IRS', 'FED', 'FOMC', 'CPI', 'GDP', 'AMA', 'KYC', 'AML', 'DAO', 'TVL', 'APY', 'APR', 'OI', 'UTC', 'KST', 'PR', 'AND', 'THE', 'ETFS', 'DEFI', 'WEB3', 'AIRDROP']);
 
-const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const words = (s) => s.toLowerCase().match(/[a-z0-9]+/g) || [];
 const isKorean = (s) => /[ㄱ-힝]/.test(s);
 
 // 거래소 마켓 목록으로 사전을 만듭니다. markets: [{ market:'KRW-SOL', korean_name, english_name }]
 export function buildDictionary(markets = []) {
   const tickers = new Set(Object.keys(CORE));
-  const names = new Map(); // 소문자 이름 → 심볼 (영문 이름)
+  const names = new Map(); // 정규화한 영문 이름(소문자 단어를 공백으로 연결) → 심볼
   const ko = new Map(); // 한글 이름 → 심볼
-  for (const [sym, list] of Object.entries(CORE)) {
-    for (const n of list) (isKorean(n) ? ko : names).set(isKorean(n) ? n : n.toLowerCase(), sym);
-  }
+  let maxWords = 1;
+  let maxKo = 2;
+  const addName = (n, sym) => {
+    if (isKorean(n)) { ko.set(n, sym); maxKo = Math.max(maxKo, n.length); return; }
+    const key = words(n).join(' ');
+    if (!key) return;
+    names.set(key, sym);
+    maxWords = Math.max(maxWords, key.split(' ').length);
+  };
+  for (const [sym, list] of Object.entries(CORE)) for (const n of list) addName(n, sym);
   for (const m of Array.isArray(markets) ? markets : []) {
     const sym = m && typeof m.market === 'string' ? m.market.split('-')[1] : null;
     if (!sym || !/^[A-Z0-9]{2,10}$/.test(sym)) continue;
     tickers.add(sym);
     const en = m.english_name;
-    if (typeof en === 'string' && /^[A-Za-z][A-Za-z0-9 .-]{4,30}$/.test(en) && !names.has(en.toLowerCase()) && !AMBIGUOUS.has(en.toUpperCase())) names.set(en.toLowerCase(), sym);
+    if (typeof en === 'string' && /^[A-Za-z][A-Za-z0-9 .-]{4,30}$/.test(en) && !names.has(words(en).join(' ')) && !AMBIGUOUS.has(en.toUpperCase())) addName(en, sym);
     const kn = m.korean_name;
-    if (typeof kn === 'string' && kn.length >= 2 && kn.length <= 12 && !ko.has(kn) && !/[A-Za-z0-9\s]/.test(kn)) ko.set(kn, sym);
+    if (typeof kn === 'string' && kn.length >= 2 && kn.length <= 12 && !ko.has(kn) && !/[A-Za-z0-9\s]/.test(kn)) addName(kn, sym);
   }
-  return { tickers, names, ko };
-}
-
-function nameRegex(dict) {
-  if (dict._re === undefined) {
-    const names = [...dict.names.keys()].sort((a, b) => b.length - a.length);
-    dict._re = names.length ? new RegExp(`(?<![a-z0-9])(${names.map(escRe).join('|')})(?![a-z0-9])`, 'g') : null;
-  }
-  return dict._re;
+  return { tickers, names, ko, maxWords: Math.min(maxWords, 4), maxKo: Math.min(maxKo, 12) };
 }
 
 let defaultDict = null;
@@ -88,14 +87,32 @@ export function detectSymbols(title, dict = getDefault()) {
   for (const m of title.matchAll(/(?<![A-Za-z0-9])([A-Z0-9]{2,10})(USDT|USDC)(?![A-Za-z0-9])/g)) {
     if (dict.tickers.has(m[1]) && !NOT_COINS.has(m[1])) add(m[1], m.index);
   }
-  // 3) 영문 이름 (단어 경계, 대소문자 무시). 이름 전체를 하나의 정규식으로 미리 만들어 CPU 를 아낍니다.
-  const lower = title.toLowerCase();
-  const re = nameRegex(dict);
-  if (re) for (const m of lower.matchAll(re)) add(dict.names.get(m[1]), m.index + m[0].indexOf(m[1]));
-  // 4) 한글 이름 (조사가 붙으므로 부분 문자열 허용, 2자 이상)
-  for (const [name, sym] of dict.ko) {
-    const i = title.indexOf(name);
-    if (i >= 0) add(sym, i);
+  // 3) 영문 이름: 소문자 단어를 1~4개씩 묶어 Map 조회 (단어 경계 보장, 큰 정규식 없이 CPU 를 아낌 — 무료 플랜 CPU 10ms)
+  if (dict.names.size) {
+    const list = [];
+    for (const m of title.toLowerCase().matchAll(/[a-z0-9]+/g)) list.push(m);
+    for (let i = 0; i < list.length; i += 1) {
+      let phrase = '';
+      for (let n = 0; n < dict.maxWords && i + n < list.length; n += 1) {
+        phrase += (n ? ' ' : '') + list[i + n][0];
+        // 단어 사이가 공백/하이픈뿐일 때만 한 이름으로 봄 ("Bitcoin, Cash" 같은 분리는 제외)
+        if (n && /[^\s.\-]/.test(title.slice(list[i + n - 1].index + list[i + n - 1][0].length, list[i + n].index))) break;
+        const sym = dict.names.get(phrase);
+        if (sym) add(sym, list[i].index);
+      }
+    }
+  }
+  // 4) 한글 이름: 한글이 연속된 구간에서 2~maxKo 글자 부분 문자열을 조회 (뒤에 조사가 붙어도 매칭)
+  if (dict.ko.size && /[\u3131-\uD79D]/.test(title)) {
+    for (const run of title.matchAll(/[\u3131-\uD79D]{2,}/g)) {
+      const t = run[0];
+      for (let i = 0; i < t.length - 1; i += 1) {
+        for (let len = 2; len <= dict.maxKo && i + len <= t.length; len += 1) {
+          const sym = dict.ko.get(t.slice(i, i + len));
+          if (sym) add(sym, run.index + i);
+        }
+      }
+    }
   }
   // "Bitcoin Cash" 가 있으면 단독 Bitcoin(BTC) 오탐 제거, "Ethereum Classic" 도 동일
   if (found.has('BCH') && !/\bBTC\b/.test(title)) found.delete('BTC');

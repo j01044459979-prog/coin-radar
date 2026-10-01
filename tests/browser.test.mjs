@@ -118,7 +118,10 @@ function intelEvents(now) {
     { ...base, id: 5, title: 'Fed holds rates steady', url: 'https://cointelegraph.com/news/fed', category: 'general', symbols: [], importance: 20, verification: 'news', source: 'cointelegraph', source_type: 'news', sources: ['cointelegraph'], published_at: now - 5 * 3600000, event_time: now - 5 * 3600000, first_seen_at: now - 5 * 3600000 },
   ];
 }
-function intelStatus(now) {
+function intelStatus(now, mode = 'ok') {
+  const mk = (id, label, status, last, err) => ({ id, label, type: 'x', status, last_success_at: last, last_error: err || null });
+  if (mode === 'pending') return { status: 'degraded', now, diagnostics: { code: 'cron_not_seen', hint: '정보 수집 Cron 실행 기록이 없습니다' }, sources: ['Binance 공지', 'Upbit 공지', 'BlockMedia', 'CoinDesk', 'Cointelegraph'].map((l, i) => mk('s' + i, l, 'pending', null)) };
+  if (mode === 'errors') return { status: 'degraded', now, diagnostics: { code: 'error', hint: '마지막 collector 실행에 오류가 있었습니다' }, sources: [mk('binance', 'Binance 공지', 'error', null, 'HTTP 451'), mk('upbit', 'Upbit 공지', 'ok', now - 60000), mk('coindesk', 'CoinDesk', 'error', now - 30 * 60000, 'HTTP 503'), mk('blockmedia', 'BlockMedia', 'pending', null)] };
   return { status: 'ok', now, sources: [
     { id: 'binance', label: 'Binance 공지', type: 'official', status: 'ok', last_success_at: now - 2 * 60000 },
     { id: 'upbit', label: 'Upbit 공지', type: 'official', status: 'ok', last_success_at: now - 60000 },
@@ -159,7 +162,8 @@ async function openPage({ upbitFail = false, viewport, initScript, wsMessages, k
     if (path.endsWith('/status')) intelCalls.status += 1;
     else intelCalls.events += 1;
     if (intel === 'fail') return r.fulfill({ status: 503, body: 'x', headers: cors });
-    return r.fulfill({ json: path.endsWith('/status') ? intelStatus(Date.now()) : { status: 'ok', count: 0, events: intel === 'empty' ? [] : intelEvents(Date.now()) }, headers: cors });
+    const noEvents = intel === 'empty' || intel === 'pending' || intel === 'errors';
+    return r.fulfill({ json: path.endsWith('/status') ? intelStatus(Date.now(), intel) : { status: 'ok', count: 0, events: noEvents ? [] : intelEvents(Date.now()) }, headers: cors });
   });
   await page.goto(base);
   return { page, errors, sockets, futCalls, intelCalls };
@@ -572,8 +576,8 @@ test('뉴스 탭: 활성화(준비 중 아님), 이동·선택 표시, 카드·�
   assert.match(await page.textContent('#intelList .icard[data-event="4"]'), /게시 시간 미확인 · 수집 3시간 전/);
   assert.match(await page.textContent('#intelSources'), /Binance 공지 정상 · 2분 전/);
   assert.match(await page.textContent('#intelSources'), /CoinDesk 지연 · 17분 전/);
-  assert.match(await page.textContent('#intelSources'), /BlockMedia 수집 전/);
-  assert.match(await page.textContent('#intelStatus'), /일부 지연/);
+  assert.match(await page.textContent('#intelSources'), /BlockMedia 수집 준비 중/);
+  assert.match(await page.textContent('#intelStatus'), /일부 출처 수집 오류 \(1개\)/);
   assert.match(await page.textContent('#newsEvent'), /5건/);
   assert.deepEqual(errors, []);
   await page.close();
@@ -691,6 +695,37 @@ test('모바일 뉴스 탭: 카드 표시, 가로 스크롤 없음, 탭 고정',
   const linkH = await page.$eval('#intelList .ilink', (n) => n.getBoundingClientRect().height);
   assert.ok(linkH >= 34, `원문 링크 터치 영역 ${linkH}`);
   if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.SCREENSHOT_DIR, 'mobile-intel.png') });
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('첫 수집 전(모든 출처 pending): "수집 준비 중" 표시, "정보 정상"/"연결 실패" 아님', async () => {
+  const { page, errors } = await openPage({ intel: 'pending' });
+  await page.waitForFunction(() => document.getElementById('intelStatus').textContent.includes('수집 준비 중'));
+  assert.doesNotMatch(await page.textContent('#intelStatus'), /정보 정상|연결 실패/);
+  await page.waitForFunction(() => document.getElementById('intelSources').textContent.includes('수집 준비 중'));
+  assert.equal(await page.locator('#intelSources .pending').count(), 5);
+  assert.match(await page.textContent('#intelList'), /수집 준비 중/);
+  assert.doesNotMatch(await page.textContent('#intelList'), /연결하지 못했습니다/);
+  assert.match(await page.textContent('#intelInfo'), /0건/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test('일부 출처 수집 오류: 해당 출처만 "수집 오류"로 표시, 서버 연결 실패 아님', async () => {
+  const { page, errors } = await openPage({ intel: 'errors' });
+  await page.waitForFunction(() => document.getElementById('intelSources').textContent.includes('수집 오류'));
+  assert.match(await page.textContent('#intelStatus'), /일부 출처 수집 오류 \(2개\)/);
+  assert.doesNotMatch(await page.textContent('#intelStatus'), /연결 실패/);
+  const src = await page.textContent('#intelSources');
+  assert.match(src, /Binance 공지 수집 오류 · 아직 성공 기록 없음/);
+  assert.match(src, /CoinDesk 수집 오류 · 마지막 성공 30분 전/);
+  assert.match(src, /Upbit 공지 정상/);
+  assert.match(src, /BlockMedia 수집 준비 중/);
+  assert.equal(await page.locator('#intelSources .error').count(), 2);
+  assert.equal(await page.getAttribute('#intelSources .error >> nth=0', 'title'), 'HTTP 451');
+  assert.match(await page.textContent('#intelList'), /수집 오류가 있습니다/);
+  assert.match(await page.textContent('#intelSources'), /진단: 마지막 collector 실행에 오류/);
   assert.deepEqual(errors, []);
   await page.close();
 });

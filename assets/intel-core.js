@@ -141,14 +141,41 @@
   }
 
   // 출처 상태 한 줄: "Binance 공지 정상 · 2분 전"
-  const HEALTH_LABEL = { ok: '정상', delayed: '지연', pending: '수집 전' };
+  // pending: 아직 한 번도 시도 안 함(첫 수집 준비 중) · error: 그 출처만 수집 오류 · delayed: 성공 기록이 오래됨
+  const HEALTH_LABEL = { ok: '정상', delayed: '지연', pending: '수집 준비 중', error: '수집 오류' };
   function healthText(s, now) {
-    const st = HEALTH_LABEL[s.status] || '수집 전';
-    const t = s.status === 'pending' || !s.last_success_at ? '' : ` · ${relTime(s.last_success_at, now)}`;
-    return `${s.label} ${st}${t}`;
+    const st = HEALTH_LABEL[s.status] || HEALTH_LABEL.pending;
+    if (s.status === 'pending') return `${s.label} ${st}`;
+    if (s.status === 'error') return `${s.label} ${st}${s.last_success_at ? ` · 마지막 성공 ${relTime(s.last_success_at, now)}` : ' · 아직 성공 기록 없음'}`;
+    return `${s.label} ${st}${s.last_success_at ? ` · ${relTime(s.last_success_at, now)}` : ''}`;
   }
 
-  const api = { VERSION, API_BASE, esc, safeUrl, CATEGORY_LABEL, VERIFY_LABEL, KIND_LABEL, sourceName, relTime, kstTime, timeText, evTime, COINS, filterEvents, rankTop, reactionRows, reactionHtml, cardHtml, miniHtml, healthText };
+  // 정보 영역 전체 상태 (Worker API 자체 실패와 출처별 상태를 구분)
+  //  apiFailed: events API 호출 실패 → '정보 서버 연결 실패' (이때만)
+  //  sources 가 모두 pending → '수집 준비 중', 일부 error/delayed → 그 출처만 표시
+  function overallStatus(o) {
+    if (o.apiFailed && !o.hasData) return { level: 'err', text: '정보 서버 연결 실패' };
+    if (o.apiFailed) return { level: 'warn', text: '정보 갱신 지연' };
+    if (!o.loaded) return { level: 'warn', text: '정보 연결 중' };
+    if (o.degraded) return { level: 'warn', text: '정보 저장소(D1) 미연결' };
+    const src = o.sources || [];
+    if (src.length && src.every((s) => s.status === 'pending')) return { level: 'warn', text: '수집 준비 중' };
+    const bad = src.filter((s) => s.status === 'error' || s.status === 'delayed');
+    if (bad.length && src.every((s) => s.status === 'error' || s.status === 'delayed' || s.status === 'pending') && !src.some((s) => s.status === 'ok')) return { level: 'err', text: '모든 출처 수집 오류' };
+    if (bad.length) return { level: 'warn', text: `일부 출처 수집 오류 (${bad.length}개)` };
+    return { level: 'ok', text: '정보 정상' };
+  }
+
+  // 목록이 비었을 때의 안내
+  function emptyText(o) {
+    if (o.hasEvents) return { title: '선택한 조건에 맞는 정보가 없습니다', sub: '필터를 바꿔 보세요.' };
+    const src = o.sources || [];
+    if (src.length && src.every((s) => s.status === 'pending')) return { title: '수집 준비 중', sub: 'Worker 의 첫 수집을 기다리고 있습니다 (보통 몇 분 안에 시작됩니다).' };
+    if (src.some((s) => s.status === 'error')) return { title: '아직 수집된 정보가 없습니다', sub: '일부 출처에서 수집 오류가 있습니다. 아래 출처 상태를 확인하세요.' };
+    return { title: '아직 수집된 정보가 없습니다', sub: 'Worker 가 공식 공지·뉴스를 수집하면 여기에 표시됩니다.' };
+  }
+
+  const api = { VERSION, API_BASE, esc, safeUrl, CATEGORY_LABEL, VERIFY_LABEL, KIND_LABEL, sourceName, relTime, kstTime, timeText, evTime, COINS, filterEvents, rankTop, reactionRows, reactionHtml, cardHtml, miniHtml, healthText, overallStatus, emptyText };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.IntelCore = api;
 })(typeof window !== 'undefined' ? window : globalThis);

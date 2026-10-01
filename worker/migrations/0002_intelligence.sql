@@ -1,6 +1,6 @@
 -- COIN RADAR Phase 6A: Crypto Intelligence D1 스키마 (참고용)
 -- Worker 가 처음 실행될 때 같은 SQL(CREATE TABLE IF NOT EXISTS)을 자동으로 실행하므로 직접 실행하지 않아도 됩니다.
--- 모든 시각은 epoch milliseconds(UTC) 입니다. 소스 of truth: worker/src/intel/store.js 의 INTEL_SCHEMA
+-- 모든 시각은 epoch milliseconds(UTC) 입니다. 원본: worker/src/intel/store.js 의 INTEL_SCHEMA
 
 CREATE TABLE IF NOT EXISTS intelligence_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS event_market_snapshots (
     change_5m REAL,
     change_15m REAL,
     PRIMARY KEY (cluster_id, symbol)
+  );
+
+CREATE TABLE IF NOT EXISTS intel_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
   );
 
 CREATE TABLE IF NOT EXISTS source_health (

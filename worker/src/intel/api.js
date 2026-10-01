@@ -3,6 +3,7 @@ import { json } from '../response.js';
 import * as store from './store.js';
 import { SOURCES, enabledSources, healthView } from './sources.js';
 import { safeUrl } from './text.js';
+import { diagnostics } from './diag.js';
 
 export const LIMITS = { default: 20, max: 50 };
 const CORS = { 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=20' }; // 공개 읽기 전용 데이터
@@ -64,7 +65,13 @@ export async function handleIntelligence(path, url, env, now) {
     const sources = enabledSources(env).map((s) => ({ id: s.id, label: s.label, type: s.type, interval_seconds: s.intervalMs / 1000, ...healthView(s, health.get(s.id), now) }));
     const disabled = SOURCES.filter((s) => !sources.some((x) => x.id === s.id)).map((s) => s.id);
     const last = Math.max(0, ...sources.map((s) => s.last_attempt_at || 0));
-    return json({ status: sources.some((s) => s.status === 'ok') ? 'ok' : 'degraded', now, last_run_at: last || null, sources, disabled, retention_days: { items: store.RETENTION.itemsDays, clusters: store.RETENTION.clustersDays } }, 200, CORS);
+    let diag = null;
+    try {
+      diag = await diagnostics(db, now);
+    } catch (err) {
+      diag = { code: 'unknown', hint: '진단 정보를 읽지 못했습니다: ' + String((err && err.message) || err).slice(0, 100) };
+    }
+    return json({ status: sources.some((s) => s.status === 'ok') ? 'ok' : 'degraded', now, last_run_at: last || null, diagnostics: diag, sources, disabled, retention_days: { items: store.RETENTION.itemsDays, clusters: store.RETENTION.clustersDays } }, 200, CORS);
   }
 
   const q = parseQuery(url.searchParams);
