@@ -2435,7 +2435,12 @@ function saveActivation(){
           .innerHTML='';
 
         toast(
-          '개통 저장 완료'
+          r&&
+          r.tidy&&
+          !r.tidy.sorted&&
+          r.tidy.skipped
+            ?'개통 저장 완료 (날짜 정렬 보류: '+r.tidy.skipped+')'
+            :'개통 저장 완료'
         );
 
         loadData(mk);

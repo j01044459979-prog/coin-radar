@@ -3890,9 +3890,52 @@ function saveActivationText(text){
     );
 
     /*
-     * C No. = 개통 데이터(E/F)가 있는 행만 1부터 연속 부여
+     * 저장 직후 해당 월 장표 정리
+     * 개통일 오름차순 정렬(행 전체 이동) → 빈 행 제외 → No. 1부터 연속
+     * 안전 확인으로 정렬이 보류되면 No.만 정리
      */
-    renumberCaseNo_(sh);
+    SpreadsheetApp.flush();
+
+    var tidy=
+      tidyCaseSheet_(
+        sh,
+        row
+      );
+
+    if(!tidy.sorted){
+      renumberCaseNo_(sh);
+    }
+
+    /*
+     * 정렬로 행이 이동했으므로 CTN으로 저장 행 다시 확인
+     */
+    var lastRowNow=
+      sh.getLastRow();
+
+    var fNow=
+      sh.getRange(
+        10,
+        6,
+        Math.max(lastRowNow-9,1),
+        1
+      )
+      .getValues();
+
+    for(
+      var k=0;
+      k<fNow.length;
+      k++
+    ){
+
+      if(
+        phone(fNow[k][0])===
+        x.phone
+      ){
+
+        row=10+k;
+        break;
+      }
+    }
 
     var no=
       Number(
@@ -3917,6 +3960,9 @@ function saveActivationText(text){
       no:
         no,
 
+      tidy:
+        tidy,
+
       data:
         x
     };
@@ -3933,7 +3979,8 @@ function saveActivationText(text){
    - No.(C열)는 표시용 순번. 개통건 식별은 개통월+CTN 사용
    - 개통 데이터(E 고객 또는 F CTN)가 있는 행만 1부터 연속 번호
    - 정렬은 행 전체를 이동(moveRows)하므로 한 행의 데이터는 항상 함께 이동
-   - 정렬은 메뉴 실행 / 야간 자동 실행에서만 수행 (입력 중 행 이동 방지)
+   - 정렬은 웹앱 개통 저장 직후 / 장표 메뉴 실행 시 수행
+     (장표 직접 입력 중 onEdit 에서는 행을 이동하지 않음)
 ========================================================= */
 
 function isCaseMonthSheet_(sh){
@@ -4191,11 +4238,14 @@ function sh_a1_(row,col){
 
 /*
  * 개통일 오름차순 정렬 + No. 재부여
- * - 같은 날짜는 기존 순서 유지 (안정 정렬)
+ * - 같은 날짜는 기존 순서 유지 (안정 정렬), 방금 저장한 행은 같은 날짜 중 맨 뒤
  * - 개통일 없는 데이터 행은 날짜 있는 행 뒤, 빈 행은 맨 뒤
  * - 안전 확인 실패 시 아무것도 바꾸지 않고 사유 반환
  */
-function tidyCaseSheet_(sh){
+function tidyCaseSheet_(
+  sh,
+  newRow
+){
 
   var result={
     sheet:sh.getName(),
@@ -4301,6 +4351,10 @@ function tidyCaseSheet_(sh){
 
           return{
             id:i,
+            tie:
+              10+i===newRow
+                ?Infinity
+                :i,
             group:
               !data
                 ?2
@@ -4334,6 +4388,10 @@ function tidyCaseSheet_(sh){
             a.date!==b.date
           ){
             return a.date<b.date?-1:1;
+          }
+
+          if(a.tie!==b.tie){
+            return a.tie<b.tie?-1:1;
           }
 
           return a.id-b.id;
@@ -4416,7 +4474,7 @@ function tidyCaseSheetLocked_(sh){
 }
 
 /*
- * 야간 자동 실행용 (트리거에서 호출)
+ * (선택) 야간 자동 실행용 - 현재 트리거 미등록
  * 최근 2개 월 시트만 정리
  */
 function tidyRecentMonthSheets(){
