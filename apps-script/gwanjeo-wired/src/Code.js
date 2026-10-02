@@ -1804,20 +1804,25 @@ function computeManualStats_(manual, list, workers) {
 
 /*
  * 9월 이후 기존 장표 건에 판매자 값 붙이기 (헤더명 정확 일치: 판매자/직원명/담당자, 1개 열일 때만)
+ * 동판유형(참고 표시용, 헤더명 '동판유형' 1개 열일 때만)도 셀 표시값 그대로 붙임 - 실적 계산에는 사용 안 함
  */
 function attachLegacySellers_(ss, month, legacyList) {
   const sh = findLegacySheet_(ss, month);
   if (!sh || sh === 'MULTI') return;
   const parts = legacyStatHeaderParts_(sh);
   if (!parts) return;
-  const hits = [];
-  parts.forEach((ps, i) => { if (ps.some(t => ['판매자', '직원명', '담당자'].indexOf(t) >= 0)) hits.push(i + 1); });
-  if (hits.length !== 1) return;
   const rows = legacyList.map(r => r.row);
   const first = Math.min.apply(null, rows);
   const last = Math.max.apply(null, rows);
-  const vals = sh.getRange(first, hits[0], last - first + 1, 1).getDisplayValues();
-  legacyList.forEach(r => { r.worker = str_(vals[r.row - first][0]); });
+  const attach = (names, field) => {
+    const hits = [];
+    parts.forEach((ps, i) => { if (ps.some(t => names.indexOf(t) >= 0)) hits.push(i + 1); });
+    if (hits.length !== 1) return;
+    const vals = sh.getRange(first, hits[0], last - first + 1, 1).getDisplayValues();
+    legacyList.forEach(r => { r[field] = str_(vals[r.row - first][0]); });
+  };
+  attach(['판매자', '직원명', '담당자'], 'worker');
+  attach(['동판유형'], 'lineType');
 }
 
 function ensureManualSheet_(ss) {

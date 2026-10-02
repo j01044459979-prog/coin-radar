@@ -318,6 +318,8 @@ function renderManualCards(el, list){
         <div class="v">${esc(r.gift || '-')}</div>
         <div class="k">고객혜택 발송번호</div>
         <div class="v">${esc(r.giftPhone || '-')}</div>
+        <div class="k">동판유형</div>
+        <div class="v">${esc(r.lineType || '-')}</div>
         <span hidden data-source="${esc(r.source)}"></span>
       </button>
       <div class="mdetail" id="md-${esc(k)}" ${OPEN_KEY === k ? '' : 'hidden'}></div>
