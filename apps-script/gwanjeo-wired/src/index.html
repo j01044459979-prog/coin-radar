@@ -126,6 +126,8 @@ tfoot td{background:#f8fafc;border-top:2px solid #d1d5db;border-bottom:0;font-we
     <details class="legacy" id="legacyBox">
       <summary>기존 장표 연동 상태</summary>
       <div id="legacyStatus"></div>
+      <button type="button" class="check" id="statsDiagBtn" onclick="checkStatsDiag()">실적 매핑 확인 (선택 월)</button>
+      <div id="statsDiag"></div>
       <button type="button" class="check" id="legacyAllBtn" onclick="checkAllLegacy()">전체 월 점검</button>
       <div id="legacyAll"></div>
     </details>
@@ -221,6 +223,8 @@ function load(month, silent){
 }
 
 function renderAll(){
+  const sd = document.getElementById('statsDiag');
+  if (sd) sd.innerHTML = '';
   renderList();
   renderStats();
 }
@@ -251,13 +255,13 @@ function renderList(){
     <div class="card">
       <div class="name">${esc(r.customerName || '-')}</div>
       <div class="acc">${esc(r.accessNo || '-')}</div>
-      <div class="k">지급사은품</div>
+      <div class="k">고객혜택</div>
       <div class="v">${esc(r.gift || '-')}</div>
-      <div class="k">사은품 수령번호</div>
+      <div class="k">사은품 발송번호</div>
       <div class="v">${esc(r.giftPhone || '-')}</div>
-      <div class="meta" data-source="${esc(r.source)}">${r.source === 'legacy'
-        ? '기존 장표 · ' + esc(r.sheet) + ' ' + esc(r.row) + '행'
-        : esc(r.worker) + ' · ' + esc(r.lineType) + ' · ' + esc(String(r.createdAt).slice(5, 16))}</div>
+      ${r.source === 'legacy'
+        ? `<span hidden data-source="legacy" data-origin="${esc(r.sheet)} ${esc(r.row)}행"></span>`
+        : `<div class="meta" data-source="webapp">${esc(r.worker)} · ${esc(r.lineType)} · ${esc(String(r.createdAt).slice(5, 16))}</div>`}
     </div>
   `).join('');
   renderLegacyStatus();
@@ -271,6 +275,37 @@ function legacyHtml(x){
     ${x.ok ? ' · 읽은 개통건 <b>' + (x.read != null ? x.read : x.count) + '건</b>' + (x.shown != null ? ' (중복 제외 표시 ' + x.shown + '건)' : '') : ''}
     ${x.ok ? '<br>' + map : '<br><span class="bad">연결 안 함: ' + esc(x.reason) + '</span>'}
     ${x.sample ? '<br><span style="color:#6b7280">첫 개통건 원본 확인: ' + esc(x.sample) + '</span>' : ''}</div>`;
+}
+
+function statsDiagHtml(d){
+  if (!d) return '';
+  if (!d.ok) return `<div class="lg"><b>[실적 매핑 확인] ${esc(d.sheet || monthLabel(d.month))}</b><br><span class="bad">${esc(d.reason)}</span></div>`;
+  const block = (title, list) => list.length
+    ? list.map(c => `${title}: <b>${esc(c.header)}</b> (${esc(c.col)}열)<br>
+        <span style="color:#6b7280">발견된 값: ${c.values.map(v => esc(v.value) + ' ' + v.count + '건').join(' · ')}</span>`).join('<br>')
+    : `${title}: <span class="bad">후보 없음</span>`;
+  return `<div class="lg"><b>[실적 매핑 확인] ${esc(d.sheet)}</b> · 개통건 ${d.rows}건<br>
+    ${block('담당자 헤더', d.staff)}<br>
+    ${block('실적유형 후보 헤더', d.types)}
+    <br><span style="color:#9ca3af">※ 분류규칙 확정 전이라 실적사항에는 아직 반영하지 않습니다.</span></div>`;
+}
+
+function checkStatsDiag(){
+  const btn = document.getElementById('statsDiagBtn');
+  btn.disabled = true;
+  btn.textContent = '확인 중...';
+  google.script.run
+    .withSuccessHandler(d => {
+      btn.disabled = false;
+      btn.textContent = '실적 매핑 확인 (선택 월)';
+      document.getElementById('statsDiag').innerHTML = statsDiagHtml(d);
+    })
+    .withFailureHandler(err => {
+      btn.disabled = false;
+      btn.textContent = '실적 매핑 확인 (선택 월)';
+      toast(err && err.message ? err.message : '확인 실패');
+    })
+    .getLegacyStatsDiag(MONTH);
 }
 
 function renderLegacyStatus(){
@@ -287,7 +322,7 @@ function checkAllLegacy(){
       btn.disabled = false;
       btn.textContent = '전체 월 점검';
       document.getElementById('legacyAll').innerHTML = list.length
-        ? list.map(legacyHtml).join('')
+        ? list.map(x => legacyHtml(x) + statsDiagHtml(x.stats)).join('')
         : '<div class="lg">기존 월별 장표가 없습니다.</div>';
     })
     .withFailureHandler(err => {

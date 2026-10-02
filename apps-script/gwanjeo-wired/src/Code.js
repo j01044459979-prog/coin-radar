@@ -691,8 +691,8 @@ function saveReportText(x) {
 const LEGACY_FIELDS = [
   { key: 'customerName', title: '고객명' },
   { key: 'accessNo',     title: '접속번호' },
-  { key: 'gift',         title: '지급사은품' },
-  { key: 'giftPhone',    title: '사은품수령번호' }
+  { key: 'gift',         title: '고객혜택' },
+  { key: 'giftPhone',    title: '사은품발송번호' }
 ];
 
 const LEGACY_MAP_HEADERS = [
@@ -1112,7 +1112,108 @@ function getLegacyStatus() {
     .sort((a, b) => a.month.localeCompare(b.month))
     .map(x => {
       const r = readLegacyMonth_(ss, x.month, true);
-      return { month: x.month, sheet: r.sheet, ok: r.ok, status: r.status, reason: r.reason, mapping: r.mapping, count: r.rows.length, sample: r.sample };
+      return {
+        month: x.month, sheet: r.sheet, ok: r.ok, status: r.status, reason: r.reason,
+        mapping: r.mapping, count: r.rows.length, sample: r.sample,
+        stats: diagnoseLegacyStats_(ss, x.month)
+      };
     });
+}
+
+
+/*******************************************************
+ * 실적 매핑 확인 (진단 전용, 읽기 전용)
+ * - 선택한 월의 기존 장표 1개만 읽음
+ * - 담당 직원 / 실적유형 후보 헤더와 실제 값·건수를 보여줌
+ * - 분류규칙은 아직 확정 전이므로 실적사항 집계에는 반영하지 않음
+ *******************************************************/
+const STAT_STAFF_RE = /(직원|담당|작업자|판매자|개통자|영업자)/;
+const STAT_TYPE_RE = /(유형|구분|실적|상품|가입|동판|요금제|순신규|신동|약갱)/;
+const STAT_EXCLUDE_RE = /(번호|연락처|핸드폰|휴대폰|고객명|명의자|사은품|고객혜택|발송|수령|금액|예산|합계|비고|메모)/;
+
+/*
+ * 헤더 영역 분석: '접속번호' 행 기준 위 1행 + 해당 행 + (하위 제목이면) 아래 1행
+ */
+function legacyHeaderColumns_(sh, dataStart) {
+  const lastCol = sh.getLastColumn();
+  const scan = Math.min(LEGACY_HEADER_SCAN_ROWS, Math.max(dataStart - 1, 1), sh.getLastRow());
+  const head = sh.getRange(1, 1, scan, lastCol).getDisplayValues();
+  let hr = -1;
+  for (let r = 0; r < head.length && hr < 0; r++) {
+    if (head[r].some(v => LEGACY_MATCHERS.accessNo(normHeader_(v)))) hr = r;
+  }
+  if (hr < 0) return [];
+  const rows = [hr - 1, hr, hr + 1].filter(r => r >= 0 && r < head.length);
+  const cols = [];
+  for (let c = 0; c < lastCol; c++) {
+    const parts = rows.map(r => normHeader_(head[r][c])).filter(Boolean);
+    if (parts.length) cols.push({ col: c + 1, parts: parts, text: parts.join(' / ') });
+  }
+  return cols;
+}
+
+function valueCounts_(sh, col, start, keepRows) {
+  const vals = sh.getRange(start, col, keepRows.length ? keepRows[keepRows.length - 1] - start + 1 : 1, 1).getDisplayValues();
+  const counts = {};
+  keepRows.forEach(r => {
+    const v = str_(vals[r - start][0]) || '(빈칸)';
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  return Object.keys(counts)
+    .map(k => ({ value: k, count: counts[k] }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, 'ko'))
+    .slice(0, 30);
+}
+
+function diagnoseLegacyStats_(ss, month) {
+  const sh = findLegacySheet_(ss, month);
+  if (!sh || sh === 'MULTI') {
+    return { month: month, sheet: '', ok: false, reason: sh ? '같은 달 시트가 여러 개' : '기존 장표 없음' };
+  }
+  const map = resolveLegacyMapping_(ss, sh, false);
+  if (!map.ok) {
+    return { month: month, sheet: str_(sh.getName()), ok: false, reason: '개통리스트 매핑 미확정: ' + map.reason };
+  }
+
+  // 개통건 행 = 접속번호 칸에 숫자 8자리 이상 (개통리스트와 동일 기준)
+  const lastRow = sh.getLastRow();
+  const start = map.dataStart;
+  const keepRows = [];
+  if (lastRow >= start) {
+    sh.getRange(start, map.cols.accessNo, lastRow - start + 1, 1).getDisplayValues().forEach((r, i) => {
+      if (digits_(r[0]).length >= 8) keepRows.push(start + i);
+    });
+  }
+
+  const used = {};
+  LEGACY_FIELDS.forEach(f => { used[map.cols[f.key]] = true; });
+  const cols = legacyHeaderColumns_(sh, start).filter(c => !used[c.col]);
+
+  const staff = cols
+    .filter(c => c.parts.some(t => STAT_STAFF_RE.test(t) && !/(번호|연락처)/.test(t)))
+    .map(c => ({ col: colLetter_(c.col), header: c.text, values: valueCounts_(sh, c.col, start, keepRows) }));
+
+  const types = cols
+    .filter(c => !c.parts.some(t => STAT_STAFF_RE.test(t)))
+    .filter(c => c.parts.some(t => STAT_TYPE_RE.test(t) && !STAT_EXCLUDE_RE.test(t)))
+    .map(c => ({ col: colLetter_(c.col), header: c.text, values: valueCounts_(sh, c.col, start, keepRows) }));
+
+  return {
+    month: month,
+    sheet: str_(sh.getName()),
+    ok: true,
+    rows: keepRows.length,
+    staff: staff,
+    types: types,
+    reason: (!staff.length ? '담당 직원 헤더 후보를 찾지 못함. ' : '') + (!types.length ? '실적유형 헤더 후보를 찾지 못함.' : '')
+  };
+}
+
+/*
+ * [실적 매핑 확인] 버튼: 선택한 월만
+ */
+function getLegacyStatsDiag(month) {
+  if (!validMonth_(month)) throw new Error('적용월을 확인해주세요.');
+  return diagnoseLegacyStats_(ss_(), str_(month));
 }
 
