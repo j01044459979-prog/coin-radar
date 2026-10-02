@@ -24,7 +24,9 @@ const RISK_HEADERS=[
 ];
 
 function doGet(){
-  return HtmlService.createHtmlOutputFromFile('index')
+  // 템플릿: 추지 기기값 해석 함수(deviceAmount_)를 화면에도 같은 소스로 내려줌
+  return HtmlService.createTemplateFromFile('index')
+  .evaluate()
   .setTitle('관저중로점 무선 실적')
   .addMetaTag(
     'viewport',
@@ -181,6 +183,45 @@ function policyAmount(v){
       ?n*10000
       :n
   );
+}
+
+/*
+ * (추지)기기값 금액 해석 (직원 개통보고 · 점장 개통등록 공통, 화면 미리보기에도 같은 소스 사용)
+ * - 빈값 / 0 / 없음 / X / - → 0
+ * - '만', '만원' → 숫자 × 10,000
+ * - 원·쉼표·공백 제거 후 숫자만: 1,000 미만 → 만원 단위(× 10,000), 1,000 이상 → 원 단위 그대로
+ * - 소수 지원 (15.5 → 155,000), 그 외 문자열은 오류 (NaN 저장 방지)
+ */
+function deviceAmount_(v){
+
+  var s=String(v==null?'':v)
+    .replace(/[\s,₩]/g,'');
+
+  if(!s||/^(0+(\.0+)?원?|없음|X|-|–|—)$/i.test(s)){
+    return 0;
+  }
+
+  var man=/만원?$/.test(s);
+
+  s=s.replace(/만원?$|원$/,'');
+
+  if(!/^\d+(\.\d+)?$/.test(s)){
+    throw new Error('추지 기기값 확인 필요: '+v);
+  }
+
+  var n=Number(s);
+
+  if(man||n<1000){
+    n=n*10000;
+  }
+
+  n=Math.round(n);
+
+  if(!Number.isSafeInteger(n)){
+    throw new Error('추지 기기값 확인 필요: '+v);
+  }
+
+  return n;
 }
 
 function validDate(s){
@@ -3432,10 +3473,46 @@ function parseActivationText(text){
       /^정책처리내용\s*[:：]\s*(.*)$/i
     );
 
-  var device1=
-    valueOf(
-      /^ㄴ\s*\(추지\)기기값\s*[:：]\s*(.*)$/i
-    );
+  /*
+   * (추지)기기값: '정책처리내용' 줄 바로 아래 ㄴ 항목에서만 찾음
+   * (GB기기값·요금·고객혜택·중고폰 등 다른 줄 숫자와 섞지 않음)
+   */
+  var device1='';
+
+  for(
+    var pi=0;
+    pi<lines.length;
+    pi++
+  ){
+
+    if(
+      !/^정책처리내용\s*[:：]/
+      .test(lines[pi])
+    ){
+      continue;
+    }
+
+    for(
+      var pj=pi+1;
+      pj<lines.length&&
+      /^ㄴ/.test(lines[pj]);
+      pj++
+    ){
+
+      var dm1=
+        lines[pj].match(
+          /^ㄴ\s*\(\s*추지\s*\)\s*기기값\s*[:：]\s*(.*)$/i
+        );
+
+      if(dm1){
+        device1=
+          String(dm1[1]||'').trim();
+        break;
+      }
+    }
+
+    break;
+  }
 
   var device2=
     valueOf(
@@ -3696,8 +3773,8 @@ function parseActivationText(text){
       used,
 
     useDevice:
-      amount(
-        device1||0
+      deviceAmount_(
+        device1
       ),
 
     useGbDevice:
@@ -3730,17 +3807,26 @@ function parseActivationText(text){
 
 function saveActivationText(text){
 
+  return saveCaseRecord_(
+    parseActivationText(
+      text
+    )
+  );
+}
+
+
+/*
+ * 장표 저장 공통 (직원 개통보고 · 점장 개통등록 모두 이 함수로 저장)
+ * x = parseActivationText 결과
+ */
+function saveCaseRecord_(x){
+
   var lock=
     LockService.getScriptLock();
 
   lock.waitLock(30000);
 
   try{
-
-    var x=
-      parseActivationText(
-        text
-      );
 
     var ss=
       SpreadsheetApp.openById(
@@ -3782,6 +3868,24 @@ function saveActivationText(text){
         ' 장표 헤더가 예상과 다릅니다. 저장하지 않았습니다. ('+
         headerProblems.join(', ')+
         ')'
+      );
+    }
+
+    /*
+     * (추지)기기값 → AA열 (7행 '고객혜택사용' 아래 8행 '(추지)기기값')
+     * 헤더가 다르면 추측하지 않고 저장 중단
+     */
+    if(
+      x.useDevice>0&&
+      sh.getRange(1,27,9,1)
+      .getDisplayValues()
+      .map(function(r){return norm(r[0]);})
+      .indexOf(norm('(추지)기기값'))<0
+    ){
+
+      throw new Error(
+        target.title+
+        ' AA열 헤더가 (추지)기기값이 아닙니다. 저장하지 않았습니다.'
       );
     }
 
@@ -3984,6 +4088,38 @@ function saveActivationText(text){
     );
 
     /*
+     * (추지)기기값 → AA열 (사용금액 Z열 행 수식이 이 값을 합산)
+     * 0원/미입력은 쓰지 않음
+     */
+    var usedWarning='';
+
+    if(x.useDevice>0){
+
+      sh.getRange(
+        row,
+        27
+      )
+      .setValue(
+        x.useDevice
+      );
+
+      var zCell=
+        sh.getRange(
+          row,
+          26
+        );
+
+      if(
+        !zCell.getFormulas()[0][0]&&
+        zCell.getValue()===''
+      ){
+
+        usedWarning=
+          row+'행 Z열(총 사용금액) 수식이 없어 사용금액에 반영되지 않을 수 있습니다. 장표 확인 필요';
+      }
+    }
+
+    /*
      * 저장 직후 해당 월 장표 정리
      * 개통일 오름차순 정렬(행 전체 이동) → 빈 행 제외 → No. 1부터 연속
      * 안전 확인으로 정렬이 보류되면 No.만 정리
@@ -4057,6 +4193,9 @@ function saveActivationText(text){
       tidy:
         tidy,
 
+      usedWarning:
+        usedWarning,
+
       data:
         x
     };
@@ -4065,6 +4204,73 @@ function saveActivationText(text){
 
     lock.releaseLock();
   }
+}
+
+
+/* =========================================================
+   점장 개통등록 (전명석 고정)
+   입력값 → 직원 개통보고와 같은 형식의 글로 만들어
+   parseActivationText(같은 파싱·검증) → saveCaseRecord_(같은 저장)
+========================================================= */
+
+var MANAGER_NAME_='전명석';
+
+function managerReportText_(f){
+
+  f=f||{};
+
+  // 한 칸에 줄바꿈이 들어가 다른 항목처럼 읽히지 않도록 한 줄로
+  function one(v){
+    return String(v==null?'':v)
+      .replace(/[\r\n]+/g,' ')
+      .trim();
+  }
+
+  var card=one(f.card);
+
+  if(f.cardOn&&!card){
+    throw new Error('카드사를 입력해주세요.');
+  }
+
+  return[
+    one(f.date),
+    '개통자 : '+MANAGER_NAME_,
+    '고객명 : '+one(f.name),
+    '번호 : '+one(f.phone),
+    '모델명 : '+one(f.model),
+    '유형 : '+one(f.type),
+    '요금제 : '+one(f.plan),
+    '카드 : '+(f.cardOn?card:'X'),
+    '보험 : '+(f.insurance?'O':'X'),
+    '부가서비스 : '+(f.addon?'O':'X'),
+    '동판 : '+(f.wired?'O':'X'),
+    '정책처리내용 :',
+    'ㄴ(추지)기기값 : '+one(f.device)
+  ].join('\n');
+}
+
+/* 등록내용 확인: 시트에 쓰지 않음 */
+function previewManagerActivation(f){
+
+  var x=
+    parseActivationText(
+      managerReportText_(f)
+    );
+
+  x.text=
+    managerReportText_(f);
+
+  return x;
+}
+
+/* 장표 반영 */
+function saveManagerActivation(f){
+
+  return saveCaseRecord_(
+    parseActivationText(
+      managerReportText_(f)
+    )
+  );
 }
 
 
