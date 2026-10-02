@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="UTF-8">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#f3f4f6;color:#111827;
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+  -webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+.app{max-width:620px;margin:0 auto;min-height:100vh;padding-bottom:40px}
+
+/* 상단 */
+.top{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #e5e7eb;padding:14px 16px 0}
+.title{font-size:19px;font-weight:900;letter-spacing:-.3px}
+.month{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;margin:10px 0 12px}
+.month button{height:40px;border:1px solid #e5e7eb;background:#fff;border-radius:12px;font-size:16px;font-weight:900}
+.month .label{text-align:center;font-size:17px;font-weight:900}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr)}
+.tab{border:0;background:none;padding:11px 2px 12px;font-size:14px;font-weight:700;color:#9ca3af;border-bottom:3px solid transparent}
+.tab.active{color:#111827;border-bottom-color:#111827}
+
+.page{display:none;padding:14px 16px}
+.page.active{display:block}
+
+/* 개통리스트 */
+.search{width:100%;height:44px;border:1px solid #d1d5db;border-radius:12px;background:#fff;padding:0 14px;font-size:15px}
+.count{font-size:13px;color:#6b7280;margin:12px 2px 8px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;margin-bottom:10px}
+.card .name{font-size:17px;font-weight:900}
+.card .acc{font-size:14px;color:#374151;margin-top:2px;font-variant-numeric:tabular-nums}
+.card .k{font-size:11px;color:#9ca3af;font-weight:700;margin-top:10px}
+.card .v{font-size:14px;line-height:1.5;word-break:break-word;margin-top:2px}
+.card .meta{font-size:11px;color:#9ca3af;margin-top:10px}
+.empty{text-align:center;color:#9ca3af;font-size:14px;padding:40px 0}
+
+/* 폼 */
+.form{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
+.form h2{margin:0 0 14px;font-size:17px;font-weight:900}
+.field{margin-bottom:14px}
+.field>label,.field>.lbl{display:block;font-size:13px;font-weight:800;color:#374151;margin-bottom:6px}
+.req{color:#dc2626}
+.input,select.input,textarea.input{width:100%;height:44px;border:1px solid #d1d5db;border-radius:12px;background:#fff;padding:0 12px;font-size:15px}
+textarea.input{height:70px;padding:10px 12px;resize:vertical}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid #d1d5db;background:#fff;border-radius:999px;padding:9px 14px;font-size:14px;font-weight:700}
+.chip.on{background:#111827;border-color:#111827;color:#fff}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg .chip{border-radius:12px;padding:11px 0;text-align:center}
+.stepper{display:grid;grid-template-columns:52px 1fr 52px;gap:8px;align-items:center}
+.stepper button{height:44px;border:1px solid #d1d5db;background:#fff;border-radius:12px;font-size:22px;font-weight:900}
+.stepper .num{text-align:center;font-size:20px;font-weight:900}
+.ctns .input{margin-top:6px}
+.sub{border-left:3px solid #f59e0b;padding-left:12px;margin-bottom:14px}
+.hint{font-size:12px;color:#9ca3af;margin-top:4px}
+.save{width:100%;height:52px;border:0;border-radius:14px;background:#111827;color:#fff;font-size:16px;font-weight:900;margin-top:6px}
+.save:disabled{opacity:.55}
+.alert{border-radius:12px;padding:11px 12px;font-size:14px;font-weight:700;margin-bottom:12px;display:none}
+.alert.show{display:block}
+.alert.ok{background:#ecfdf5;color:#047857}
+.alert.warn{background:#fffbeb;color:#b45309}
+.alert.err{background:#fef2f2;color:#b91c1c}
+
+/* 실적사항 */
+.tablewrap{background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden}
+table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:14px}
+th,td{padding:10px 4px;text-align:center;border-bottom:1px solid #f0f1f3;white-space:nowrap}
+thead th{font-size:12px;color:#6b7280;background:#f8fafc;font-weight:700}
+td{font-weight:800;font-variant-numeric:tabular-nums}
+th.n,td.n{text-align:left;padding-left:12px;width:24%}
+td.zero{color:#c0c4cc;font-weight:600}
+tfoot td{background:#f8fafc;border-top:2px solid #d1d5db;border-bottom:0;font-weight:900}
+.note{margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:11px 12px;font-size:13px;color:#92400e;line-height:1.6}
+.note.ok{background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+
+.loading{position:fixed;inset:0;background:rgba(255,255,255,.6);display:none;align-items:center;justify-content:center;z-index:50;font-weight:800}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#fff;padding:11px 16px;border-radius:999px;font-size:14px;font-weight:700;display:none;z-index:60;max-width:90%;text-align:center}
+
+@media (max-width:360px){
+  table{font-size:13px}
+  thead th{font-size:11px;letter-spacing:-.3px}
+  th.n,td.n{padding-left:8px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="top">
+    <div class="title">관저중로점 유선 실적관리</div>
+    <div class="month">
+      <button type="button" onclick="moveMonth(-1)" aria-label="이전 달">◀</button>
+      <div class="label" id="monthLabel">-</div>
+      <button type="button" onclick="moveMonth(1)" aria-label="다음 달">▶</button>
+    </div>
+    <div class="tabs">
+      <button type="button" class="tab active" data-tab="list" onclick="openTab('list')">개통리스트</button>
+      <button type="button" class="tab" data-tab="report" onclick="openTab('report')">직원들 개통보고</button>
+      <button type="button" class="tab" data-tab="stats" onclick="openTab('stats')">실적사항</button>
+    </div>
+  </div>
+
+  <!-- 개통리스트 -->
+  <section class="page active" id="page-list">
+    <input id="search" class="search" placeholder="고객명 또는 접속번호 검색" oninput="renderList()">
+    <div class="count" id="listCount"></div>
+    <div id="list"></div>
+  </section>
+
+  <!-- 직원들 개통보고 -->
+  <section class="page" id="page-report">
+    <div class="form">
+      <h2>유선판매보고</h2>
+      <div class="alert" id="formAlert"></div>
+
+      <div class="field">
+        <div class="lbl">작업자 <span class="req">*</span></div>
+        <div class="chips" id="workerChips"></div>
+      </div>
+
+      <div class="field">
+        <label for="lineType">동판유형 <span class="req">*</span></label>
+        <select id="lineType" class="input"></select>
+      </div>
+
+      <div class="field">
+        <label for="accessNo">접속번호 <span class="req">*</span></label>
+        <input id="accessNo" class="input" inputmode="numeric" autocomplete="off" placeholder="예: 0042-0028-7570">
+      </div>
+
+      <div class="field">
+        <label for="holderPhone">핸드폰 명의자</label>
+        <input id="holderPhone" class="input" type="tel" inputmode="tel" placeholder="010-0000-0000">
+      </div>
+
+      <div class="field">
+        <div class="lbl">동판회선수</div>
+        <div class="stepper">
+          <button type="button" onclick="stepLines(-1)" aria-label="회선 줄이기">−</button>
+          <div class="num" id="lineCount">1</div>
+          <button type="button" onclick="stepLines(1)" aria-label="회선 늘리기">＋</button>
+        </div>
+      </div>
+
+      <div class="field" id="ctnField">
+        <div class="lbl">동판회선 CTN</div>
+        <div class="ctns" id="ctns"></div>
+      </div>
+
+      <div class="field">
+        <label for="customerName">인터넷 명의자명 <span class="req">*</span></label>
+        <input id="customerName" class="input" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <div class="lbl">명의 일치 여부</div>
+        <div class="seg">
+          <button type="button" class="chip on" data-match="일치" onclick="setMatch('일치')">일치</button>
+          <button type="button" class="chip" data-match="불일치" onclick="setMatch('불일치')">불일치</button>
+        </div>
+      </div>
+
+      <div class="sub" id="mismatchBox" style="display:none">
+        <div class="field">
+          <label for="guideMethod">내용안내방법</label>
+          <input id="guideMethod" class="input" placeholder="예: 내방">
+        </div>
+        <div class="field">
+          <label for="mismatchNote">참고사항</label>
+          <input id="mismatchNote" class="input">
+        </div>
+        <div class="field">
+          <label for="mismatchPhone">연락처</label>
+          <input id="mismatchPhone" class="input" type="tel" inputmode="tel">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="gift">지급사은품</label>
+        <textarea id="gift" class="input" placeholder="예: 32만원 상품권 / 에어랩 수령 / 위약금 20만원"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="giftPhone">사은품발송번호</label>
+        <input id="giftPhone" class="input" type="tel" inputmode="tel" placeholder="010-0000-0000">
+      </div>
+
+      <div class="field">
+        <label for="giftKind">사은품권종</label>
+        <input id="giftKind" class="input" list="giftKindList" placeholder="선택 또는 직접 입력">
+        <datalist id="giftKindList"></datalist>
+      </div>
+
+      <div class="field">
+        <label for="giftProcess">사은품 처리방식</label>
+        <input id="giftProcess" class="input" placeholder="예: 32만원 아들 할부금처리">
+      </div>
+
+      <div class="field">
+        <label for="gtt">GTT</label>
+        <input id="gtt" class="input">
+      </div>
+
+      <div class="field">
+        <label for="gttProcess">GTT 처리방식</label>
+        <input id="gttProcess" class="input">
+      </div>
+
+      <div class="hint" id="monthHint"></div>
+      <button type="button" class="save" id="saveBtn" onclick="saveReport()">저장</button>
+    </div>
+  </section>
+
+  <!-- 실적사항 -->
+  <section class="page" id="page-stats">
+    <div class="tablewrap" id="statsTable"></div>
+    <div id="statsNote"></div>
+  </section>
+
+</div>
+
+<div class="loading" id="loading">불러오는 중...</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let MONTH = '';
+let DATA = { list: [], workers: [], lineTypes: [], giftKinds: [], stats: null };
+let FORM = { worker: '', lineCount: 1, match: '일치' };
+let SAVING = false;
+
+function esc(v){
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, 2400);
+}
+
+function showLoading(v){
+  document.getElementById('loading').style.display = v ? 'flex' : 'none';
+}
+
+function monthLabel(m){
+  const p = String(m || '').split('-');
+  return p.length === 2 ? p[0] + '년 ' + Number(p[1]) + '월' : '-';
+}
+
+function thisMonth(){
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function moveMonth(delta){
+  const p = MONTH.split('-').map(Number);
+  const d = new Date(p[0], p[1] - 1 + delta, 1);
+  load(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+}
+
+function openTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
+  window.scrollTo(0, 0);
+}
+
+/* ===== 데이터 ===== */
+function load(month, silent){
+  MONTH = month;
+  document.getElementById('monthLabel').textContent = monthLabel(month);
+  document.getElementById('monthHint').textContent = '적용월: ' + monthLabel(month) + ' 로 저장됩니다.';
+  if (!silent) showLoading(true);
+  google.script.run
+    .withSuccessHandler(d => {
+      showLoading(false);
+      if (d.month !== MONTH) return; // 늦게 도착한 이전 달 응답 무시
+      DATA = d;
+      renderAll();
+    })
+    .withFailureHandler(err => {
+      showLoading(false);
+      toast(err && err.message ? err.message : '불러오기 실패');
+    })
+    .getAppData(month);
+}
+
+function renderAll(){
+  renderList();
+  renderFormOptions();
+  renderStats();
+}
+
+/* ===== 개통리스트 ===== */
+function renderList(){
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const qd = q.replace(/\D/g, '');
+  const list = (DATA.list || []).filter(r => {
+    if (!q) return true;
+    return String(r.customerName).toLowerCase().includes(q) ||
+      String(r.accessNo).toLowerCase().includes(q) ||
+      (qd && String(r.accessNo).replace(/\D/g, '').includes(qd));
+  });
+
+  document.getElementById('listCount').textContent =
+    monthLabel(MONTH) + ' 개통 ' + (DATA.list || []).length + '건' +
+    (q ? ' · 검색 ' + list.length + '건' : '');
+
+  const el = document.getElementById('list');
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">' + (q ? '검색 결과가 없습니다.' : '등록된 개통건이 없습니다.') + '</div>';
+    return;
+  }
+
+  el.innerHTML = list.map(r => `
+    <div class="card">
+      <div class="name">${esc(r.customerName || '-')}</div>
+      <div class="acc">${esc(r.accessNo || '-')}</div>
+      <div class="k">지급사은품</div>
+      <div class="v">${esc(r.gift || '-')}</div>
+      <div class="k">사은품 수령번호</div>
+      <div class="v">${esc(r.giftPhone || '-')}</div>
+      <div class="meta">${esc(r.worker)} · ${esc(r.lineType)} · ${esc(String(r.createdAt).slice(5, 16))}</div>
+    </div>
+  `).join('');
+}
+
+/* ===== 개통보고 폼 ===== */
+function renderFormOptions(){
+  const workers = DATA.workers || [];
+  document.getElementById('workerChips').innerHTML = workers.map(w =>
+    `<button type="button" class="chip ${FORM.worker === w ? 'on' : ''}" onclick="setWorker('${esc(w)}')">${esc(w)}</button>`
+  ).join('');
+
+  const sel = document.getElementById('lineType');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">선택</option>' +
+    (DATA.lineTypes || []).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  if ((DATA.lineTypes || []).includes(cur)) sel.value = cur;
+
+  document.getElementById('giftKindList').innerHTML =
+    (DATA.giftKinds || []).map(k => `<option value="${esc(k)}">`).join('');
+
+  renderCtns();
+}
+
+function setWorker(w){
+  FORM.worker = w;
+  document.querySelectorAll('#workerChips .chip').forEach(c => c.classList.toggle('on', c.textContent === w));
+}
+
+function setMatch(m){
+  FORM.match = m;
+  document.querySelectorAll('[data-match]').forEach(c => c.classList.toggle('on', c.dataset.match === m));
+  document.getElementById('mismatchBox').style.display = m === '불일치' ? 'block' : 'none';
+}
+
+function stepLines(d){
+  FORM.lineCount = Math.max(0, Math.min(20, FORM.lineCount + d));
+  document.getElementById('lineCount').textContent = FORM.lineCount;
+  renderCtns();
+}
+
+function renderCtns(){
+  const box = document.getElementById('ctns');
+  const prev = [...box.querySelectorAll('input')].map(i => i.value);
+  document.getElementById('ctnField').style.display = FORM.lineCount ? 'block' : 'none';
+  let html = '';
+  for (let i = 0; i < FORM.lineCount; i++) {
+    html += `<input class="input ctn" type="tel" inputmode="tel" placeholder="CTN ${i + 1}" value="${esc(prev[i] || '')}">`;
+  }
+  box.innerHTML = html;
+}
+
+function val(id){ return document.getElementById(id).value.trim(); }
+
+function showAlert(type, msg){
+  const a = document.getElementById('formAlert');
+  a.className = 'alert show ' + type;
+  a.textContent = msg;
+}
+
+function resetForm(){
+  ['accessNo','holderPhone','customerName','guideMethod','mismatchNote','mismatchPhone',
+   'gift','giftPhone','giftKind','giftProcess','gtt','gttProcess'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('lineType').value = '';
+  FORM.lineCount = 1;
+  document.getElementById('lineCount').textContent = '1';
+  document.getElementById('ctns').innerHTML = '';
+  renderCtns();
+  setMatch('일치');
+}
+
+function saveReport(){
+  if (SAVING) return;
+
+  const p = {
+    month: MONTH,
+    worker: FORM.worker,
+    lineType: val('lineType'),
+    accessNo: val('accessNo'),
+    holderPhone: val('holderPhone'),
+    lineCount: FORM.lineCount,
+    lineCtns: [...document.querySelectorAll('#ctns .ctn')].map(i => i.value.trim()),
+    customerName: val('customerName'),
+    nameMatch: FORM.match,
+    guideMethod: val('guideMethod'),
+    mismatchNote: val('mismatchNote'),
+    mismatchPhone: val('mismatchPhone'),
+    gift: val('gift'),
+    giftPhone: val('giftPhone'),
+    giftKind: val('giftKind'),
+    giftProcess: val('giftProcess'),
+    gtt: val('gtt'),
+    gttProcess: val('gttProcess')
+  };
+
+  if (!p.worker) return showAlert('err', '작업자를 선택해주세요.');
+  if (!p.lineType) return showAlert('err', '동판유형을 선택해주세요.');
+  if (!p.accessNo) return showAlert('err', '접속번호를 입력해주세요.');
+  if (!p.customerName) return showAlert('err', '인터넷 명의자명을 입력해주세요.');
+
+  SAVING = true;
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+  showAlert('warn', '저장 중...');
+
+  google.script.run
+    .withSuccessHandler(r => {
+      SAVING = false;
+      btn.disabled = false;
+      btn.textContent = '저장';
+      if (r && r.duplicate) {
+        showAlert('warn', r.message);
+        return;
+      }
+      showAlert('ok', '유선판매보고가 저장되었습니다.');
+      toast('유선판매보고가 저장되었습니다.');
+      resetForm();
+      load(MONTH, true);
+    })
+    .withFailureHandler(err => {
+      SAVING = false;
+      btn.disabled = false;
+      btn.textContent = '저장';
+      showAlert('err', err && err.message ? err.message : '저장에 실패했습니다.');
+    })
+    .saveReport(p);
+}
+
+/* ===== 실적사항 ===== */
+function renderStats(){
+  const s = DATA.stats;
+  if (!s) return;
+  const cell = v => `<td class="${v ? '' : 'zero'}">${v}</td>`;
+  document.getElementById('statsTable').innerHTML = `
+    <table>
+      <thead><tr>
+        <th class="n">직원</th>
+        ${s.metrics.map(m => `<th>${esc(m.title.replace('실적', ''))}</th>`).join('')}
+      </tr></thead>
+      <tbody>
+        ${s.rows.map(r => `<tr><td class="n">${esc(r.worker)}</td>${s.metrics.map(m => cell(r[m.key])).join('')}</tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td class="n">합계</td>${s.metrics.map(m => `<td>${s.total[m.key]}</td>`).join('')}
+      </tr></tfoot>
+    </table>`;
+
+  const note = document.getElementById('statsNote');
+  if (s.unclassifiedCount) {
+    note.innerHTML = `<div class="note">
+      미분류 동판유형 <b>${s.unclassifiedCount}건</b> — 집계에서 빠져 있습니다.<br>
+      ${s.unclassifiedTypes.map(t => esc(t.type) + ' ' + t.count + '건').join(' · ')}<br>
+      '유선_설정' 시트에서 분류값을 입력하면 자동으로 다시 계산됩니다.
+    </div>`;
+  } else {
+    note.innerHTML = (DATA.list || []).length
+      ? '<div class="note ok">모든 개통보고가 분류되어 집계되었습니다.</div>'
+      : '';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderCtns();
+  load(thisMonth());
+});
+</script>
+</body>
+</html>
