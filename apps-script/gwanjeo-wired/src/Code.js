@@ -792,7 +792,17 @@ function detectLegacyMapping_(sh) {
   LEGACY_FIELDS.forEach(f => {
     // 같은 열에서 '접속번호'·'사은품수령번호'가 먼저 판정되도록 우선순위 적용
     const hits = [];
-    colText.forEach((parts, c) => {
+
+    // 지급사은품: 기존 장표 헤더 '고객혜택'을 최우선 후보로 사용
+    if (f.key === 'gift') {
+      colText.forEach((parts, c) => {
+        if (parts.some(t => t.indexOf('고객혜택') >= 0)) {
+          hits.push({ c: c + 1, text: parts.join(' / ') });
+        }
+      });
+    }
+
+    if (!hits.length) colText.forEach((parts, c) => {
       const own = parts.find(t => LEGACY_MATCHERS[f.key](t));
       if (!own) return;
       if (f.key === 'gift' && parts.some(t => LEGACY_MATCHERS.giftPhone(t))) return;
