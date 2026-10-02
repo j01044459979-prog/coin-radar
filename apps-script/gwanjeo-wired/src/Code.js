@@ -1247,6 +1247,8 @@ function diagnoseLegacyStats_(ss, month) {
   if (rsh) readReports_(rsh, month).forEach(r => { const k = digits_(r.accessNo); if (k) webKeys[k] = true; });
   const legacyStats = readLegacyStats_(sh, map, webKeys, resolveLegacyStatCols_(ss, sh, false));
 
+  const newSubDiag = diagnoseNewSubLines_(sh, start, keepRows, used);
+
   return {
     month: month,
     sheet: str_(sh.getName()),
@@ -1255,6 +1257,7 @@ function diagnoseLegacyStats_(ss, month) {
     staff: staff,
     types: types,
     legacyStats: legacyStats,
+    newSubDiag: newSubDiag,
     reason: (!staff.length ? '담당 직원 헤더 후보를 찾지 못함. ' : '') + (!types.length ? '실적유형 헤더 후보를 찾지 못함.' : '')
   };
 }
@@ -1455,5 +1458,87 @@ function readLegacyStats_(sh, map, webKeys, statMap) {
   }
   result.byWorker = order.map(w => by[w]);
   return result;
+}
+
+
+/*******************************************************
+ * 순신규 회선 진단 (표시 전용 — 실적 계산에는 사용하지 않음)
+ * - 구분 / 판매자 / I(인터넷) / T(TV) / GTT 관련 헤더 후보와 값 샘플
+ * - '구분 = 순신규' 실제 개통건 최대 5건의 행별 값
+ *******************************************************/
+const NEWSUB_DIAG = {
+  gubun: t => t === '구분' || t.indexOf('구분') >= 0,
+  seller: t => ['판매자', '직원명', '담당자'].indexOf(t) >= 0,
+  internet: t => t === 'I' || t === 'i' || t.indexOf('인터넷') >= 0 || /^I[^A-Za-z]/.test(t),
+  tv: t => !/GTT/i.test(t) && (t === 'T' || t === 't' || /TV|티비/i.test(t) || /^T[^A-Za-z]/.test(t)),
+  gtt: t => /GTT/i.test(t)
+};
+
+function diagnoseNewSubLines_(sh, start, keepRows, used) {
+  const parts = legacyStatHeaderParts_(sh) || [];
+  const cand = {};
+  Object.keys(NEWSUB_DIAG).forEach(k => {
+    cand[k] = [];
+    parts.forEach((ps, i) => {
+      const c = i + 1;
+      if (used[c] && k !== 'seller' && k !== 'gubun') return; // 고객명/접속번호/고객혜택/발송번호 열 제외
+      if (ps.some(t => NEWSUB_DIAG[k](t))) cand[k].push({ c: c, header: ps.join(' / ') });
+    });
+  });
+
+  // 후보 열 값 (개통건 행만)
+  const lastKeep = keepRows.length ? keepRows[keepRows.length - 1] : start;
+  const n = Math.max(lastKeep - start + 1, 1);
+  const colVals = {};
+  const readCol = c => {
+    if (!colVals[c]) colVals[c] = sh.getRange(start, c, n, 1).getDisplayValues();
+    return colVals[c];
+  };
+
+  const summary = {};
+  Object.keys(cand).forEach(k => {
+    summary[k] = cand[k].map(x => {
+      const vals = readCol(x.c);
+      const counts = {};
+      keepRows.forEach(r => {
+        const v = str_(vals[r - start][0]) || '(빈칸)';
+        counts[v] = (counts[v] || 0) + 1;
+      });
+      return {
+        col: colLetter_(x.c),
+        header: x.header,
+        values: Object.keys(counts).map(v => ({ value: v, count: counts[v] }))
+          .sort((a, b) => b.count - a.count).slice(0, 12)
+      };
+    });
+  });
+
+  // '구분 = 순신규' 샘플 (구분 후보 중 정확히 '구분'인 열 우선)
+  const gubunCol = (cand.gubun.find(x => x.header.split(' / ').indexOf('구분') >= 0) || cand.gubun[0] || {}).c;
+  const samples = [];
+  if (gubunCol) {
+    const g = readCol(gubunCol);
+    for (let j = 0; j < keepRows.length && samples.length < 5; j++) {
+      const r = keepRows[j];
+      if (str_(g[r - start][0]).replace(/\s/g, '') !== '순신규') continue;
+      const pick = k => cand[k].map(x => colLetter_(x.c) + '=' + (str_(readCol(x.c)[r - start][0]) || '빈칸')).join(', ') || '후보 없음';
+      samples.push({
+        row: r,
+        seller: pick('seller'),
+        gubun: str_(g[r - start][0]),
+        internet: pick('internet'),
+        tv: pick('tv'),
+        gtt: pick('gtt')
+      });
+    }
+  }
+
+  return {
+    candidates: summary,
+    gubunCol: gubunCol ? colLetter_(gubunCol) : '',
+    samples: samples,
+    note: !gubunCol ? "'구분' 헤더를 찾지 못해 순신규 샘플을 고를 수 없음" :
+      (!samples.length ? "'구분 = 순신규' 개통건이 없음" : '')
+  };
 }
 
