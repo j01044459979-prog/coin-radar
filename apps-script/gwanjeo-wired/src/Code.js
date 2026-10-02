@@ -290,7 +290,8 @@ function readReports_(reportSheet, month) {
 /*******************************************************
  * 실적 집계 (항상 원본 + 분류규칙으로 다시 계산)
  *******************************************************/
-function computeStats_(reports, rules, workers, legacyRows) {
+function computeStats_(reports, rules, workers, legacyRows, month) {
+  const v2 = isV2Month_(month);
 
   const byWorker = {};
   const order = workers.slice();
@@ -314,17 +315,9 @@ function computeStats_(reports, rules, workers, legacyRows) {
     }
 
     const type = str_(rep.lineType);
-    const rule = rules[type];
-    let missing = !rule;
-
-    METRICS.forEach(m => {
-      const v = rule ? rule[m.key] : null;
-      if (v === null || v === undefined) {
-        missing = true;
-        return;
-      }
-      byWorker[w][m.key] += v === 'lines' ? (Number(rep.lineCount) || 0) : v;
-    });
+    const cls = v2 ? classifyReportV2_(rep, rules) : classifyReportV11_(rep, rules);
+    const missing = cls.missing;
+    METRICS.forEach(m => { byWorker[w][m.key] += cls.values[m.key]; });
 
     if (missing) {
       unclassifiedCount++;
@@ -429,7 +422,8 @@ function getAppData(month) {
     } : null,
     stats: computeStats_(
       reports, ruleInfo.rules, workers.length ? workers : DEFAULT_WORKERS,
-      legacy.stats && legacy.stats.ok ? legacy.stats.byWorker : []
+      legacy.stats && legacy.stats.ok ? legacy.stats.byWorker : [],
+      m
     )
   };
 }
@@ -604,7 +598,7 @@ function isDuplicate_(sh, month, accessNo) {
 /*
  * 참고 경고: 목록/설정에 없는 작업자·동판유형
  */
-function lookupWarnings_(ss, fields) {
+function lookupWarnings_(ss, fields, month) {
   const sh = ensureSheets_(ss);
   const out = [];
   const workers = readColumnList_(sh.lists, 1);
@@ -613,7 +607,11 @@ function lookupWarnings_(ss, fields) {
     out.push("작업자 '" + fields.worker + "' 는 직원 목록에 없습니다. (실적표에 별도 행으로 표시)");
   }
   if (fields.lineType && types.indexOf(fields.lineType) < 0) {
-    out.push("동판유형 '" + fields.lineType + "' 은 유선_설정에 없습니다. (미분류로 집계)");
+    if (isV2Month_(month) && isRenewDongType_(fields.lineType)) {
+      // 2026-09 이후 약정갱신 동판(약동/약갱)은 자동 분류되므로 미분류 경고 없음
+    } else {
+      out.push("동판유형 '" + fields.lineType + "' 은 유선_설정에 없습니다. (미분류로 집계)");
+    }
   }
   return { sh: sh, warnings: out };
 }
@@ -630,7 +628,7 @@ function previewReport(x) {
 
   const p = parseReportText_(text);
   const ss = ss_();
-  const lw = lookupWarnings_(ss, p.fields);
+  const lw = lookupWarnings_(ss, p.fields, month);
   const duplicate = !!p.fields.accessNo && isDuplicate_(lw.sh.report, month, p.fields.accessNo);
 
   return {
@@ -1545,3 +1543,146 @@ function diagnoseNewSubLines_(sh, start, keepRows, used) {
   if (!picked.length) out.note = (out.note ? out.note + ' / ' : '') + "'구분 = 순신규' 개통건이 없음";
   return out;
 }
+
+
+/*******************************************************
+ * 웹앱 보고 실적 분류
+ *
+ * [2026-08 이전] classifyReportV11_ : v11 그대로
+ *   유선_설정의 동판유형 규칙만 사용 (미분류/0/1/회선수)
+ *
+ * [2026-09 이후] classifyReportV2_ : 원문보고에서 구분·가입 회선을 읽어 아래 순서로 판정
+ *   1) 약정갱신 동판: 동판유형에 '약동'/'약갱' 포함 → 약갱동판 1, 순신규·순신규동판·신동 0
+ *      (고객 1건 = 1, 인터넷·TV 회선 수와 무관)
+ *      단, 유선_설정에 그 동판유형의 해당 항목이 명시돼 있으면 설정값 우선
+ *   2) 순신규: 구분이 약정갱신(또는 1번 유형)이면 0
+ *      구분 = 순신규이고 가입 회선(인터넷 I / TV T / GTT)을 읽을 수 있으면 회선 수 합계
+ *      그 외에는 유선_설정 값, 설정도 없으면 미분류
+ *   3) 순신규동판·신동·약갱동판: 1번에 해당하지 않으면 유선_설정 값, 없으면 미분류
+ *   판별할 수 없는 항목은 추측하지 않고 미분류로 남김
+ * 기존 장표 실적(실적 열 직접 집계)은 이 분류와 무관하게 v9 로직 그대로
+ *******************************************************/
+const V2_START = { y: 2026, m: 9 };
+
+function isV2Month_(month) {
+  const mt = str_(month).match(/^(\d{4})-(\d{2})$/);
+  if (!mt) return false;
+  const y = Number(mt[1]);
+  const m = Number(mt[2]);
+  return y > V2_START.y || (y === V2_START.y && m >= V2_START.m);
+}
+
+function isRenewDongType_(type) {
+  return /약동|약갱/.test(str_(type).replace(/\s/g, ''));
+}
+
+function classifyReportV11_(rep, rules) {
+  const rule = rules[str_(rep.lineType)];
+  let missing = !rule;
+  const values = {};
+  METRICS.forEach(m => {
+    values[m.key] = 0;
+    const v = rule ? rule[m.key] : null;
+    if (v === null || v === undefined) {
+      missing = true;
+      return;
+    }
+    values[m.key] = v === 'lines' ? (Number(rep.lineCount) || 0) : v;
+  });
+  return { values: values, missing: missing };
+}
+
+/*
+ * 회선 수 값 해석: 숫자/N회선 → N, O·Y·있음 → 1, 빈칸·-·X·없음 → 0, 그 외 → null(판별 불가)
+ */
+function lineCountValue_(v) {
+  const s = str_(v).replace(/\s/g, '');
+  if (!s || /^(-|x|X|없음|무|0회선)$/.test(s)) return 0;
+  const m = s.match(/^(\d{1,2})(회선|개|대)?$/);
+  if (m) return Number(m[1]);
+  if (/^(o|O|y|Y|있음|유|가입|신규)$/.test(s)) return 1;
+  return null;
+}
+
+/*
+ * 원문보고에서 구분 / 가입 회선(인터넷·TV·GTT) 읽기 (없으면 빈 값)
+ */
+function parseExtraFromRaw_(raw) {
+  const out = { gubun: '', internet: null, tv: null, gtt: null, product: '', has: {} };
+  String(raw || '').replace(/\r\n?/g, '\n').split('\n').forEach(line0 => {
+    const line = line0.replace(/：/g, ':').trim();
+    const m = line.match(/^([^:]{1,30}):(.*)$/);
+    if (!m) return;
+    const label = normLabel_(m[1]);
+    const value = cleanValue_(m[2]);
+    if (label === '구분' || label === '가입구분') { out.gubun = value; return; }
+    if (label === '가입상품' || label === '상품') { out.product = value; return; }
+    // 빈 값 줄(양식에 늘 있는 'GTT :' 등)은 기재로 보지 않음
+    if (!value) return;
+    if (label === '인터넷' || label === 'i' || label === '인터넷회선') { out.has.internet = true; out.internet = lineCountValue_(value); return; }
+    if (label === 'tv' || label === 't' || label === '티비' || label === 'tv회선') { out.has.tv = true; out.tv = lineCountValue_(value); return; }
+    if (label === 'gtt') { out.has.gtt = true; out.gtt = lineCountValue_(value); }
+  });
+  // 가입상품 '인터넷 + TV (+ GTT)' 표기 → 회선별 1 (개별 항목이 따로 적혀 있으면 그 값 우선)
+  if (out.product) {
+    const toks = out.product.split(/[+,/·&]|그리고/).map(t => t.replace(/\s/g, '').toUpperCase()).filter(Boolean);
+    const cnt = k => toks.filter(t => k.test(t)).length;
+    if (!out.has.internet) out.internet = cnt(/^(인터넷|I|인터넷\d*회선)$/);
+    if (!out.has.tv) out.tv = cnt(/^(TV|T|티비)$/);
+    if (!out.has.gtt && toks.some(t => /GTT/.test(t))) out.gtt = cnt(/GTT/);
+    out.has.product = true;
+  }
+  return out;
+}
+
+function classifyReportV2_(rep, rules) {
+  const type = str_(rep.lineType);
+  const rule = rules[type] || null;
+  const ruleVal = k => {
+    const v = rule ? rule[k] : null;
+    if (v === null || v === undefined) return null;
+    return v === 'lines' ? (Number(rep.lineCount) || 0) : v;
+  };
+  const extra = parseExtraFromRaw_(rep.rawText);
+  const gubun = str_(extra.gubun).replace(/\s/g, '');
+  const renewType = isRenewDongType_(type);
+  const renewGubun = /약정갱신|약갱|재약정/.test(gubun);
+  const values = {};
+  let missing = false;
+
+  // 1) 약정갱신 동판 자동 분류 (설정에 명시된 항목은 설정 우선)
+  ['newLine', 'newDong', 'renewLine'].forEach(k => {
+    const rv = ruleVal(k);
+    if (rv !== null) values[k] = rv;
+    else if (renewType) values[k] = k === 'renewLine' ? 1 : 0;
+    else { values[k] = 0; missing = true; }
+  });
+
+  // 2) 순신규: 약정갱신이면 0, 구분=순신규면 가입 회선 수
+  if (renewType || renewGubun) {
+    values.newSub = 0;
+  } else if (gubun === '순신규') {
+    // 회선 항목이 하나라도 적혀 있으면 적히지 않은 항목은 0, 적혔지만 읽을 수 없는 값(null)이 있으면 판별 불가
+    const anyGiven = extra.has.internet || extra.has.tv || extra.has.gtt || extra.has.product;
+    const parts = [
+      extra.has.internet || extra.has.product ? extra.internet : 0,
+      extra.has.tv || extra.has.product ? extra.tv : 0,
+      extra.has.gtt || (extra.has.product && extra.gtt !== null) ? extra.gtt : 0
+    ];
+    const known = anyGiven && parts.every(x => x !== null);
+    if (known) {
+      values.newSub = parts.reduce((a, x) => a + (x || 0), 0);
+    } else {
+      const rv = ruleVal('newSub');
+      if (rv !== null) values.newSub = rv;
+      else { values.newSub = 0; missing = true; }
+    }
+  } else {
+    const rv = ruleVal('newSub');
+    if (rv !== null) values.newSub = rv;
+    else { values.newSub = 0; missing = true; }
+  }
+
+  return { values: values, missing: missing };
+}
+
