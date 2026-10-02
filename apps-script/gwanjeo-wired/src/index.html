@@ -55,7 +55,19 @@ textarea.input{height:70px;padding:10px 12px;resize:vertical}
 .sub{border-left:3px solid #f59e0b;padding-left:12px;margin-bottom:14px}
 .hint{font-size:12px;color:#9ca3af;margin-top:4px}
 .save{width:100%;height:52px;border:0;border-radius:14px;background:#111827;color:#fff;font-size:16px;font-weight:900;margin-top:6px}
-.save:disabled{opacity:.55}
+.save:disabled{opacity:.4}
+.desc{font-size:13px;color:#6b7280;line-height:1.6;margin:-6px 0 12px}
+.paste{width:100%;min-height:260px;border:1px solid #d1d5db;border-radius:12px;background:#fff;padding:12px;font-size:14px;line-height:1.6;resize:vertical}
+.check{width:100%;height:48px;border:1px solid #111827;border-radius:14px;background:#fff;color:#111827;font-size:15px;font-weight:900;margin-top:10px}
+.check:disabled{opacity:.5}
+.result{margin-top:14px;border-top:1px solid #e5e7eb;padding-top:12px}
+.result h3{margin:0 0 6px;font-size:15px;font-weight:900}
+.rk{font-size:11px;color:#9ca3af;font-weight:700;margin-top:10px}
+.rv{font-size:15px;font-weight:700;margin-top:2px;word-break:break-word;line-height:1.5}
+.rv.none{color:#c0c4cc;font-weight:600}
+.rv.bad{color:#b91c1c}
+.miss{background:#fef2f2;color:#b91c1c;border-radius:12px;padding:10px 12px;font-size:14px;font-weight:700;line-height:1.7;margin-bottom:8px}
+.warnbox{background:#fffbeb;color:#92400e;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:8px}
 .alert{border-radius:12px;padding:11px 12px;font-size:14px;font-weight:700;margin-bottom:12px;display:none}
 .alert.show{display:block}
 .alert.ok{background:#ecfdf5;color:#047857}
@@ -111,104 +123,13 @@ tfoot td{background:#f8fafc;border-top:2px solid #d1d5db;border-bottom:0;font-we
   <!-- 직원들 개통보고 -->
   <section class="page" id="page-report">
     <div class="form">
-      <h2>유선판매보고</h2>
+      <h2>직원들 개통보고</h2>
+      <div class="desc">직원들이 카톡 등에 작성한 유선판매보고 내용을 그대로 붙여넣어 주세요.</div>
       <div class="alert" id="formAlert"></div>
-
-      <div class="field">
-        <div class="lbl">작업자 <span class="req">*</span></div>
-        <div class="chips" id="workerChips"></div>
-      </div>
-
-      <div class="field">
-        <label for="lineType">동판유형 <span class="req">*</span></label>
-        <select id="lineType" class="input"></select>
-      </div>
-
-      <div class="field">
-        <label for="accessNo">접속번호 <span class="req">*</span></label>
-        <input id="accessNo" class="input" inputmode="numeric" autocomplete="off" placeholder="예: 0042-0028-7570">
-      </div>
-
-      <div class="field">
-        <label for="holderPhone">핸드폰 명의자</label>
-        <input id="holderPhone" class="input" type="tel" inputmode="tel" placeholder="010-0000-0000">
-      </div>
-
-      <div class="field">
-        <div class="lbl">동판회선수</div>
-        <div class="stepper">
-          <button type="button" onclick="stepLines(-1)" aria-label="회선 줄이기">−</button>
-          <div class="num" id="lineCount">1</div>
-          <button type="button" onclick="stepLines(1)" aria-label="회선 늘리기">＋</button>
-        </div>
-      </div>
-
-      <div class="field" id="ctnField">
-        <div class="lbl">동판회선 CTN</div>
-        <div class="ctns" id="ctns"></div>
-      </div>
-
-      <div class="field">
-        <label for="customerName">인터넷 명의자명 <span class="req">*</span></label>
-        <input id="customerName" class="input" autocomplete="off">
-      </div>
-
-      <div class="field">
-        <div class="lbl">명의 일치 여부</div>
-        <div class="seg">
-          <button type="button" class="chip on" data-match="일치" onclick="setMatch('일치')">일치</button>
-          <button type="button" class="chip" data-match="불일치" onclick="setMatch('불일치')">불일치</button>
-        </div>
-      </div>
-
-      <div class="sub" id="mismatchBox" style="display:none">
-        <div class="field">
-          <label for="guideMethod">내용안내방법</label>
-          <input id="guideMethod" class="input" placeholder="예: 내방">
-        </div>
-        <div class="field">
-          <label for="mismatchNote">참고사항</label>
-          <input id="mismatchNote" class="input">
-        </div>
-        <div class="field">
-          <label for="mismatchPhone">연락처</label>
-          <input id="mismatchPhone" class="input" type="tel" inputmode="tel">
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="gift">지급사은품</label>
-        <textarea id="gift" class="input" placeholder="예: 32만원 상품권 / 에어랩 수령 / 위약금 20만원"></textarea>
-      </div>
-
-      <div class="field">
-        <label for="giftPhone">사은품발송번호</label>
-        <input id="giftPhone" class="input" type="tel" inputmode="tel" placeholder="010-0000-0000">
-      </div>
-
-      <div class="field">
-        <label for="giftKind">사은품권종</label>
-        <input id="giftKind" class="input" list="giftKindList" placeholder="선택 또는 직접 입력">
-        <datalist id="giftKindList"></datalist>
-      </div>
-
-      <div class="field">
-        <label for="giftProcess">사은품 처리방식</label>
-        <input id="giftProcess" class="input" placeholder="예: 32만원 아들 할부금처리">
-      </div>
-
-      <div class="field">
-        <label for="gtt">GTT</label>
-        <input id="gtt" class="input">
-      </div>
-
-      <div class="field">
-        <label for="gttProcess">GTT 처리방식</label>
-        <input id="gttProcess" class="input">
-      </div>
-
+      <textarea id="reportText" class="paste" placeholder="유선판매보고 내용을 여기에 그대로 붙여넣기" oninput="onTextChange()"></textarea>
       <div class="hint" id="monthHint"></div>
-      <button type="button" class="save" id="saveBtn" onclick="saveReport()">저장</button>
+      <button type="button" class="check" id="checkBtn" onclick="previewReport()">내용 확인</button>
+      <div id="preview"></div>
     </div>
   </section>
 
@@ -226,7 +147,6 @@ tfoot td{background:#f8fafc;border-top:2px solid #d1d5db;border-bottom:0;font-we
 <script>
 let MONTH = '';
 let DATA = { list: [], workers: [], lineTypes: [], giftKinds: [], stats: null };
-let FORM = { worker: '', lineCount: 1, match: '일치' };
 let SAVING = false;
 
 function esc(v){
@@ -291,7 +211,6 @@ function load(month, silent){
 
 function renderAll(){
   renderList();
-  renderFormOptions();
   renderStats();
 }
 
@@ -329,102 +248,92 @@ function renderList(){
   `).join('');
 }
 
-/* ===== 개통보고 폼 ===== */
-function renderFormOptions(){
-  const workers = DATA.workers || [];
-  document.getElementById('workerChips').innerHTML = workers.map(w =>
-    `<button type="button" class="chip ${FORM.worker === w ? 'on' : ''}" onclick="setWorker('${esc(w)}')">${esc(w)}</button>`
-  ).join('');
-
-  const sel = document.getElementById('lineType');
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">선택</option>' +
-    (DATA.lineTypes || []).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
-  if ((DATA.lineTypes || []).includes(cur)) sel.value = cur;
-
-  document.getElementById('giftKindList').innerHTML =
-    (DATA.giftKinds || []).map(k => `<option value="${esc(k)}">`).join('');
-
-  renderCtns();
-}
-
-function setWorker(w){
-  FORM.worker = w;
-  document.querySelectorAll('#workerChips .chip').forEach(c => c.classList.toggle('on', c.textContent === w));
-}
-
-function setMatch(m){
-  FORM.match = m;
-  document.querySelectorAll('[data-match]').forEach(c => c.classList.toggle('on', c.dataset.match === m));
-  document.getElementById('mismatchBox').style.display = m === '불일치' ? 'block' : 'none';
-}
-
-function stepLines(d){
-  FORM.lineCount = Math.max(0, Math.min(20, FORM.lineCount + d));
-  document.getElementById('lineCount').textContent = FORM.lineCount;
-  renderCtns();
-}
-
-function renderCtns(){
-  const box = document.getElementById('ctns');
-  const prev = [...box.querySelectorAll('input')].map(i => i.value);
-  document.getElementById('ctnField').style.display = FORM.lineCount ? 'block' : 'none';
-  let html = '';
-  for (let i = 0; i < FORM.lineCount; i++) {
-    html += `<input class="input ctn" type="tel" inputmode="tel" placeholder="CTN ${i + 1}" value="${esc(prev[i] || '')}">`;
-  }
-  box.innerHTML = html;
-}
-
-function val(id){ return document.getElementById(id).value.trim(); }
+/* ===== 직원들 개통보고 (붙여넣기) ===== */
+let PREVIEW = null;
 
 function showAlert(type, msg){
   const a = document.getElementById('formAlert');
+  if (!msg) { a.className = 'alert'; a.textContent = ''; return; }
   a.className = 'alert show ' + type;
   a.textContent = msg;
 }
 
-function resetForm(){
-  ['accessNo','holderPhone','customerName','guideMethod','mismatchNote','mismatchPhone',
-   'gift','giftPhone','giftKind','giftProcess','gtt','gttProcess'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
-  document.getElementById('lineType').value = '';
-  FORM.lineCount = 1;
-  document.getElementById('lineCount').textContent = '1';
-  document.getElementById('ctns').innerHTML = '';
-  renderCtns();
-  setMatch('일치');
+function onTextChange(){
+  // 내용이 바뀌면 이전 분석 결과로 저장하지 않도록 초기화
+  if (PREVIEW) {
+    PREVIEW = null;
+    document.getElementById('preview').innerHTML = '';
+  }
+  showAlert('', '');
+}
+
+function rv(v, bad){
+  const s = String(v == null ? '' : v).trim();
+  return s ? `<div class="rv">${esc(s)}</div>` : `<div class="rv ${bad ? 'bad' : 'none'}">${bad ? '확인 못함' : '-'}</div>`;
+}
+
+function previewReport(){
+  const text = document.getElementById('reportText').value;
+  if (!text.trim()) return showAlert('err', '유선판매보고 내용을 붙여넣어 주세요.');
+  const btn = document.getElementById('checkBtn');
+  btn.disabled = true;
+  btn.textContent = '분석 중...';
+  showAlert('', '');
+  const sentText = text;
+  const sentMonth = MONTH;
+  google.script.run
+    .withSuccessHandler(r => {
+      btn.disabled = false;
+      btn.textContent = '내용 확인';
+      if (document.getElementById('reportText').value !== sentText) return; // 분석 중 내용이 바뀜
+      PREVIEW = { text: sentText, month: sentMonth, result: r };
+      renderPreview(r);
+    })
+    .withFailureHandler(err => {
+      btn.disabled = false;
+      btn.textContent = '내용 확인';
+      showAlert('err', err && err.message ? err.message : '분석에 실패했습니다.');
+    })
+    .previewReport({ month: MONTH, text: text });
+}
+
+function renderPreview(r){
+  const f = r.fields;
+  const items = [
+    ['작업자', f.worker, true],
+    ['동판유형', f.lineType, true],
+    ['접속번호', f.accessNo, true],
+    ['인터넷 명의자', f.customerName, true],
+    ['핸드폰 명의자', f.holderPhone],
+    ['동판회선', f.lineCount + '회선' + (f.lineCtns.length ? '\n' + f.lineCtns.join('\n') : '')],
+    ['(불일치시) 내용안내방법', f.guideMethod],
+    ['(불일치시) 참고사항', f.mismatchNote],
+    ['(불일치시) 연락처', f.mismatchPhone],
+    ['지급사은품', f.gift],
+    ['사은품발송번호', f.giftPhone],
+    ['사은품권종', f.giftKind],
+    ['사은품처리방식', f.giftProcess],
+    ['GTT', f.gtt],
+    ['GTT처리방식', f.gttProcess]
+  ];
+  document.getElementById('preview').innerHTML = `
+    <div class="result">
+      <h3>[분석 결과] · 적용월 ${esc(monthLabel(PREVIEW.month))}</h3>
+      ${r.missing.length ? `<div class="miss">${r.missing.map(m => '⚠️ ' + esc(m)).join('<br>')}</div>` : ''}
+      ${r.duplicate ? `<div class="miss">⚠️ 동일한 접속번호의 개통보고가 이미 존재합니다.</div>` : ''}
+      ${r.warnings.length ? `<div class="warnbox">${r.warnings.map(w => '· ' + esc(w)).join('<br>')}</div>` : ''}
+      ${items.map(it => `<div class="rk">${esc(it[0])}</div>${rv(it[1], it[2]).replace(/\n/g, '<br>')}`).join('')}
+      <button type="button" class="save" id="saveBtn" onclick="saveReport()" ${r.canSave ? '' : 'disabled'}>개통보고 저장</button>
+    </div>`;
 }
 
 function saveReport(){
-  if (SAVING) return;
-
-  const p = {
-    month: MONTH,
-    worker: FORM.worker,
-    lineType: val('lineType'),
-    accessNo: val('accessNo'),
-    holderPhone: val('holderPhone'),
-    lineCount: FORM.lineCount,
-    lineCtns: [...document.querySelectorAll('#ctns .ctn')].map(i => i.value.trim()),
-    customerName: val('customerName'),
-    nameMatch: FORM.match,
-    guideMethod: val('guideMethod'),
-    mismatchNote: val('mismatchNote'),
-    mismatchPhone: val('mismatchPhone'),
-    gift: val('gift'),
-    giftPhone: val('giftPhone'),
-    giftKind: val('giftKind'),
-    giftProcess: val('giftProcess'),
-    gtt: val('gtt'),
-    gttProcess: val('gttProcess')
-  };
-
-  if (!p.worker) return showAlert('err', '작업자를 선택해주세요.');
-  if (!p.lineType) return showAlert('err', '동판유형을 선택해주세요.');
-  if (!p.accessNo) return showAlert('err', '접속번호를 입력해주세요.');
-  if (!p.customerName) return showAlert('err', '인터넷 명의자명을 입력해주세요.');
+  if (SAVING || !PREVIEW || !PREVIEW.result.canSave) return;
+  if (PREVIEW.month !== MONTH) {
+    PREVIEW = null;
+    document.getElementById('preview').innerHTML = '';
+    return showAlert('warn', '적용월이 바뀌었습니다. [내용 확인]을 다시 눌러주세요.');
+  }
 
   SAVING = true;
   const btn = document.getElementById('saveBtn');
@@ -435,24 +344,25 @@ function saveReport(){
   google.script.run
     .withSuccessHandler(r => {
       SAVING = false;
-      btn.disabled = false;
-      btn.textContent = '저장';
       if (r && r.duplicate) {
+        btn.textContent = '개통보고 저장';
         showAlert('warn', r.message);
         return;
       }
       showAlert('ok', '유선판매보고가 저장되었습니다.');
       toast('유선판매보고가 저장되었습니다.');
-      resetForm();
+      document.getElementById('reportText').value = '';
+      document.getElementById('preview').innerHTML = '';
+      PREVIEW = null;
       load(MONTH, true);
     })
     .withFailureHandler(err => {
       SAVING = false;
       btn.disabled = false;
-      btn.textContent = '저장';
+      btn.textContent = '개통보고 저장';
       showAlert('err', err && err.message ? err.message : '저장에 실패했습니다.');
     })
-    .saveReport(p);
+    .saveReportText({ month: PREVIEW.month, text: PREVIEW.text });
 }
 
 /* ===== 실적사항 ===== */
@@ -489,7 +399,6 @@ function renderStats(){
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  renderCtns();
   load(thisMonth());
 });
 </script>
