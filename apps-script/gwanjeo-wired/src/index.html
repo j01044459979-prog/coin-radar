@@ -269,7 +269,8 @@ function legacyHtml(x){
   const map = x.mapping ? x.mapping.map(m => `${esc(m.field)}: <b>${esc(m.col)}</b>${m.header ? ' (' + esc(m.header) + ')' : ''}`).join('<br>') : '';
   return `<div class="lg"><b>${esc(x.sheet)}</b> · 상태 ${esc(x.status || '-')}
     ${x.ok ? ' · 읽은 개통건 <b>' + (x.read != null ? x.read : x.count) + '건</b>' + (x.shown != null ? ' (중복 제외 표시 ' + x.shown + '건)' : '') : ''}
-    ${x.ok ? '<br>' + map : '<br><span class="bad">연결 안 함: ' + esc(x.reason) + '</span>'}</div>`;
+    ${x.ok ? '<br>' + map : '<br><span class="bad">연결 안 함: ' + esc(x.reason) + '</span>'}
+    ${x.sample ? '<br><span style="color:#6b7280">첫 개통건 원본 확인: ' + esc(x.sample) + '</span>' : ''}</div>`;
 }
 
 function renderLegacyStatus(){

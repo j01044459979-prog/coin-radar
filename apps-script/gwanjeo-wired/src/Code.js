@@ -936,36 +936,133 @@ function resolveLegacyMapping_(ss, sh, write) {
  * 기존 장표에서 개통건 읽기 (읽기 전용)
  * 접속번호 칸에 숫자 8자리 이상 있는 행만 개통건으로 인정 (합계/빈 행 제외)
  */
-function readLegacyRows_(sh, map) {
+/*
+ * 헤더 셀이 가로 병합(묶음 제목)이면 그 병합 범위의 열 전체를 반환
+ * 예: '고객혜택'이 L~N 3칸에 걸쳐 있으면 [L, M, N]
+ * 병합이 아니면 [감지된 열] 그대로
+ */
+function headerSpanCols_(sh, col, dataStart) {
+  if (dataStart <= 1) return [col];
+  let best = null;
+  sh.getRange(1, col, dataStart - 1, 1).getMergedRanges().forEach(m => {
+    if (m.getColumn() === col && m.getNumColumns() > 1 &&
+        str_(m.getDisplayValue()) &&
+        (!best || m.getNumColumns() > best.getNumColumns())) {
+      best = m;
+    }
+  });
+  if (!best) return [col];
+  const out = [];
+  for (let c = best.getColumn(); c < best.getColumn() + best.getNumColumns(); c++) out.push(c);
+  return out;
+}
+
+/*
+ * 발송번호: 숫자 서식 셀이라 앞자리 0이 빠진 경우(1036803060)만 0 복원 후 010-xxxx-xxxx
+ */
+function legacyPhone_(v) {
+  const s = str_(v);
+  const d = digits_(s);
+  if (/^10\d{8}$/.test(d) && d === s.replace(/[\s-]/g, '')) return formatPhone_('0' + d);
+  return formatPhone_(s);
+}
+
+/*
+ * 고객혜택 표시값: 숫자만 있으면 금액 형식(1,570,000원), 그 외는 장표 표시값 그대로
+ */
+function giftText_(v) {
+  const s = str_(v);
+  if (/^-?\d{4,}$/.test(s)) return Number(s).toLocaleString('ko-KR') + '원';
+  return s;
+}
+
+/*
+ * 기존 장표에서 개통건 읽기 (읽기 전용, 표시값 기준)
+ * - 4개 항목 모두 같은 행에서 읽음
+ * - 고객혜택/발송번호 헤더가 가로 병합이면 그 병합 아래 열들의 같은 행 값을 합쳐 표시
+ * - 한 개통건이 세로 병합(여러 행)으로 되어 있으면 그 병합 범위 안에서 값을 찾음
+ * - 접속번호 칸에 숫자 8자리 이상 있는 행만 개통건으로 인정 (합계/빈 행 제외)
+ */
+function readLegacyRows_(sh, map, sample) {
   const lastRow = sh.getLastRow();
   if (!map.ok || lastRow < map.dataStart) return [];
   const n = lastRow - map.dataStart + 1;
-  // 필요한 4개 열만 각각 읽음 (다른 열은 읽지 않음)
-  const col = {};
-  LEGACY_FIELDS.forEach(f => {
-    col[f.key] = sh.getRange(map.dataStart, map.cols[f.key], n, 1).getDisplayValues();
+  const start = map.dataStart;
+
+  // 항목별로 읽을 열 (가로 병합 헤더면 병합 범위 전체)
+  const spans = {
+    customerName: [map.cols.customerName],
+    accessNo: [map.cols.accessNo],
+    gift: headerSpanCols_(sh, map.cols.gift, start),
+    giftPhone: headerSpanCols_(sh, map.cols.giftPhone, start)
+  };
+
+  const vals = {};
+  const subHead = {};
+  Object.keys(spans).forEach(k => {
+    vals[k] = spans[k].map(c => sh.getRange(start, c, n, 1).getDisplayValues());
+    // 병합 묶음일 때 하위 제목으로 값 구분: 묶음 제목 아래 헤더 영역에서 가장 가까운 글자
+    subHead[k] = [''];
+    if (spans[k].length > 1 && start > 1) {
+      const group = str_(sh.getRange(1, spans[k][0], start - 1, 1).getDisplayValues()
+        .map(r => r[0]).filter(v => str_(v)).shift() || '');
+      subHead[k] = spans[k].map(c => {
+        const colVals = sh.getRange(1, c, start - 1, 1).getDisplayValues().map(r => str_(r[0]));
+        for (let r = colVals.length - 1; r >= 0; r--) {
+          if (colVals[r]) return colVals[r] === group ? '' : colVals[r];
+        }
+        return '';
+      });
+    }
   });
+
+  // 세로 병합된 개통건(접속번호 칸 기준): 시작행 → 끝행
+  const recordEnd = {};
+  sh.getRange(start, map.cols.accessNo, n, 1).getMergedRanges().forEach(m => {
+    if (m.getNumRows() > 1) recordEnd[m.getRow() - start] = m.getRow() - start + m.getNumRows() - 1;
+  });
+
+  function cellText(k, i) {
+    const end = recordEnd[i] != null ? recordEnd[i] : i;
+    const parts = [];
+    spans[k].forEach((c, j) => {
+      let v = '';
+      for (let r = i; r <= end && !v; r++) v = str_(vals[k][j][r][0]);
+      if (!v) return;
+      if (k === 'gift') v = giftText_(v);
+      parts.push(subHead[k][j] && spans[k].length > 1 ? subHead[k][j] + ' ' + v : v);
+    });
+    return parts.join(' / ');
+  }
+
   const month = legacyMonthKey_(sh.getName());
   const out = [];
   for (let i = 0; i < n; i++) {
-    const accessNo = str_(col.accessNo[i][0]);
+    const accessNo = str_(vals.accessNo[0][i][0]);
     if (digits_(accessNo).length < 8) continue;
-    const customerName = str_(col.customerName[i][0]);
+    const customerName = str_(vals.customerName[0][i][0]);
     if (/^(합계|소계|총계|계)$/.test(customerName.replace(/\s/g, ''))) continue;
+    const row = start + i;
+    const gift = cellText('gift', i);
     out.push({
       source: 'legacy',
-      id: 'L-' + month + '-' + (map.dataStart + i),
+      id: 'L-' + month + '-' + row,
       sheet: str_(sh.getName()),
-      row: map.dataStart + i,
+      row: row,
       customerName: customerName,
       accessNo: accessNo,
-      gift: str_(col.gift[i][0]),
-      giftPhone: formatPhone_(col.giftPhone[i][0]),
-      worker: '',
-      lineType: '',
-      createdAt: ''
+      gift: gift,
+      giftPhone: legacyPhone_(cellText('giftPhone', i))
     });
+    if (sample && !sample.rows) {
+      sample.rows = true;
+      sample.text = row + '행 · ' + LEGACY_FIELDS.map(f =>
+        f.title + '(' + spans[f.key].map(c => colLetter_(c) + row).join('~') + ')=' +
+        (f.key === 'gift' ? gift : f.key === 'giftPhone' ? cellText('giftPhone', i) : str_(vals[f.key][0][i][0]) || '빈칸') || '빈칸'
+      ).join(' | ');
+    }
   }
+  out.forEach(r => { r.worker = ''; r.lineType = ''; r.createdAt = ''; });
   // 최신 입력이 위로 (장표 아래쪽 행이 최근)
   return out.reverse();
 }
@@ -979,7 +1076,8 @@ function readLegacyMonth_(ss, month, write) {
     return { sheet: '', ok: false, status: '감지실패', reason: '같은 달 시트가 여러 개', mapping: null, rows: [] };
   }
   const map = resolveLegacyMapping_(ss, sh, write);
-  const rows = map.ok ? readLegacyRows_(sh, map) : [];
+  const sample = {};
+  const rows = map.ok ? readLegacyRows_(sh, map, sample) : [];
   // 같은 장표 안에서 같은 접속번호가 반복되면 첫 건(최신)만
   const seen = {};
   const uniq = rows.filter(r => {
@@ -998,6 +1096,7 @@ function readLegacyMonth_(ss, month, write) {
       col: colLetter_(map.cols[f.key]),
       header: (map.headers && map.headers[f.key]) || ''
     })).concat([{ field: '헤더행/데이터시작행', col: (map.headerRow || '-') + ' / ' + map.dataStart, header: '' }]) : null,
+    sample: sample.text || '',
     rows: uniq
   };
 }
@@ -1013,7 +1112,7 @@ function getLegacyStatus() {
     .sort((a, b) => a.month.localeCompare(b.month))
     .map(x => {
       const r = readLegacyMonth_(ss, x.month, true);
-      return { month: x.month, sheet: r.sheet, ok: r.ok, status: r.status, reason: r.reason, mapping: r.mapping, count: r.rows.length };
+      return { month: x.month, sheet: r.sheet, ok: r.ok, status: r.status, reason: r.reason, mapping: r.mapping, count: r.rows.length, sample: r.sample };
     });
 }
 
