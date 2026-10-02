@@ -13,6 +13,7 @@ const TZ = 'Asia/Seoul';
 const SHEET_REPORT = '유선_개통보고';
 const SHEET_RULES = '유선_설정';
 const SHEET_LISTS = '유선_목록';
+const SHEET_LEGACY_MAP = '유선_기존장표매핑';
 
 /*
  * 유선_개통보고 열 구조 (순서 변경 금지, 추가는 맨 뒤에)
@@ -346,10 +347,11 @@ function getAppData(month) {
   const ruleInfo = readRules_(sh.rules);
   const reports = readReports_(sh.report, m);
 
-  const list = reports
+  const webList = reports
     .slice()
     .sort((a, b) => str_(b.createdAt).localeCompare(str_(a.createdAt)) || b.row - a.row)
     .map(r => ({
+      source: 'webapp',
       id: str_(r.id),
       customerName: str_(r.customerName),
       accessNo: str_(r.accessNo),
@@ -360,6 +362,22 @@ function getAppData(month) {
       createdAt: str_(r.createdAt)
     }));
 
+  /*
+   * 기존 월별 장표(읽기 전용)의 같은 달 개통건을 화면에서만 합침
+   * 같은 적용월 + 같은 접속번호(숫자 기준)는 웹앱 데이터 우선, 한 건만 표시
+   */
+  const legacy = readLegacyMonth_(ss, m, true);
+  const seen = {};
+  webList.forEach(r => { const k = digits_(r.accessNo); if (k) seen[k] = true; });
+  const legacyList = [];
+  legacy.rows.forEach(r => {
+    const k = digits_(r.accessNo);
+    if (k && seen[k]) return;
+    if (k) seen[k] = true;
+    legacyList.push(r);
+  });
+  const list = webList.concat(legacyList);
+
   return {
     month: m,
     today: currentMonth_(),
@@ -367,6 +385,15 @@ function getAppData(month) {
     lineTypes: ruleInfo.types,
     giftKinds: giftKinds,
     list: list,
+    legacy: {
+      sheet: legacy.sheet,
+      ok: legacy.ok,
+      reason: legacy.reason,
+      status: legacy.status,
+      mapping: legacy.mapping,
+      read: legacy.rows.length,
+      shown: legacyList.length
+    },
     stats: computeStats_(reports, ruleInfo.rules, workers.length ? workers : DEFAULT_WORKERS)
   };
 }
@@ -650,3 +677,333 @@ function saveReportText(x) {
     lock.releaseLock();
   }
 }
+
+
+/*******************************************************
+ * 기존 월별 장표 연동 (읽기 전용)
+ * - '26년 6월' 같은 시트를 이름(trim)으로 찾음
+ * - 열 위치는 추측하지 않음: 실제 헤더 글자로 4개 항목 열을 찾고,
+ *   항목마다 정확히 1개 열이 확인될 때만 연결
+ * - 결과는 '유선_기존장표매핑' 시트에 기록, 관리자가 상태를 '확정'으로
+ *   바꾸고 열을 직접 지정하면 그 값을 우선 사용 (자동감지가 덮어쓰지 않음)
+ * - 기존 장표에는 읽기(getValues/getDisplayValues)만 사용
+ *******************************************************/
+const LEGACY_FIELDS = [
+  { key: 'customerName', title: '고객명' },
+  { key: 'accessNo',     title: '접속번호' },
+  { key: 'gift',         title: '지급사은품' },
+  { key: 'giftPhone',    title: '사은품수령번호' }
+];
+
+const LEGACY_MAP_HEADERS = [
+  '시트명', '헤더행', '데이터시작행',
+  '고객명열', '접속번호열', '지급사은품열', '사은품수령번호열',
+  '상태', '확인내용', '갱신일시'
+];
+
+const LEGACY_HEADER_SCAN_ROWS = 20;
+
+function legacyMonthKey_(name) {
+  const m = str_(name).match(/^(\d{2}|\d{4})년\s*(\d{1,2})월$/);
+  if (!m) return '';
+  const mm = Number(m[2]);
+  if (mm < 1 || mm > 12) return '';
+  return (m[1].length === 2 ? '20' + m[1] : m[1]) + '-' + String(mm).padStart(2, '0');
+}
+
+function findLegacySheet_(ss, month) {
+  const list = ss.getSheets().filter(sh => legacyMonthKey_(sh.getName()) === month);
+  return list.length === 1 ? list[0] : (list.length > 1 ? 'MULTI' : null);
+}
+
+function colLetter_(c) {
+  let s = '';
+  while (c > 0) {
+    const m = (c - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    c = Math.floor((c - 1) / 26);
+  }
+  return s;
+}
+
+function colIndex_(letter) {
+  const t = str_(letter).toUpperCase();
+  if (!/^[A-Z]{1,3}$/.test(t)) return 0;
+  return t.split('').reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0);
+}
+
+function normHeader_(v) {
+  return str_(v).replace(/[\s ()\[\]]/g, '');
+}
+
+/*
+ * 헤더 글자 → 항목 판정 (열 번호가 아니라 헤더 글자만 사용)
+ */
+const LEGACY_MATCHERS = {
+  accessNo: t => t.indexOf('접속번호') >= 0,
+  giftPhone: t =>
+    t.indexOf('발송번호') >= 0 || t.indexOf('수령번호') >= 0 ||
+    t.indexOf('사은품번호') >= 0 || (t.indexOf('사은품') >= 0 && t.indexOf('연락처') >= 0),
+  gift: t =>
+    t.indexOf('지급사은품') >= 0 ||
+    (t.indexOf('사은품') >= 0 &&
+      !/(번호|권종|발송|수령|처리|연락처|금액|합계|비용|단가)/.test(t)),
+  customerName: t =>
+    !/(번호|연락처|핸드폰|휴대폰|사은품|직원|작업자|담당)/.test(t) &&
+    (/(고객명|인터넷명의자|명의자명|가입자명|고객성명|성명)/.test(t) || t === '고객' || t === '이름' || t === '고객이름')
+};
+
+function detectLegacyMapping_(sh) {
+
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) {
+    return { ok: false, reason: '빈 시트' };
+  }
+
+  const scan = Math.min(LEGACY_HEADER_SCAN_ROWS, lastRow);
+  const head = sh.getRange(1, 1, scan, lastCol).getDisplayValues();
+
+  // 접속번호 헤더가 있는 행
+  let hr = -1;
+  for (let r = 0; r < head.length && hr < 0; r++) {
+    if (head[r].some(v => LEGACY_MATCHERS.accessNo(normHeader_(v)))) hr = r;
+  }
+  if (hr < 0) {
+    return { ok: false, reason: "1~" + scan + "행에서 '접속번호' 헤더를 찾지 못함" };
+  }
+
+  // 2단 헤더 대비: 헤더행 위 1행(묶음 제목), 아래 1행(하위 제목, 데이터가 아닐 때만)
+  const accCols = head[hr].map((v, i) => LEGACY_MATCHERS.accessNo(normHeader_(v)) ? i : -1).filter(i => i >= 0);
+  const below = hr + 1 < head.length ? head[hr + 1] : null;
+  const belowIsHeader = below && accCols.every(i => digits_(below[i]).length < 8) &&
+    below.some(v => /[가-힣A-Za-z]/.test(str_(v)) && digits_(v).length < 8);
+  const headerRows = [hr - 1, hr, belowIsHeader ? hr + 1 : -1].filter(r => r >= 0 && r < head.length);
+
+  const colText = [];
+  for (let c = 0; c < lastCol; c++) {
+    colText.push(headerRows.map(r => normHeader_(head[r][c])).filter(Boolean));
+  }
+
+  const cols = {};
+  const headers = {};
+  const problems = [];
+
+  LEGACY_FIELDS.forEach(f => {
+    // 같은 열에서 '접속번호'·'사은품수령번호'가 먼저 판정되도록 우선순위 적용
+    const hits = [];
+    colText.forEach((parts, c) => {
+      const own = parts.find(t => LEGACY_MATCHERS[f.key](t));
+      if (!own) return;
+      if (f.key === 'gift' && parts.some(t => LEGACY_MATCHERS.giftPhone(t))) return;
+      if (f.key === 'customerName' && parts.some(t => LEGACY_MATCHERS.accessNo(t) || LEGACY_MATCHERS.giftPhone(t))) return;
+      hits.push({ c: c + 1, text: parts.join(' / ') });
+    });
+    if (hits.length === 1) {
+      cols[f.key] = hits[0].c;
+      headers[f.key] = hits[0].text;
+    } else if (!hits.length) {
+      problems.push(f.title + ' 헤더를 찾지 못함');
+    } else {
+      problems.push(f.title + ' 후보 열이 여러 개 (' + hits.map(h => colLetter_(h.c) + ':' + h.text).join(', ') + ')');
+    }
+  });
+
+  const headerEnd = headerRows[headerRows.length - 1] + 1; // 1-based 마지막 헤더행
+
+  if (problems.length) {
+    return { ok: false, reason: problems.join(' / '), headerRow: hr + 1, cols: cols, headers: headers };
+  }
+
+  // 데이터 시작행: 헤더 아래에서 접속번호 칸에 숫자 8자리 이상이 처음 나오는 행
+  let dataStart = 0;
+  if (lastRow > headerEnd) {
+    const acc = sh.getRange(headerEnd + 1, cols.accessNo, lastRow - headerEnd, 1).getDisplayValues();
+    for (let i = 0; i < acc.length; i++) {
+      if (digits_(acc[i][0]).length >= 8) { dataStart = headerEnd + 1 + i; break; }
+    }
+  }
+
+  return {
+    ok: true,
+    headerRow: hr + 1,
+    dataStart: dataStart || headerEnd + 1,
+    cols: cols,
+    headers: headers,
+    reason: ''
+  };
+}
+
+function ensureLegacyMapSheet_(ss) {
+  let sh = ss.getSheetByName(SHEET_LEGACY_MAP);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_LEGACY_MAP);
+    sh.getRange(1, 1, 1, LEGACY_MAP_HEADERS.length)
+      .setValues([LEGACY_MAP_HEADERS])
+      .setFontWeight('bold');
+    sh.getRange(1, LEGACY_MAP_HEADERS.length + 2, 4, 1).setValues([
+      ['[안내]'],
+      ['상태 자동 : 헤더 글자로 4개 열을 모두 확인함 (웹앱에 표시)'],
+      ['상태 감지실패 : 확인 못 한 항목이 있어 연결 안 함 → 열 문자(D 등)와 헤더행/데이터시작행을 입력하고 상태를 확정으로'],
+      ['상태 확정 : 관리자가 지정한 값을 그대로 사용 (자동감지가 덮어쓰지 않음)']
+    ]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function readLegacyMapRows_(mapSheet) {
+  const out = {};
+  if (!mapSheet || mapSheet.getLastRow() < 2) return out;
+  mapSheet.getRange(2, 1, mapSheet.getLastRow() - 1, LEGACY_MAP_HEADERS.length)
+    .getDisplayValues()
+    .forEach((r, i) => {
+      const name = str_(r[0]);
+      if (name) out[name] = { row: i + 2, values: r };
+    });
+  return out;
+}
+
+/*
+ * 해당 월 기존 장표의 매핑 결정
+ * - 매핑 시트에 '확정' 행이 있으면 그 값만 사용 (헤더 탐색 안 함)
+ * - 아니면 해당 시트 상단 20행만 읽어 헤더 자동감지 (write=true 면 매핑 시트에 결과 기록)
+ */
+function resolveLegacyMapping_(ss, sh, write) {
+
+  const name = str_(sh.getName());
+  const mapSheet = write ? ensureLegacyMapSheet_(ss) : ss.getSheetByName(SHEET_LEGACY_MAP);
+  const saved = readLegacyMapRows_(mapSheet)[name];
+
+  if (saved && str_(saved.values[7]) === '확정') {
+    const v = saved.values;
+    const cols = {
+      customerName: colIndex_(v[3]),
+      accessNo: colIndex_(v[4]),
+      gift: colIndex_(v[5]),
+      giftPhone: colIndex_(v[6])
+    };
+    const dataStart = Number(v[2]) || 0;
+    const bad = LEGACY_FIELDS.filter(f => !cols[f.key]).map(f => f.title);
+    if (bad.length || dataStart < 1) {
+      return { ok: false, status: '확정', reason: '확정 행 입력 확인 필요: ' + (bad.length ? bad.join(', ') + ' 열' : '데이터시작행') };
+    }
+    return { ok: true, status: '확정', headerRow: Number(v[1]) || 0, dataStart: dataStart, cols: cols, headers: {}, reason: '' };
+  }
+
+  const det = detectLegacyMapping_(sh);
+  det.status = det.ok ? '자동' : '감지실패';
+
+  if (write && mapSheet) {
+    const c = det.cols || {};
+    const rowVals = [
+      name,
+      det.headerRow || '',
+      det.ok ? det.dataStart : '',
+      c.customerName ? colLetter_(c.customerName) : '',
+      c.accessNo ? colLetter_(c.accessNo) : '',
+      c.gift ? colLetter_(c.gift) : '',
+      c.giftPhone ? colLetter_(c.giftPhone) : '',
+      det.status,
+      det.ok
+        ? LEGACY_FIELDS.map(f => f.title + '=' + (det.headers[f.key] || '')).join(' | ')
+        : det.reason
+    ];
+    const prev = saved ? saved.values.slice(0, 9).map(str_) : null;
+    if (!prev || prev.join('\u0001') !== rowVals.map(x => str_(x)).join('\u0001')) {
+      const row = saved ? saved.row : Math.max(mapSheet.getLastRow() + 1, 2);
+      mapSheet.getRange(row, 2, 1, 2).setNumberFormat('0');
+      mapSheet.getRange(row, 1, 1, LEGACY_MAP_HEADERS.length).setValues([rowVals.concat([
+        Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss')
+      ])]);
+    }
+  }
+
+  return det;
+}
+
+/*
+ * 기존 장표에서 개통건 읽기 (읽기 전용)
+ * 접속번호 칸에 숫자 8자리 이상 있는 행만 개통건으로 인정 (합계/빈 행 제외)
+ */
+function readLegacyRows_(sh, map) {
+  const lastRow = sh.getLastRow();
+  if (!map.ok || lastRow < map.dataStart) return [];
+  const n = lastRow - map.dataStart + 1;
+  // 필요한 4개 열만 각각 읽음 (다른 열은 읽지 않음)
+  const col = {};
+  LEGACY_FIELDS.forEach(f => {
+    col[f.key] = sh.getRange(map.dataStart, map.cols[f.key], n, 1).getDisplayValues();
+  });
+  const month = legacyMonthKey_(sh.getName());
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const accessNo = str_(col.accessNo[i][0]);
+    if (digits_(accessNo).length < 8) continue;
+    const customerName = str_(col.customerName[i][0]);
+    if (/^(합계|소계|총계|계)$/.test(customerName.replace(/\s/g, ''))) continue;
+    out.push({
+      source: 'legacy',
+      id: 'L-' + month + '-' + (map.dataStart + i),
+      sheet: str_(sh.getName()),
+      row: map.dataStart + i,
+      customerName: customerName,
+      accessNo: accessNo,
+      gift: str_(col.gift[i][0]),
+      giftPhone: formatPhone_(col.giftPhone[i][0]),
+      worker: '',
+      lineType: '',
+      createdAt: ''
+    });
+  }
+  // 최신 입력이 위로 (장표 아래쪽 행이 최근)
+  return out.reverse();
+}
+
+function readLegacyMonth_(ss, month, write) {
+  const sh = findLegacySheet_(ss, month);
+  if (!sh) {
+    return { sheet: '', ok: false, status: '', reason: '기존 장표 없음', mapping: null, rows: [] };
+  }
+  if (sh === 'MULTI') {
+    return { sheet: '', ok: false, status: '감지실패', reason: '같은 달 시트가 여러 개', mapping: null, rows: [] };
+  }
+  const map = resolveLegacyMapping_(ss, sh, write);
+  const rows = map.ok ? readLegacyRows_(sh, map) : [];
+  // 같은 장표 안에서 같은 접속번호가 반복되면 첫 건(최신)만
+  const seen = {};
+  const uniq = rows.filter(r => {
+    const k = digits_(r.accessNo);
+    if (seen[k]) return false;
+    seen[k] = true;
+    return true;
+  });
+  return {
+    sheet: str_(sh.getName()),
+    ok: !!map.ok,
+    status: map.status,
+    reason: map.reason || '',
+    mapping: map.ok ? LEGACY_FIELDS.map(f => ({
+      field: f.title,
+      col: colLetter_(map.cols[f.key]),
+      header: (map.headers && map.headers[f.key]) || ''
+    })).concat([{ field: '헤더행/데이터시작행', col: (map.headerRow || '-') + ' / ' + map.dataStart, header: '' }]) : null,
+    rows: uniq
+  };
+}
+
+/*
+ * 전체 기존 장표 연동 점검 (개통리스트 하단 '전체 월 점검' 버튼)
+ */
+function getLegacyStatus() {
+  const ss = ss_();
+  return ss.getSheets()
+    .map(sh => ({ sh: sh, month: legacyMonthKey_(sh.getName()) }))
+    .filter(x => x.month)
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map(x => {
+      const r = readLegacyMonth_(ss, x.month, true);
+      return { month: x.month, sheet: r.sheet, ok: r.ok, status: r.status, reason: r.reason, mapping: r.mapping, count: r.rows.length };
+    });
+}
+

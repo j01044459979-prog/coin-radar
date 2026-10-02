@@ -34,6 +34,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 .card .v{font-size:14px;line-height:1.5;word-break:break-word;margin-top:2px}
 .card .meta{font-size:11px;color:#9ca3af;margin-top:10px}
 .empty{text-align:center;color:#9ca3af;font-size:14px;padding:40px 0}
+.legacy{margin-top:18px;font-size:13px;color:#4b5563}
+.legacy summary{font-weight:800;color:#6b7280;padding:6px 0;cursor:pointer}
+.lg{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;margin-top:8px;line-height:1.7;word-break:break-word}
+.lg b{color:#111827}
+.lg .bad{color:#b45309}
 
 /* 폼 */
 .form{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
@@ -118,6 +123,12 @@ tfoot td{background:#f8fafc;border-top:2px solid #d1d5db;border-bottom:0;font-we
     <input id="search" class="search" placeholder="고객명 또는 접속번호 검색" oninput="renderList()">
     <div class="count" id="listCount"></div>
     <div id="list"></div>
+    <details class="legacy" id="legacyBox">
+      <summary>기존 장표 연동 상태</summary>
+      <div id="legacyStatus"></div>
+      <button type="button" class="check" id="legacyAllBtn" onclick="checkAllLegacy()">전체 월 점검</button>
+      <div id="legacyAll"></div>
+    </details>
   </section>
 
   <!-- 직원들 개통보고 -->
@@ -217,7 +228,8 @@ function renderAll(){
 /* ===== 개통리스트 ===== */
 function renderList(){
   const q = document.getElementById('search').value.trim().toLowerCase();
-  const qd = q.replace(/\D/g, '');
+  // 숫자/공백/하이픈만 입력했을 때만 접속번호 숫자 비교 (고객명 검색어의 숫자로 오검색 방지)
+  const qd = /^[\d\s-]+$/.test(q) ? q.replace(/\D/g, '') : '';
   const list = (DATA.list || []).filter(r => {
     if (!q) return true;
     return String(r.customerName).toLowerCase().includes(q) ||
@@ -243,9 +255,46 @@ function renderList(){
       <div class="v">${esc(r.gift || '-')}</div>
       <div class="k">사은품 수령번호</div>
       <div class="v">${esc(r.giftPhone || '-')}</div>
-      <div class="meta">${esc(r.worker)} · ${esc(r.lineType)} · ${esc(String(r.createdAt).slice(5, 16))}</div>
+      <div class="meta" data-source="${esc(r.source)}">${r.source === 'legacy'
+        ? '기존 장표 · ' + esc(r.sheet) + ' ' + esc(r.row) + '행'
+        : esc(r.worker) + ' · ' + esc(r.lineType) + ' · ' + esc(String(r.createdAt).slice(5, 16))}</div>
     </div>
   `).join('');
+  renderLegacyStatus();
+}
+
+/* ===== 기존 장표 연동 상태 ===== */
+function legacyHtml(x){
+  if (!x.sheet) return `<div class="lg"><b>${esc(monthLabel(x.month || MONTH))}</b> · 기존 장표 없음 (웹앱 데이터만 표시)</div>`;
+  const map = x.mapping ? x.mapping.map(m => `${esc(m.field)}: <b>${esc(m.col)}</b>${m.header ? ' (' + esc(m.header) + ')' : ''}`).join('<br>') : '';
+  return `<div class="lg"><b>${esc(x.sheet)}</b> · 상태 ${esc(x.status || '-')}
+    ${x.ok ? ' · 읽은 개통건 <b>' + (x.read != null ? x.read : x.count) + '건</b>' + (x.shown != null ? ' (중복 제외 표시 ' + x.shown + '건)' : '') : ''}
+    ${x.ok ? '<br>' + map : '<br><span class="bad">연결 안 함: ' + esc(x.reason) + '</span>'}</div>`;
+}
+
+function renderLegacyStatus(){
+  const l = DATA.legacy;
+  document.getElementById('legacyStatus').innerHTML = l ? legacyHtml(Object.assign({ month: MONTH }, l)) : '';
+}
+
+function checkAllLegacy(){
+  const btn = document.getElementById('legacyAllBtn');
+  btn.disabled = true;
+  btn.textContent = '점검 중...';
+  google.script.run
+    .withSuccessHandler(list => {
+      btn.disabled = false;
+      btn.textContent = '전체 월 점검';
+      document.getElementById('legacyAll').innerHTML = list.length
+        ? list.map(legacyHtml).join('')
+        : '<div class="lg">기존 월별 장표가 없습니다.</div>';
+    })
+    .withFailureHandler(err => {
+      btn.disabled = false;
+      btn.textContent = '전체 월 점검';
+      toast(err && err.message ? err.message : '점검 실패');
+    })
+    .getLegacyStatus();
 }
 
 /* ===== 직원들 개통보고 (붙여넣기) ===== */
