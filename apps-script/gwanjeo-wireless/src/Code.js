@@ -513,6 +513,38 @@ function findBenefitCol_(sh){
 }
 
 
+/*
+ * 개통 저장: '동판' 헤더 열 찾기 (읽기 전용)
+ * 1~9행 헤더에서 글자가 정확히 '동판'인 열 (실제 장표: AQ열 8행)
+ * 1개 열일 때만 사용 / 없거나 2개 이상이면 0 → 저장 중단
+ */
+function findWiredCol_(sh){
+
+  var head=
+    sh.getRange(1,1,9,44)
+    .getDisplayValues();
+
+  var hits=[];
+
+  for(var c=1;c<=44;c++){
+
+    if(
+      head.some(
+        function(r){
+          return norm(r[c-1])==='동판';
+        }
+      )
+    ){
+      hits.push(c);
+    }
+  }
+
+  return hits.length===1
+    ?hits[0]
+    :0;
+}
+
+
 /* =========================================================
    월 장표 읽기
 ========================================================= */
@@ -3799,7 +3831,7 @@ function parseActivationText(text){
    기본 개통정보
    C No. / D 개통일 / E 고객 / F CTN
    G 종류 / H 모델명 / J 요금제 / M 직원명
-   + 기존대로 AL 카드 / AM 카드사 / AO 보험 / AP 부가 / AR 동판
+   + 기존대로 AL 카드 / AM 카드사 / AO 보험 / AP 부가 / 동판('동판' 헤더 열, AQ)
 
    A 검수완료, B 메모, N 총 확보금액부터
    고객혜택·사용금액 등 예산 영역은 값/수식/서식 모두 건드리지 않음
@@ -3886,6 +3918,21 @@ function saveCaseRecord_(x){
       throw new Error(
         target.title+
         ' AA열 헤더가 (추지)기기값이 아닙니다. 저장하지 않았습니다.'
+      );
+    }
+
+    /*
+     * 동판 → '동판' 헤더 열 (실제 장표 AQ열)
+     * 헤더를 못 찾거나 여러 개면 엉뚱한 열에 쓰지 않고 저장 중단
+     */
+    var wiredCol=
+      findWiredCol_(sh);
+
+    if(!wiredCol){
+
+      throw new Error(
+        target.title+
+        ' 장표에서 \'동판\' 헤더 열을 확인하지 못했습니다. 저장하지 않았습니다.'
       );
     }
 
@@ -4028,7 +4075,7 @@ function saveCaseRecord_(x){
     /*
      * 카드/보험/부가/유선 (기존 저장 로직 유지)
      * AL 카드 여부 → 리스크관리·직원별 카드 실적에 사용
-     * AM 카드사 / AO 보험 / AP 부가서비스 / AR 동판
+     * AM 카드사 / AO 보험 / AP 부가서비스 / 동판('동판' 헤더 열, 실제 AQ)
      */
 
     if(
@@ -4077,7 +4124,7 @@ function saveCaseRecord_(x){
 
     sh.getRange(
       row,
-      44
+      wiredCol
     )
     .setValue(
       norm(
