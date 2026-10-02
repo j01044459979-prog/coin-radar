@@ -439,6 +439,39 @@ function checkCaseHeaders_(sh){
 }
 
 
+/*
+ * 홈 예산: '고객혜택' 확보 열 찾기 (읽기 전용)
+ * 1~9행 헤더 중 N열 이후에서 글자가 정확히 '고객혜택'인 열
+ * ('고객혜택사용' 등은 제외), 1개 열일 때만 사용 / 아니면 0
+ */
+function findBenefitCol_(sh){
+
+  var head=
+    sh.getRange(1,1,9,44)
+    .getDisplayValues();
+
+  var hits=[];
+
+  for(var c=14;c<=44;c++){
+
+    var found=
+      head.some(
+        function(r){
+          return norm(r[c-1])==='고객혜택';
+        }
+      );
+
+    if(found){
+      hits.push(c);
+    }
+  }
+
+  return hits.length===1
+    ?hits[0]
+    :0;
+}
+
+
 /* =========================================================
    월 장표 읽기
 ========================================================= */
@@ -490,6 +523,17 @@ function readCases_(
           info.title+
           ' 헤더 확인 필요: '+
           headerProblems.join(', ')
+        );
+      }
+
+      var benefitCol=
+        findBenefitCol_(sh);
+
+      if(!benefitCol){
+
+        warnings.push(
+          info.title+
+          ' 고객혜택 확보 열 확인 필요 (홈 예산 고객혜택 0원, 전액 기타로 표시)'
         );
       }
 
@@ -858,7 +902,18 @@ function readCases_(
               useGbPlan,
 
             totalUsed:
-              totalUsed
+              totalUsed,
+
+
+            /*
+             * 홈 예산 분리용
+             * '고객혜택' 헤더 열 확보금액
+             */
+
+            benefitSecured:
+              benefitCol
+                ?amount(r[benefitCol-1])
+                :0
           });
         }
       );
@@ -2954,6 +3009,34 @@ function getDashboardData(
 
 
   /* ===============================================
+     홈 예산 분리 (장표 기반 확보액)
+     고객혜택 확보액 = '고객혜택' 헤더 열 합계
+     기타 확보액 = 총 확보금액(N) 합계 - 고객혜택 확보액
+     → 고객혜택 + 기타 = 기존 장표 기반 총 확보액
+  =============================================== */
+
+  var customerBenefitTotal=
+    model.cases.reduce(
+      function(sum,c){
+
+        return(
+          sum+
+          (
+            Number(
+              c.benefitSecured
+            )||0
+          )
+        );
+      },
+      0
+    );
+
+  var otherSecuredTotal=
+    benefitTotal-
+    customerBenefitTotal;
+
+
+  /* ===============================================
      사용금액
      Z열 총 사용금액 전체 합계
   =============================================== */
@@ -3122,6 +3205,17 @@ function getDashboardData(
 
       benefitTotal:
         benefitTotal,
+
+
+      /*
+       * 홈 예산: 장표 기반 확보액 분리
+       */
+
+      customerBenefitTotal:
+        customerBenefitTotal,
+
+      otherSecuredTotal:
+        otherSecuredTotal,
 
 
       /*

@@ -140,6 +140,38 @@
       overflow-wrap:anywhere;
     }
 
+    .budget-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      gap:12px;
+      padding:9px 0;
+    }
+
+    .budget-row .label{
+      color:#6b7280;
+      font-size:14px;
+      font-weight:700;
+      flex:0 1 auto;
+      min-width:0;
+    }
+
+    .budget-row .value{
+      font-size:18px;
+      font-weight:900;
+      text-align:right;
+      white-space:nowrap;
+    }
+
+    .budget-row.total .label{
+      color:#111827;
+    }
+
+    .budget-sep{
+      border-top:1px solid #e5e7eb;
+      margin:6px 0;
+    }
+
     .panel{
       background:#fff;
       border:1px solid #e5e7eb;
@@ -859,10 +891,15 @@
 
     <div id="warningBox"></div>
 
-    <div
-      id="homeSummary"
-      class="summary-grid"
-    ></div>
+    <div class="panel">
+
+      <div class="section-title">
+        예산
+      </div>
+
+      <div id="homeSummary"></div>
+
+    </div>
 
     <div class="panel">
 
@@ -1566,17 +1603,23 @@ function renderHome(){
     DATA.summary||{};
 
   /*
-   * 고객혜택 확보금액
-   * = 장표 총 확보금액 합계
+   * 장표 기반 확보액
+   * 고객혜택 = '고객혜택' 헤더 열 합계
+   * 기타 = 총 확보금액 합계 - 고객혜택 (중복 없음)
    */
-  const customerSecured=
+  const benefitSecured=
     Number(
-      s.benefitTotal||0
+      s.customerBenefitTotal||0
+    );
+
+  const otherSecured=
+    Number(
+      s.otherSecuredTotal||0
     );
 
   /*
    * 스팟 확보금액
-   * = 스팟 달성금액 합계
+   * = 스팟 달성금액 합계 (웹앱 계산)
    */
   const spotSecured=
     Number(
@@ -1592,85 +1635,31 @@ function renderHome(){
     );
 
   /*
-   * 전체 잔여금액
-   *
-   * 고객혜택 확보금액
-   * +
-   * 스팟 확보금액
-   * -
-   * 사용금액
+   * 잔여금액
+   * = 고객혜택 + 기타 + 스팟 - 사용금액
    */
   const totalRemaining=
-    customerSecured+
+    benefitSecured+
+    otherSecured+
     spotSecured-
     used;
 
-  const items=[
-
-    [
-      '개통건수',
-      Number(
-        s.caseCount||0
-      )+'건'
-    ],
-
-    [
-      '고객혜택 확보금액',
-      money(
-        customerSecured
-      )
-    ],
-
-    [
-      '스팟 확보금액',
-      money(
-        spotSecured
-      )
-    ],
-
-    [
-      '사용금액',
-      money(
-        used
-      )
-    ],
-
-    [
-      '잔여금액',
-      money(
-        totalRemaining
-      )
-    ],
-
-    [
-      '카드 미완료',
-      Number(
-        s.riskIncomplete||0
-      )+'건'
-    ]
-
-  ];
+  const row=(label,value,cls)=>`
+    <div class="budget-row ${cls||''}">
+      <div class="label">${label}</div>
+      <div class="value">${money(value)}</div>
+    </div>
+  `;
 
   document
     .getElementById('homeSummary')
     .innerHTML=
-      items
-        .map(
-          x=>`
-            <div class="summary">
-
-              <div class="label">
-                ${x[0]}
-              </div>
-
-              <div class="value">
-                ${x[1]}
-              </div>
-
-            </div>
-          `
-        )
-        .join('');
+      row('고객혜택 확보액',benefitSecured)+
+      row('기타 확보액',otherSecured)+
+      row('스팟 확보액',spotSecured)+
+      '<div class="budget-sep"></div>'+
+      row('사용금액',used)+
+      row('잔여금액',totalRemaining,'total');
 }
 
 
