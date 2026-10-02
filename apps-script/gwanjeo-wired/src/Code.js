@@ -14,6 +14,20 @@ const SHEET_REPORT = '유선_개통보고';
 const SHEET_RULES = '유선_설정';
 const SHEET_LISTS = '유선_목록';
 const SHEET_LEGACY_MAP = '유선_기존장표매핑';
+const SHEET_LEGACY_STAT_MAP = '유선_기존장표실적매핑';
+
+/*
+ * 한 번의 요청 안에서 같은 시트 상단 헤더를 두 번 읽지 않도록 캐시
+ */
+const HEAD_CACHE_ = {};
+function resetHeadCache_() {
+  Object.keys(HEAD_CACHE_).forEach(k => { delete HEAD_CACHE_[k]; });
+}
+function headValues_(sh, scan, lastCol) {
+  const key = sh.getName() + '|' + scan + '|' + lastCol;
+  if (!HEAD_CACHE_[key]) HEAD_CACHE_[key] = sh.getRange(1, 1, scan, lastCol).getDisplayValues();
+  return HEAD_CACHE_[key];
+}
 
 /*
  * 유선_개통보고 열 구조 (순서 변경 금지, 추가는 맨 뒤에)
@@ -276,7 +290,7 @@ function readReports_(reportSheet, month) {
 /*******************************************************
  * 실적 집계 (항상 원본 + 분류규칙으로 다시 계산)
  *******************************************************/
-function computeStats_(reports, rules, workers) {
+function computeStats_(reports, rules, workers, legacyRows) {
 
   const byWorker = {};
   const order = workers.slice();
@@ -319,6 +333,16 @@ function computeStats_(reports, rules, workers) {
     }
   });
 
+  // 기존 장표 실적 (실적 열 직접 집계 결과) 합산
+  (legacyRows || []).forEach(lr => {
+    const w = str_(lr.worker) || '미지정';
+    if (!byWorker[w]) {
+      byWorker[w] = blank(w);
+      order.push(w);
+    }
+    METRICS.forEach(m => { byWorker[w][m.key] += Number(lr[m.key]) || 0; });
+  });
+
   const rows = order.map(w => byWorker[w]);
   const total = blank('합계');
   rows.forEach(r => METRICS.forEach(m => { total[m.key] += r[m.key]; }));
@@ -337,6 +361,7 @@ function computeStats_(reports, rules, workers) {
  * 화면 데이터 (선택 월 기준)
  *******************************************************/
 function getAppData(month) {
+  resetHeadCache_();
 
   const m = validMonth_(month) ? str_(month) : currentMonth_();
   const ss = ss_();
@@ -366,7 +391,9 @@ function getAppData(month) {
    * 기존 월별 장표(읽기 전용)의 같은 달 개통건을 화면에서만 합침
    * 같은 적용월 + 같은 접속번호(숫자 기준)는 웹앱 데이터 우선, 한 건만 표시
    */
-  const legacy = readLegacyMonth_(ss, m, true);
+  const webKeys = {};
+  reports.forEach(r => { const k = digits_(r.accessNo); if (k) webKeys[k] = true; });
+  const legacy = readLegacyMonth_(ss, m, true, webKeys);
   const seen = {};
   webList.forEach(r => { const k = digits_(r.accessNo); if (k) seen[k] = true; });
   const legacyList = [];
@@ -394,7 +421,16 @@ function getAppData(month) {
       read: legacy.rows.length,
       shown: legacyList.length
     },
-    stats: computeStats_(reports, ruleInfo.rules, workers.length ? workers : DEFAULT_WORKERS)
+    legacyStats: legacy.stats ? {
+      ok: legacy.stats.ok,
+      sheet: legacy.stats.sheet,
+      reason: legacy.stats.reason,
+      excluded: legacy.stats.excluded
+    } : null,
+    stats: computeStats_(
+      reports, ruleInfo.rules, workers.length ? workers : DEFAULT_WORKERS,
+      legacy.stats && legacy.stats.ok ? legacy.stats.byWorker : []
+    )
   };
 }
 
@@ -762,7 +798,7 @@ function detectLegacyMapping_(sh) {
   }
 
   const scan = Math.min(LEGACY_HEADER_SCAN_ROWS, lastRow);
-  const head = sh.getRange(1, 1, scan, lastCol).getDisplayValues();
+  const head = headValues_(sh, scan, lastCol);
 
   // 접속번호 헤더가 있는 행
   let hr = -1;
@@ -1067,7 +1103,7 @@ function readLegacyRows_(sh, map, sample) {
   return out.reverse();
 }
 
-function readLegacyMonth_(ss, month, write) {
+function readLegacyMonth_(ss, month, write, webKeys) {
   const sh = findLegacySheet_(ss, month);
   if (!sh) {
     return { sheet: '', ok: false, status: '', reason: '기존 장표 없음', mapping: null, rows: [] };
@@ -1078,6 +1114,11 @@ function readLegacyMonth_(ss, month, write) {
   const map = resolveLegacyMapping_(ss, sh, write);
   const sample = {};
   const rows = map.ok ? readLegacyRows_(sh, map, sample) : [];
+  const stats = webKeys
+    ? (map.ok
+      ? readLegacyStats_(sh, map, webKeys, resolveLegacyStatCols_(ss, sh, write))
+      : { ok: false, sheet: str_(sh.getName()), reason: '개통리스트 매핑 미확정: ' + map.reason, excluded: 0 })
+    : null;
   // 같은 장표 안에서 같은 접속번호가 반복되면 첫 건(최신)만
   const seen = {};
   const uniq = rows.filter(r => {
@@ -1097,6 +1138,7 @@ function readLegacyMonth_(ss, month, write) {
       header: (map.headers && map.headers[f.key]) || ''
     })).concat([{ field: '헤더행/데이터시작행', col: (map.headerRow || '-') + ' / ' + map.dataStart, header: '' }]) : null,
     sample: sample.text || '',
+    stats: stats,
     rows: uniq
   };
 }
@@ -1105,6 +1147,7 @@ function readLegacyMonth_(ss, month, write) {
  * 전체 기존 장표 연동 점검 (개통리스트 하단 '전체 월 점검' 버튼)
  */
 function getLegacyStatus() {
+  resetHeadCache_();
   const ss = ss_();
   return ss.getSheets()
     .map(sh => ({ sh: sh, month: legacyMonthKey_(sh.getName()) }))
@@ -1198,6 +1241,12 @@ function diagnoseLegacyStats_(ss, month) {
     .filter(c => c.parts.some(t => STAT_TYPE_RE.test(t) && !STAT_EXCLUDE_RE.test(t)))
     .map(c => ({ col: colLetter_(c.col), header: c.text, values: valueCounts_(sh, c.col, start, keepRows) }));
 
+  // 실적 열 직접 집계 결과 (실적사항에 반영되는 기존 장표 숫자와 동일 로직)
+  const webKeys = {};
+  const rsh = ss.getSheetByName(SHEET_REPORT);
+  if (rsh) readReports_(rsh, month).forEach(r => { const k = digits_(r.accessNo); if (k) webKeys[k] = true; });
+  const legacyStats = readLegacyStats_(sh, map, webKeys, resolveLegacyStatCols_(ss, sh, false));
+
   return {
     month: month,
     sheet: str_(sh.getName()),
@@ -1205,6 +1254,7 @@ function diagnoseLegacyStats_(ss, month) {
     rows: keepRows.length,
     staff: staff,
     types: types,
+    legacyStats: legacyStats,
     reason: (!staff.length ? '담당 직원 헤더 후보를 찾지 못함. ' : '') + (!types.length ? '실적유형 헤더 후보를 찾지 못함.' : '')
   };
 }
@@ -1213,7 +1263,197 @@ function diagnoseLegacyStats_(ss, month) {
  * [실적 매핑 확인] 버튼: 선택한 월만
  */
 function getLegacyStatsDiag(month) {
+  resetHeadCache_();
   if (!validMonth_(month)) throw new Error('적용월을 확인해주세요.');
   return diagnoseLegacyStats_(ss_(), str_(month));
+}
+
+
+/*******************************************************
+ * 기존 장표 실적 집계 (실적 열 직접 합산, 읽기 전용)
+ * - 열 번호 고정 없음: 헤더명이 정확히 일치하는 열을 찾음
+ *   판매자: 판매자/직원명/담당자
+ *   순신규실적: 순신규 / 신동: 신동
+ *   순신규동판: 동판순신규/순신규동판 / 약갱동판: 동판약갱/약갱동판
+ * - 항목마다 정확히 1개 열이 있어야 연동, 아니면 오류 표시 (추측 안 함)
+ * - 셀 숫자를 그대로 합산 (빈칸/'-' = 0)
+ * - 같은 접속번호가 유선_개통보고(같은 월)에 있으면 기존 장표 건은 제외
+ *******************************************************/
+const LEGACY_STAT_FIELDS = [
+  { key: 'worker',    title: '판매자',     names: ['판매자', '직원명', '담당자'] },
+  { key: 'newSub',    title: '순신규',     names: ['순신규'] },
+  { key: 'newLine',   title: '동판순신규', names: ['동판순신규', '순신규동판'] },
+  { key: 'newDong',   title: '신동',       names: ['신동'] },
+  { key: 'renewLine', title: '동판약갱',   names: ['동판약갱', '약갱동판'] }
+];
+
+/*
+ * 헤더 영역의 열별 제목 조각 (개통리스트 자동감지와 같은 헤더행 규칙)
+ */
+function legacyStatHeaderParts_(sh) {
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return null;
+  const scan = Math.min(LEGACY_HEADER_SCAN_ROWS, lastRow);
+  const head = headValues_(sh, scan, lastCol);
+  let hr = -1;
+  for (let r = 0; r < head.length && hr < 0; r++) {
+    if (head[r].some(v => LEGACY_MATCHERS.accessNo(normHeader_(v)))) hr = r;
+  }
+  if (hr < 0) return null;
+  const accCols = head[hr].map((v, i) => LEGACY_MATCHERS.accessNo(normHeader_(v)) ? i : -1).filter(i => i >= 0);
+  const below = hr + 1 < head.length ? head[hr + 1] : null;
+  const belowIsHeader = below && accCols.every(i => digits_(below[i]).length < 8) &&
+    below.some(v => /[가-힣A-Za-z]/.test(str_(v)) && digits_(v).length < 8);
+  const headerRows = [hr - 1, hr, belowIsHeader ? hr + 1 : -1].filter(r => r >= 0 && r < head.length);
+  const out = [];
+  for (let c = 0; c < lastCol; c++) {
+    out.push(headerRows.map(r => normHeader_(head[r][c])).filter(Boolean));
+  }
+  return out;
+}
+
+function statNumber_(v) {
+  if (typeof v === 'number') return isFinite(v) ? { n: v, ok: true } : { n: 0, ok: false };
+  const s = str_(v).replace(/[,\s]/g, '');
+  if (!s || s === '-') return { n: 0, ok: true };
+  if (/^-?\d+(\.\d+)?$/.test(s)) return { n: Number(s), ok: true };
+  return { n: 0, ok: false };
+}
+
+/*
+ * 실적 열 헤더 자동감지 (헤더명 정확 일치, 항목마다 1개 열)
+ */
+function detectLegacyStatCols_(sh) {
+  const parts = legacyStatHeaderParts_(sh);
+  if (!parts) return { ok: false, reason: "'접속번호' 헤더 행을 찾지 못함", cols: {} };
+  const cols = {};
+  const problems = [];
+  LEGACY_STAT_FIELDS.forEach(f => {
+    const hits = [];
+    parts.forEach((ps, i) => { if (ps.some(t => f.names.indexOf(t) >= 0)) hits.push(i + 1); });
+    if (hits.length === 1) cols[f.key] = hits[0];
+    else if (!hits.length) problems.push(f.title + ' 헤더 없음');
+    else problems.push(f.title + ' 헤더가 여러 개(' + hits.map(colLetter_).join(', ') + ')');
+  });
+  return problems.length ? { ok: false, reason: problems.join(' / '), cols: cols } : { ok: true, reason: '', cols: cols };
+}
+
+const LEGACY_STAT_MAP_HEADERS = ['시트명', '판매자열', '순신규열', '동판순신규열', '신동열', '동판약갱열', '상태', '확인내용', '갱신일시'];
+
+function ensureLegacyStatMapSheet_(ss) {
+  let sh = ss.getSheetByName(SHEET_LEGACY_STAT_MAP);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_LEGACY_STAT_MAP);
+    sh.getRange(1, 1, 1, LEGACY_STAT_MAP_HEADERS.length).setValues([LEGACY_STAT_MAP_HEADERS]).setFontWeight('bold');
+    sh.getRange(1, LEGACY_STAT_MAP_HEADERS.length + 2, 3, 1).setValues([
+      ['[안내] 기존 장표 실적 열(판매자/순신규/동판순신규/신동/동판약갱)'],
+      ['상태 자동/감지실패 : 헤더명으로 매번 확인 · 상태 확정 : 입력한 열 문자를 그대로 사용(헤더 탐색 안 함)'],
+      ['헤더 후보 — 판매자: 판매자·직원명·담당자 / 순신규 / 신동 / 동판순신규·순신규동판 / 동판약갱·약갱동판']
+    ]);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/*
+ * 실적 열 결정: '확정' 행이 있으면 그 열 그대로, 아니면 헤더 자동감지(write 시 기록)
+ */
+function resolveLegacyStatCols_(ss, sh, write) {
+  const name = str_(sh.getName());
+  const mapSheet = write ? ensureLegacyStatMapSheet_(ss) : ss.getSheetByName(SHEET_LEGACY_STAT_MAP);
+  let saved = null;
+  if (mapSheet && mapSheet.getLastRow() >= 2) {
+    mapSheet.getRange(2, 1, mapSheet.getLastRow() - 1, LEGACY_STAT_MAP_HEADERS.length).getDisplayValues()
+      .forEach((r, i) => { if (str_(r[0]) === name) saved = { row: i + 2, values: r }; });
+  }
+  if (saved && str_(saved.values[6]) === '확정') {
+    const cols = {};
+    LEGACY_STAT_FIELDS.forEach((f, i) => { cols[f.key] = colIndex_(saved.values[i + 1]); });
+    const bad = LEGACY_STAT_FIELDS.filter(f => !cols[f.key]).map(f => f.title);
+    return bad.length
+      ? { ok: false, status: '확정', reason: '확정 행 입력 확인 필요: ' + bad.join(', ') + ' 열', cols: {} }
+      : { ok: true, status: '확정', reason: '', cols: cols };
+  }
+  const det = detectLegacyStatCols_(sh);
+  det.status = det.ok ? '자동' : '감지실패';
+  if (write && mapSheet) {
+    const rowVals = [name].concat(LEGACY_STAT_FIELDS.map(f => det.cols[f.key] ? colLetter_(det.cols[f.key]) : ''))
+      .concat([det.status, det.reason]);
+    const prev = saved ? saved.values.slice(0, 8).map(str_).join('\u0001') : null;
+    if (prev !== rowVals.map(x => str_(x)).join('\u0001')) {
+      const row = saved ? saved.row : Math.max(mapSheet.getLastRow() + 1, 2);
+      mapSheet.getRange(row, 1, 1, LEGACY_STAT_MAP_HEADERS.length).setValues([
+        rowVals.concat([Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss')])
+      ]);
+    }
+  }
+  return det;
+}
+
+function readLegacyStats_(sh, map, webKeys, statMap) {
+  const sheet = str_(sh.getName());
+  if (!statMap.ok) {
+    return { ok: false, sheet: sheet, status: statMap.status, reason: statMap.reason, excluded: 0 };
+  }
+  const cols = statMap.cols;
+
+  const lastRow = sh.getLastRow();
+  const start = map.dataStart;
+  const result = {
+    ok: true,
+    sheet: sheet,
+    status: statMap.status,
+    reason: '',
+    cols: LEGACY_STAT_FIELDS.map(f => ({ field: f.title, col: colLetter_(cols[f.key]) })),
+    rows: 0,
+    excluded: 0,
+    nonNumeric: 0,
+    byWorker: []
+  };
+  if (lastRow < start) return result;
+
+  const n = lastRow - start + 1;
+  const acc = sh.getRange(start, map.cols.accessNo, n, 1).getDisplayValues();
+  const cust = sh.getRange(start, map.cols.customerName, n, 1).getDisplayValues();
+  const seller = sh.getRange(start, cols.worker, n, 1).getDisplayValues();
+  const mvals = {};
+  METRICS.forEach(m => { mvals[m.key] = sh.getRange(start, cols[m.key], n, 1).getValues(); });
+
+  const by = {};
+  const order = [];
+  for (let i = 0; i < n; i++) {
+    const name = str_(seller[i][0]);
+    const total = /^(합계|소계|총계|계)$/;
+    if (total.test(str_(cust[i][0]).replace(/\s/g, '')) || total.test(name.replace(/\s/g, ''))) continue;
+
+    const nums = {};
+    let any = false;
+    METRICS.forEach(m => {
+      const x = statNumber_(mvals[m.key][i][0]);
+      if (!x.ok) result.nonNumeric++;
+      nums[m.key] = x.n;
+      if (x.n) any = true;
+    });
+
+    const key = digits_(acc[i][0]);
+    const isCase = key.length >= 8;
+    if (!isCase && !(name && any)) continue;          // 개통건/실적 행이 아니면 제외
+    if (isCase && webKeys && webKeys[key]) {          // 웹앱 보고와 같은 접속번호 → 웹앱 우선
+      result.excluded++;
+      continue;
+    }
+
+    const w = name || '미지정';
+    if (!by[w]) {
+      by[w] = { worker: w };
+      METRICS.forEach(m => { by[w][m.key] = 0; });
+      order.push(w);
+    }
+    METRICS.forEach(m => { by[w][m.key] += nums[m.key]; });
+    result.rows++;
+  }
+  result.byWorker = order.map(w => by[w]);
+  return result;
 }
 

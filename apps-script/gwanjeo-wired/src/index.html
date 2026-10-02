@@ -284,10 +284,23 @@ function statsDiagHtml(d){
     ? list.map(c => `${title}: <b>${esc(c.header)}</b> (${esc(c.col)}열)<br>
         <span style="color:#6b7280">발견된 값: ${c.values.map(v => esc(v.value) + ' ' + v.count + '건').join(' · ')}</span>`).join('<br>')
     : `${title}: <span class="bad">후보 없음</span>`;
+  const ls = d.legacyStats;
+  let statBlock = '';
+  if (ls && ls.ok) {
+    const keys = [['newSub', '순신규'], ['newLine', '동판순신규'], ['newDong', '신동'], ['renewLine', '동판약갱']];
+    const tot = {};
+    keys.forEach(k => { tot[k[0]] = ls.byWorker.reduce((a, r) => a + (Number(r[k[0]]) || 0), 0); });
+    statBlock = `<br><b>실적 열(직접 집계)</b>: ${ls.cols.map(c => esc(c.field) + ' ' + esc(c.col) + '열').join(' · ')}<br>
+      ${ls.byWorker.map(r => esc(r.worker) + ': ' + keys.map(k => k[1] + ' ' + r[k[0]]).join(', ')).join('<br>')}<br>
+      <b>합계</b>: ${keys.map(k => k[1] + ' ' + tot[k[0]]).join(', ')}<br>
+      <span style="color:#6b7280">집계 행 ${ls.rows}건 · 웹앱 보고와 겹쳐 제외 ${ls.excluded}건${ls.nonNumeric ? ' · 숫자 아닌 실적값 ' + ls.nonNumeric + '칸(0 처리)' : ''}</span>`;
+  } else if (ls) {
+    statBlock = `<br><span class="bad">실적 연동 오류: ${esc(ls.reason)}</span>`;
+  }
   return `<div class="lg"><b>[실적 매핑 확인] ${esc(d.sheet)}</b> · 개통건 ${d.rows}건<br>
     ${block('담당자 헤더', d.staff)}<br>
     ${block('실적유형 후보 헤더', d.types)}
-    <br><span style="color:#9ca3af">※ 분류규칙 확정 전이라 실적사항에는 아직 반영하지 않습니다.</span></div>`;
+    ${statBlock}</div>`;
 }
 
 function checkStatsDiag(){
@@ -470,16 +483,21 @@ function renderStats(){
     </table>`;
 
   const note = document.getElementById('statsNote');
+  const ls = DATA.legacyStats;
+  const legacyLine = !ls ? '' : ls.ok
+    ? `<div class="note ok">기존 장표(${esc(ls.sheet)}) 실적 포함${ls.excluded ? ' · 웹앱 보고와 겹친 ' + ls.excluded + '건은 웹앱 기준' : ''}</div>`
+    : `<div class="note">기존 장표 실적 연동 오류: ${esc(ls.reason)} — 웹앱 보고만 집계했습니다.</div>`;
+  const webCount = (DATA.list || []).filter(r => r.source === 'webapp').length;
   if (s.unclassifiedCount) {
-    note.innerHTML = `<div class="note">
-      미분류 동판유형 <b>${s.unclassifiedCount}건</b> — 집계에서 빠져 있습니다.<br>
+    note.innerHTML = legacyLine + `<div class="note">
+      웹앱 보고 중 미분류 동판유형 <b>${s.unclassifiedCount}건</b> — 집계에서 빠져 있습니다.<br>
       ${s.unclassifiedTypes.map(t => esc(t.type) + ' ' + t.count + '건').join(' · ')}<br>
       '유선_설정' 시트에서 분류값을 입력하면 자동으로 다시 계산됩니다.
     </div>`;
   } else {
-    note.innerHTML = (DATA.list || []).length
-      ? '<div class="note ok">모든 개통보고가 분류되어 집계되었습니다.</div>'
-      : '';
+    note.innerHTML = legacyLine + (webCount
+      ? '<div class="note ok">웹앱 보고가 모두 분류되어 집계되었습니다.</div>'
+      : '');
   }
 }
 
