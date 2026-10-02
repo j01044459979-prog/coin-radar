@@ -33,6 +33,23 @@ button,input,select,textarea{font:inherit;color:inherit}
 .card .k{font-size:11px;color:#9ca3af;font-weight:700;margin-top:10px}
 .card .v{font-size:14px;line-height:1.5;word-break:break-word;margin-top:2px}
 .card .meta{font-size:11px;color:#9ca3af;margin-top:10px}
+/* 9월 이후: 접히는 개통건 카드 + 실적 수기 입력 */
+.mcard{padding:0;overflow:hidden}
+.mhead{display:block;width:100%;text-align:left;border:0;background:none;padding:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.mhead .top1{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.badge{flex:none;font-size:11px;font-weight:800;border-radius:999px;padding:3px 8px;background:#f3f4f6;color:#6b7280}
+.badge.done{background:#ecfdf5;color:#047857}
+.mcard.open{border-color:#111827}
+.mdetail{border-top:1px solid #f0f1f3;padding:12px 14px 14px;background:#fafafa}
+.srow{display:grid;grid-template-columns:1fr 48px 52px 48px;align-items:center;gap:6px;margin-bottom:8px}
+.srow .lbl{font-size:15px;font-weight:800}
+.srow button{height:44px;border:1px solid #d1d5db;background:#fff;border-radius:12px;font-size:22px;font-weight:900}
+.srow .num{text-align:center;font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
+.msave{width:100%;height:48px;border:0;border-radius:12px;background:#111827;color:#fff;font-size:15px;font-weight:900;margin-top:4px}
+.msave:disabled{opacity:.5}
+.mmsg{font-size:13px;font-weight:700;margin-top:8px;min-height:18px}
+.mmsg.ok{color:#047857}
+.mmsg.err{color:#b91c1c}
 .empty{text-align:center;color:#9ca3af;font-size:14px;padding:40px 0}
 .legacy{margin-top:18px;font-size:13px;color:#4b5563}
 .legacy summary{font-weight:800;color:#6b7280;padding:6px 0;cursor:pointer}
@@ -191,6 +208,7 @@ function thisMonth(){
 }
 
 function moveMonth(delta){
+  OPEN_KEY = ''; EDIT = null; LAST_MSG = null;
   const p = MONTH.split('-').map(Number);
   const d = new Date(p[0], p[1] - 1 + delta, 1);
   load(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
@@ -251,6 +269,12 @@ function renderList(){
     return;
   }
 
+  if (DATA.manualMode) {
+    renderManualCards(el, list);
+    renderLegacyStatus();
+    return;
+  }
+
   el.innerHTML = list.map(r => `
     <div class="card">
       <div class="name">${esc(r.customerName || '-')}</div>
@@ -265,6 +289,124 @@ function renderList(){
     </div>
   `).join('');
   renderLegacyStatus();
+}
+
+/* ===== 2026-09 이후: 개통건 카드 펼치기 + 실적 수기 입력 ===== */
+const MANUAL_FIELDS = [['newSub', '순신규'], ['newLine', '순동'], ['renewLine', '약동'], ['newDong', '신동']];
+let OPEN_KEY = '';
+let EDIT = null;
+let MSAVING = false;
+let LAST_MSG = null;
+
+function keyOf(r){ return String(r.accessNo || '').replace(/\D/g, ''); }
+function itemByKey(k){ return (DATA.list || []).find(r => keyOf(r) === k); }
+
+function renderManualCards(el, list){
+  el.innerHTML = list.map(r => {
+    const k = keyOf(r);
+    return `
+    <div class="card mcard ${OPEN_KEY === k ? 'open' : ''}" data-key="${esc(k)}">
+      <button type="button" class="mhead" onclick="toggleCard('${esc(k)}')">
+        <div class="top1">
+          <div>
+            <div class="name">${esc(r.customerName || '-')}</div>
+            <div class="acc">${esc(r.accessNo || '-')}</div>
+          </div>
+          <span class="badge ${r.manual ? 'done' : ''}">${r.manual ? '실적 입력완료' : '실적 미입력'}</span>
+        </div>
+        <div class="k">고객혜택</div>
+        <div class="v">${esc(r.gift || '-')}</div>
+        <div class="k">고객혜택 발송번호</div>
+        <div class="v">${esc(r.giftPhone || '-')}</div>
+        <span hidden data-source="${esc(r.source)}"></span>
+      </button>
+      <div class="mdetail" id="md-${esc(k)}" ${OPEN_KEY === k ? '' : 'hidden'}></div>
+    </div>`;
+  }).join('');
+  if (OPEN_KEY) {
+    if (itemByKey(OPEN_KEY)) renderDetail(OPEN_KEY, false);
+    else OPEN_KEY = '';
+  }
+}
+
+function toggleCard(k){
+  if (MSAVING) return;
+  const prev = OPEN_KEY;
+  if (prev) {
+    const pc = document.querySelector(`.mcard[data-key="${prev}"]`);
+    if (pc) {
+      pc.classList.remove('open');
+      const pd = document.getElementById('md-' + prev);
+      pd.hidden = true;
+      pd.innerHTML = '';
+    }
+  }
+  if (prev === k) { OPEN_KEY = ''; EDIT = null; return; }
+  OPEN_KEY = k;
+  renderDetail(k, true);
+}
+
+function renderDetail(k, fresh){
+  const r = itemByKey(k);
+  const card = document.querySelector(`.mcard[data-key="${k}"]`);
+  const box = document.getElementById('md-' + k);
+  if (!r || !card || !box) return;
+  if (fresh || !EDIT || EDIT.key !== k) {
+    const m = r.manual || {};
+    EDIT = { key: k };
+    MANUAL_FIELDS.forEach(f => { EDIT[f[0]] = Number(m[f[0]]) || 0; });
+  }
+  card.classList.add('open');
+  box.hidden = false;
+  const msg = LAST_MSG && LAST_MSG.key === k ? LAST_MSG : null;
+  box.innerHTML = MANUAL_FIELDS.map(f => `
+    <div class="srow">
+      <div class="lbl">${f[1]}</div>
+      <button type="button" aria-label="${f[1]} 줄이기" onclick="stepManual('${f[0]}',-1)">−</button>
+      <div class="num" id="mv-${f[0]}">${EDIT[f[0]]}</div>
+      <button type="button" aria-label="${f[1]} 늘리기" onclick="stepManual('${f[0]}',1)">＋</button>
+    </div>`).join('') + `
+    <button type="button" class="msave" id="msaveBtn" onclick="saveManual()">실적 저장</button>
+    <div class="mmsg ${msg ? msg.type : ''}" id="mmsg">${msg ? esc(msg.text) : ''}</div>`;
+}
+
+function stepManual(field, d){
+  if (!EDIT || MSAVING) return;
+  EDIT[field] = Math.max(0, Math.min(999, (EDIT[field] || 0) + d));
+  document.getElementById('mv-' + field).textContent = EDIT[field];
+  const mm = document.getElementById('mmsg');
+  if (mm) { mm.className = 'mmsg'; mm.textContent = ''; }
+  LAST_MSG = null;
+}
+
+function saveManual(){
+  if (MSAVING || !EDIT) return;
+  const r = itemByKey(EDIT.key);
+  if (!r) return;
+  MSAVING = true;
+  const btn = document.getElementById('msaveBtn');
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+  const payload = { month: MONTH, accessNo: r.accessNo };
+  MANUAL_FIELDS.forEach(f => { payload[f[0]] = EDIT[f[0]]; });
+  const key = EDIT.key;
+  google.script.run
+    .withSuccessHandler(res => {
+      MSAVING = false;
+      r.manual = Object.assign({}, res.values);
+      LAST_MSG = { key: key, type: 'ok', text: '실적이 저장되었습니다.' };
+      toast('실적이 저장되었습니다.');
+      load(MONTH, true); // 저장값 다시 불러오기 + 실적사항 재계산 (열린 카드 유지)
+    })
+    .withFailureHandler(err => {
+      MSAVING = false;
+      btn.disabled = false;
+      btn.textContent = '실적 저장';
+      const mm = document.getElementById('mmsg');
+      mm.className = 'mmsg err';
+      mm.textContent = err && err.message ? err.message : '저장에 실패했습니다.';
+    })
+    .saveManualStats(payload);
 }
 
 /* ===== 기존 장표 연동 상태 ===== */
@@ -495,6 +637,10 @@ function renderStats(){
     </table>`;
 
   const note = document.getElementById('statsNote');
+  if (s.manualMode) {
+    note.innerHTML = `<div class="note ${s.pending ? '' : 'ok'}">관리자 수기 입력 기준 · 실적 입력완료 ${s.entered}건${s.pending ? ' · 미입력 ' + s.pending + '건 (개통리스트에서 개통건을 눌러 입력)' : ''}</div>`;
+    return;
+  }
   const ls = DATA.legacyStats;
   const legacyLine = !ls ? '' : ls.ok
     ? `<div class="note ok">기존 장표(${esc(ls.sheet)}) 실적 포함${ls.excluded ? ' · 웹앱 보고와 겹친 ' + ls.excluded + '건은 웹앱 기준' : ''}</div>`

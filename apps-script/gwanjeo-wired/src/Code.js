@@ -353,17 +353,14 @@ function computeStats_(reports, rules, workers, legacyRows, month) {
 /*******************************************************
  * 화면 데이터 (선택 월 기준)
  *******************************************************/
-function getAppData(month) {
-  resetHeadCache_();
-
-  const m = validMonth_(month) ? str_(month) : currentMonth_();
-  const ss = ss_();
-  const sh = ensureSheets_(ss);
-
-  const workers = readColumnList_(sh.lists, 1);
-  const giftKinds = readColumnList_(sh.lists, 2);
-  const ruleInfo = readRules_(sh.rules);
+/*
+ * 선택 월 개통리스트 구성 (웹앱 보고 + 기존 장표, 같은 접속번호는 웹앱 우선)
+ * 1~8월은 v12 와 동일하게 동작, 9월 이후(isV2Month_)는 기존 장표 실적 집계를 생략하고
+ * 기존 장표 건에 판매자 값만 붙임
+ */
+function buildMonthList_(ss, sh, m, write) {
   const reports = readReports_(sh.report, m);
+  const v2 = isV2Month_(m);
 
   const webList = reports
     .slice()
@@ -386,7 +383,7 @@ function getAppData(month) {
    */
   const webKeys = {};
   reports.forEach(r => { const k = digits_(r.accessNo); if (k) webKeys[k] = true; });
-  const legacy = readLegacyMonth_(ss, m, true, webKeys);
+  const legacy = readLegacyMonth_(ss, m, write, v2 ? null : webKeys);
   const seen = {};
   webList.forEach(r => { const k = digits_(r.accessNo); if (k) seen[k] = true; });
   const legacyList = [];
@@ -396,12 +393,37 @@ function getAppData(month) {
     if (k) seen[k] = true;
     legacyList.push(r);
   });
-  const list = webList.concat(legacyList);
+  if (v2 && legacyList.length) attachLegacySellers_(ss, m, legacyList);
 
   return {
+    reports: reports,
+    legacy: legacy,
+    legacyList: legacyList,
+    list: webList.concat(legacyList)
+  };
+}
+
+function getAppData(month) {
+  resetHeadCache_();
+
+  const m = validMonth_(month) ? str_(month) : currentMonth_();
+  const ss = ss_();
+  const sh = ensureSheets_(ss);
+
+  const workers = readColumnList_(sh.lists, 1);
+  const giftKinds = readColumnList_(sh.lists, 2);
+  const ruleInfo = readRules_(sh.rules);
+  const ml = buildMonthList_(ss, sh, m, true);
+  const reports = ml.reports;
+  const legacy = ml.legacy;
+  const legacyList = ml.legacyList;
+  const list = ml.list;
+  const staff = workers.length ? workers : DEFAULT_WORKERS;
+
+  const base = {
     month: m,
     today: currentMonth_(),
-    workers: workers.length ? workers : DEFAULT_WORKERS,
+    workers: staff,
     lineTypes: ruleInfo.types,
     giftKinds: giftKinds,
     list: list,
@@ -413,19 +435,34 @@ function getAppData(month) {
       mapping: legacy.mapping,
       read: legacy.rows.length,
       shown: legacyList.length
-    },
-    legacyStats: legacy.stats ? {
-      ok: legacy.stats.ok,
-      sheet: legacy.stats.sheet,
-      reason: legacy.stats.reason,
-      excluded: legacy.stats.excluded
-    } : null,
-    stats: computeStats_(
-      reports, ruleInfo.rules, workers.length ? workers : DEFAULT_WORKERS,
-      legacy.stats && legacy.stats.ok ? legacy.stats.byWorker : [],
-      m
-    )
+    }
   };
+
+  // 2026-09 이후: 실적은 '유선_실적수기입력' 숫자만 집계
+  if (isV2Month_(m)) {
+    const manual = readManualMonth_(ss, m);
+    list.forEach(r => {
+      const e = manual[digits_(r.accessNo)];
+      r.manual = e ? { newSub: e.newSub, newLine: e.newLine, renewLine: e.renewLine, newDong: e.newDong } : null;
+    });
+    base.manualMode = true;
+    base.legacyStats = null;
+    base.stats = computeManualStats_(manual, list, staff);
+    return base;
+  }
+
+  base.legacyStats = legacy.stats ? {
+    ok: legacy.stats.ok,
+    sheet: legacy.stats.sheet,
+    reason: legacy.stats.reason,
+    excluded: legacy.stats.excluded
+  } : null;
+  base.stats = computeStats_(
+    reports, ruleInfo.rules, staff,
+    legacy.stats && legacy.stats.ok ? legacy.stats.byWorker : [],
+    m
+  );
+  return base;
 }
 
 
@@ -607,8 +644,8 @@ function lookupWarnings_(ss, fields, month) {
     out.push("작업자 '" + fields.worker + "' 는 직원 목록에 없습니다. (실적표에 별도 행으로 표시)");
   }
   if (fields.lineType && types.indexOf(fields.lineType) < 0) {
-    if (isV2Month_(month) && isRenewDongType_(fields.lineType)) {
-      // 2026-09 이후 약정갱신 동판(약동/약갱)은 자동 분류되므로 미분류 경고 없음
+    if (isV2Month_(month)) {
+      // 2026-09 이후 실적은 관리자 수기 입력으로 집계하므로 동판유형 설정 경고 없음
     } else {
       out.push("동판유형 '" + fields.lineType + "' 은 유선_설정에 없습니다. (미분류로 집계)");
     }
@@ -1684,5 +1721,164 @@ function classifyReportV2_(rep, rules) {
   }
 
   return { values: values, missing: missing };
+}
+
+
+/*******************************************************
+ * 2026-09 이후 실적 수기 입력
+ * - 관리 시트 '유선_실적수기입력' (처음 저장할 때만 생성, 조회 시에는 만들지 않음)
+ * - 식별키: 적용월 + 접속번호(숫자 기준), 같은 키는 한 행만 (있으면 덮어쓰기, 없으면 추가)
+ * - 실적사항(9월 이후) = 이 시트의 해당 월 행을 작업자별로 합산
+ *******************************************************/
+const SHEET_MANUAL = '유선_실적수기입력';
+const MANUAL_HEADERS = ['등록ID', '적용월', '접속번호', '고객명', '작업자', '순신규', '순동', '약동', '신동', '수정일시'];
+const MANUAL_METRICS = [
+  { key: 'newSub',    title: '순신규' },
+  { key: 'newLine',   title: '순동' },
+  { key: 'renewLine', title: '약동' },
+  { key: 'newDong',   title: '신동' }
+];
+const MANUAL_MAX = 999;
+
+/*
+ * 해당 월의 수기 실적 행만 읽음 (적용월 열에서 위치를 찾아 그 구간만)
+ * 반환: { 접속번호숫자: {row, id, worker, customerName, newSub, newLine, renewLine, newDong} }
+ */
+function readManualMonth_(ss, month) {
+  const out = {};
+  const sh = ss.getSheetByName(SHEET_MANUAL);
+  if (!sh || sh.getLastRow() < 2) return out;
+  const found = sh.getRange(2, 2, sh.getLastRow() - 1, 1).createTextFinder(month).matchEntireCell(true).findAll();
+  if (!found.length) return out;
+  const rows = found.map(r => r.getRow());
+  const first = Math.min.apply(null, rows);
+  const last = Math.max.apply(null, rows);
+  sh.getRange(first, 1, last - first + 1, MANUAL_HEADERS.length).getValues().forEach((r, i) => {
+    if (monthOf_(r[1]) !== month) return;
+    const key = digits_(r[2]);
+    if (!key) return;
+    out[key] = {
+      row: first + i,
+      id: str_(r[0]),
+      accessNo: str_(r[2]),
+      customerName: str_(r[3]),
+      worker: str_(r[4]),
+      newSub: Number(r[5]) || 0,
+      newLine: Number(r[6]) || 0,
+      renewLine: Number(r[7]) || 0,
+      newDong: Number(r[8]) || 0
+    };
+  });
+  return out;
+}
+
+function computeManualStats_(manual, list, workers) {
+  const by = {};
+  const order = workers.slice();
+  const blank = name => {
+    const o = { worker: name };
+    MANUAL_METRICS.forEach(m => { o[m.key] = 0; });
+    return o;
+  };
+  order.forEach(w => { by[w] = blank(w); });
+  Object.keys(manual).forEach(k => {
+    const e = manual[k];
+    const w = e.worker || '미지정';
+    if (!by[w]) { by[w] = blank(w); order.push(w); }
+    MANUAL_METRICS.forEach(m => { by[w][m.key] += e[m.key]; });
+  });
+  const rows = order.map(w => by[w]);
+  const total = blank('합계');
+  rows.forEach(r => MANUAL_METRICS.forEach(m => { total[m.key] += r[m.key]; }));
+  return {
+    metrics: MANUAL_METRICS,
+    rows: rows,
+    total: total,
+    manualMode: true,
+    entered: Object.keys(manual).length,
+    pending: list.filter(r => !manual[digits_(r.accessNo)]).length,
+    unclassifiedCount: 0,
+    unclassifiedTypes: []
+  };
+}
+
+/*
+ * 9월 이후 기존 장표 건에 판매자 값 붙이기 (헤더명 정확 일치: 판매자/직원명/담당자, 1개 열일 때만)
+ */
+function attachLegacySellers_(ss, month, legacyList) {
+  const sh = findLegacySheet_(ss, month);
+  if (!sh || sh === 'MULTI') return;
+  const parts = legacyStatHeaderParts_(sh);
+  if (!parts) return;
+  const hits = [];
+  parts.forEach((ps, i) => { if (ps.some(t => ['판매자', '직원명', '담당자'].indexOf(t) >= 0)) hits.push(i + 1); });
+  if (hits.length !== 1) return;
+  const rows = legacyList.map(r => r.row);
+  const first = Math.min.apply(null, rows);
+  const last = Math.max.apply(null, rows);
+  const vals = sh.getRange(first, hits[0], last - first + 1, 1).getDisplayValues();
+  legacyList.forEach(r => { r.worker = str_(vals[r.row - first][0]); });
+}
+
+function ensureManualSheet_(ss) {
+  let sh = ss.getSheetByName(SHEET_MANUAL);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_MANUAL);
+    sh.getRange(1, 1, 1, MANUAL_HEADERS.length).setValues([MANUAL_HEADERS]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function manualCount_(v) {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0 || n > MANUAL_MAX) {
+    throw new Error('실적 숫자는 0 이상의 정수로 입력해주세요.');
+  }
+  return n;
+}
+
+/*
+ * [실적 저장] x = {month, accessNo, newSub, newLine, renewLine, newDong}
+ * 고객명/작업자는 서버에서 해당 월 개통리스트를 다시 확인해 채움
+ */
+function saveManualStats(x) {
+  const month = str_(x && x.month);
+  if (!validMonth_(month) || !isV2Month_(month)) {
+    throw new Error('실적 수기 입력은 2026년 9월 이후 개통건만 가능합니다.');
+  }
+  const key = digits_(x && x.accessNo);
+  if (!key) throw new Error('접속번호를 확인할 수 없습니다.');
+  const vals = {};
+  MANUAL_METRICS.forEach(m => { vals[m.key] = manualCount_(x[m.key]); });
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw new Error('다른 저장이 진행 중입니다. 잠시 후 다시 저장해주세요.');
+
+  try {
+    resetHeadCache_();
+    const ss = ss_();
+    const base = ensureSheets_(ss);
+    const item = buildMonthList_(ss, base, month, false).list.find(r => digits_(r.accessNo) === key);
+    if (!item) throw new Error('해당 월 개통리스트에서 개통건을 찾지 못했습니다. 새로고침 후 다시 시도해주세요.');
+
+    const sh = ensureManualSheet_(ss);
+    const existing = readManualMonth_(ss, month)[key];
+    const now = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss');
+    const row = existing ? existing.row : Math.max(sh.getLastRow() + 1, 2);
+    const id = existing && existing.id ? existing.id
+      : 'M' + Utilities.formatDate(new Date(), TZ, 'yyyyMMddHHmmss') + '-' + Math.random().toString(36).slice(2, 6);
+
+    sh.getRange(row, 1, 1, 3).setNumberFormat('@');
+    sh.getRange(row, 1, 1, MANUAL_HEADERS.length).setValues([[
+      id, month, item.accessNo, item.customerName, item.worker || '',
+      vals.newSub, vals.newLine, vals.renewLine, vals.newDong, now
+    ]]);
+    SpreadsheetApp.flush();
+
+    return { saved: true, updated: !!existing, month: month, accessNo: item.accessNo, values: vals, message: '실적이 저장되었습니다.' };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
