@@ -1462,83 +1462,86 @@ function readLegacyStats_(sh, map, webKeys, statMap) {
 
 
 /*******************************************************
- * 순신규 회선 진단 (표시 전용 — 실적 계산에는 사용하지 않음)
- * - 구분 / 판매자 / I(인터넷) / T(TV) / GTT 관련 헤더 후보와 값 샘플
- * - '구분 = 순신규' 실제 개통건 최대 5건의 행별 값
+ * 순신규 원본행 진단 (표시 전용 — 실적 계산에는 사용하지 않음)
+ * - '구분 = 순신규' 실제 개통건 첫 5행의 값이 있는 모든 셀을
+ *   열문자 / 헤더(병합 상위 + 하위) / 표시값 으로 보여줌
+ * - 특정 헤더명으로 후보를 고르지 않음
  *******************************************************/
-const NEWSUB_DIAG = {
-  gubun: t => t === '구분' || t.indexOf('구분') >= 0,
-  seller: t => ['판매자', '직원명', '담당자'].indexOf(t) >= 0,
-  internet: t => t === 'I' || t === 'i' || t.indexOf('인터넷') >= 0 || /^I[^A-Za-z]/.test(t),
-  tv: t => !/GTT/i.test(t) && (t === 'T' || t === 't' || /TV|티비/i.test(t) || /^T[^A-Za-z]/.test(t)),
-  gtt: t => /GTT/i.test(t)
-};
 
-function diagnoseNewSubLines_(sh, start, keepRows, used) {
-  const parts = legacyStatHeaderParts_(sh) || [];
-  const cand = {};
-  Object.keys(NEWSUB_DIAG).forEach(k => {
-    cand[k] = [];
-    parts.forEach((ps, i) => {
-      const c = i + 1;
-      if (used[c] && k !== 'seller' && k !== 'gubun') return; // 고객명/접속번호/고객혜택/발송번호 열 제외
-      if (ps.some(t => NEWSUB_DIAG[k](t))) cand[k].push({ c: c, header: ps.join(' / ') });
-    });
-  });
-
-  // 후보 열 값 (개통건 행만)
-  const lastKeep = keepRows.length ? keepRows[keepRows.length - 1] : start;
-  const n = Math.max(lastKeep - start + 1, 1);
-  const colVals = {};
-  const readCol = c => {
-    if (!colVals[c]) colVals[c] = sh.getRange(start, c, n, 1).getDisplayValues();
-    return colVals[c];
-  };
-
-  const summary = {};
-  Object.keys(cand).forEach(k => {
-    summary[k] = cand[k].map(x => {
-      const vals = readCol(x.c);
-      const counts = {};
-      keepRows.forEach(r => {
-        const v = str_(vals[r - start][0]) || '(빈칸)';
-        counts[v] = (counts[v] || 0) + 1;
-      });
-      return {
-        col: colLetter_(x.c),
-        header: x.header,
-        values: Object.keys(counts).map(v => ({ value: v, count: counts[v] }))
-          .sort((a, b) => b.count - a.count).slice(0, 12)
-      };
-    });
-  });
-
-  // '구분 = 순신규' 샘플 (구분 후보 중 정확히 '구분'인 열 우선)
-  const gubunCol = (cand.gubun.find(x => x.header.split(' / ').indexOf('구분') >= 0) || cand.gubun[0] || {}).c;
-  const samples = [];
-  if (gubunCol) {
-    const g = readCol(gubunCol);
-    for (let j = 0; j < keepRows.length && samples.length < 5; j++) {
-      const r = keepRows[j];
-      if (str_(g[r - start][0]).replace(/\s/g, '') !== '순신규') continue;
-      const pick = k => cand[k].map(x => colLetter_(x.c) + '=' + (str_(readCol(x.c)[r - start][0]) || '빈칸')).join(', ') || '후보 없음';
-      samples.push({
-        row: r,
-        seller: pick('seller'),
-        gubun: str_(g[r - start][0]),
-        internet: pick('internet'),
-        tv: pick('tv'),
-        gtt: pick('gtt')
-      });
+/*
+ * 열별 헤더 이름: 헤더 영역(접속번호 행 기준 위 1행 ~ 하위 제목 행)의 글자를 위→아래로 이어붙임
+ * 가로 병합 셀은 병합 범위의 모든 열에 같은 상위 제목을 채움
+ */
+function legacyHeaderLabels_(sh, dataStart) {
+  const lastCol = sh.getLastColumn();
+  const lastRow = sh.getLastRow();
+  const scan = Math.min(LEGACY_HEADER_SCAN_ROWS, lastRow, Math.max(dataStart - 1, 1));
+  const head = headValues_(sh, Math.min(LEGACY_HEADER_SCAN_ROWS, lastRow), lastCol).slice(0, scan).map(r => r.slice());
+  sh.getRange(1, 1, scan, lastCol).getMergedRanges().forEach(m => {
+    const v = head[m.getRow() - 1] ? head[m.getRow() - 1][m.getColumn() - 1] : '';
+    for (let r = m.getRow(); r < m.getRow() + m.getNumRows() && r <= scan; r++) {
+      for (let c = m.getColumn(); c < m.getColumn() + m.getNumColumns() && c <= lastCol; c++) {
+        head[r - 1][c - 1] = v;
+      }
     }
+  });
+  let hr = -1;
+  for (let r = 0; r < head.length && hr < 0; r++) {
+    if (head[r].some(v => LEGACY_MATCHERS.accessNo(normHeader_(v)))) hr = r;
   }
-
-  return {
-    candidates: summary,
-    gubunCol: gubunCol ? colLetter_(gubunCol) : '',
-    samples: samples,
-    note: !gubunCol ? "'구분' 헤더를 찾지 못해 순신규 샘플을 고를 수 없음" :
-      (!samples.length ? "'구분 = 순신규' 개통건이 없음" : '')
-  };
+  const rows = hr < 0 ? [] : [hr - 1, hr].concat(hr + 1 < scan ? [hr + 1] : []).filter(r => r >= 0 && r < head.length);
+  const labels = [];
+  for (let c = 0; c < lastCol; c++) {
+    const parts = [];
+    rows.forEach(r => {
+      const t = str_(head[r][c]);
+      if (t && parts.indexOf(t) < 0) parts.push(t);
+    });
+    labels.push(parts.join(' > '));
+  }
+  return labels;
 }
 
+function diagnoseNewSubLines_(sh, start, keepRows, used) {
+  const labels = legacyHeaderLabels_(sh, start);
+  const lastCol = sh.getLastColumn();
+
+  const gubunCols = [];
+  const sellerCols = [];
+  labels.forEach((l, i) => {
+    const ps = l.split(' > ').map(normHeader_);
+    if (ps.indexOf('구분') >= 0) gubunCols.push(i + 1);
+    if (ps.some(t => ['판매자', '직원명', '담당자'].indexOf(t) >= 0)) sellerCols.push(i + 1);
+  });
+
+  const out = {
+    gubun: gubunCols.map(c => ({ col: colLetter_(c), header: labels[c - 1] })),
+    seller: sellerCols.map(c => ({ col: colLetter_(c), header: labels[c - 1] })),
+    samples: [],
+    note: ''
+  };
+  if (!gubunCols.length) {
+    out.note = "'구분' 헤더를 찾지 못해 순신규 행을 고를 수 없음";
+    return out;
+  }
+  const gubunCol = gubunCols[0];
+  if (gubunCols.length > 1) out.note = "'구분' 헤더가 여러 개 — " + colLetter_(gubunCol) + '열 기준으로 선택';
+
+  if (!keepRows.length) return out;
+  const g = sh.getRange(start, gubunCol, keepRows[keepRows.length - 1] - start + 1, 1).getDisplayValues();
+  const picked = keepRows.filter(r => str_(g[r - start][0]).replace(/\s/g, '') === '순신규').slice(0, 5);
+
+  picked.forEach(r => {
+    const vals = sh.getRange(r, 1, 1, lastCol).getDisplayValues()[0];
+    out.samples.push({
+      row: r,
+      seller: sellerCols.length ? str_(vals[sellerCols[0] - 1]) : '',
+      gubun: str_(vals[gubunCol - 1]),
+      cells: vals
+        .map((v, i) => ({ col: colLetter_(i + 1), header: labels[i] || '', value: str_(v) }))
+        .filter(x => x.value !== '')
+    });
+  });
+  if (!picked.length) out.note = (out.note ? out.note + ' / ' : '') + "'구분 = 순신규' 개통건이 없음";
+  return out;
+}

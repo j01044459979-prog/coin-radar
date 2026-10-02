@@ -300,19 +300,14 @@ function statsDiagHtml(d){
   const nd = d.newSubDiag;
   let newSubBlock = '';
   if (nd) {
-    const cands = (title, list) => `${title}: ` + (list && list.length
-      ? list.map(c => `<b>${esc(c.header)}</b> (${esc(c.col)}열) <span style="color:#6b7280">값: ${c.values.map(v => esc(v.value) + ' ' + v.count + '건').join(' · ')}</span>`).join('<br>&nbsp;&nbsp;')
-      : '<span class="bad">후보 없음</span>');
-    newSubBlock = `<br><b>[순신규 회선 진단]</b> <span style="color:#9ca3af">(표시만, 실적 계산 변경 없음)</span><br>
-      ${cands('구분', nd.candidates.gubun)}<br>
-      ${cands('판매자', nd.candidates.seller)}<br>
-      ${cands('인터넷(I) 후보', nd.candidates.internet)}<br>
-      ${cands('TV(T) 후보', nd.candidates.tv)}<br>
-      ${cands('GTT 후보', nd.candidates.gtt)}<br>
-      ${nd.samples.length
-        ? '<b>구분=순신규 샘플 (최대 5건)</b><br>' + nd.samples.map(x =>
-            `${x.row}행 / 판매자 ${esc(x.seller)} / 구분 ${esc(x.gubun)} / I ${esc(x.internet)} / T ${esc(x.tv)} / GTT ${esc(x.gtt)}`).join('<br>')
-        : '<span class="bad">' + esc(nd.note) + '</span>'}`;
+    const hdr = list => list && list.length ? list.map(c => `<b>${esc(c.header)}</b> (${esc(c.col)}열)`).join(', ') : '<span class="bad">없음</span>';
+    newSubBlock = `<br><b>[순신규 원본행 진단]</b> <span style="color:#9ca3af">(표시만, 실적 계산 변경 없음)</span><br>
+      구분: ${hdr(nd.gubun)} · 판매자: ${hdr(nd.seller)}
+      ${nd.note ? '<br><span class="bad">' + esc(nd.note) + '</span>' : ''}
+      ${nd.samples.map(x => `<div style="margin-top:8px;padding-top:6px;border-top:1px dashed #e5e7eb">
+          <b>${x.row}행 / ${esc(x.seller || '-')} / ${esc(x.gubun)}</b><br>
+          ${x.cells.map(c => `${esc(c.col)} / ${c.header ? esc(c.header) : '<span style="color:#9ca3af">(헤더 없음)</span>'} / ${esc(c.value)}`).join('<br>')}
+        </div>`).join('')}`;
   }
   return `<div class="lg"><b>[실적 매핑 확인] ${esc(d.sheet)}</b> · 개통건 ${d.rows}건<br>
     ${block('담당자 헤더', d.staff)}<br>
