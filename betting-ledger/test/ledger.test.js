@@ -18,10 +18,11 @@ function makeSheet(name) {
     getLastColumn() { return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
+        getValue: () => (grid[r - 1] && grid[r - 1][c - 1] !== undefined) ? grid[r - 1][c - 1] : '',
         getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')),
         setValues(v) { v.forEach((row, i) => row.forEach((x, j) => { (grid[r - 1 + i] = grid[r - 1 + i] || [])[c - 1 + j] = x; })); return rng; },
       };
-      const prx = new Proxy(rng, { get: (t, k) => k in t ? t[k] : () => prx });
+      const prx = new Proxy(rng, { get: (t, k) => k in t ? t[k] : (...a) => { (sh.calls = sh.calls || []).push([String(k), c, a[0]]); return prx; } });
       return prx;
     },
     clear() { grid.length = 0; return sh; },
@@ -120,7 +121,7 @@ test('3. 5,000 베팅 / 11,000 반환 → +6,000 / +120%', () => {
   const r = env.get('apiResolveBet')({ id, result: '적중', ret: 11000, reqId: 'x1' });
   assert.ok(r.ok, r.error); assert.strictEqual(r.profit, 6000); assert.strictEqual(r.roi, 120);
   const row = env.sheet('BET_LOG').grid[1];
-  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적중', 11000, 6000, 120]);
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적중', 11000, 6000, 1.2]);  // ROI 는 시트에 비율(0.0% 서식)
 });
 
 test('4. 5,000 베팅 / 0 반환 → -5,000 / -100%', () => {
@@ -296,7 +297,7 @@ test('19. 적특 실제 반환 7,500 → +2,500 / +50%, 반환금 필수', () =>
   const r = env.get('apiResolveBet')({ id: a, result: '적특', ret: 7500, reqId: 'n4' });
   assert.ok(r.ok, r.error); assert.deepStrictEqual([r.profit, r.roi], [2500, 50]);
   const row = env.sheet('BET_LOG').grid[1];
-  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적특', 7500, 2500, 50]);
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적특', 7500, 2500, 0.5]);
   void b;
 });
 test('20. 취소 → 반환금 자동 5,000 / 손익 0 / ROI 0%', () => {
@@ -357,6 +358,36 @@ test('25. diagnoseSetup: 헤더 오류/중복/설정값 누락·불량 위치 �
   assert.ok(msg.includes('SETTINGS에 "월 예산" 항목이 없습니다'), msg);
   assert.ok(msg.includes('SETTINGS "승무패 회차 최대" 값이 올바르지 않습니다'), msg);
   assert.ok(!msg.includes('일반토토 일 최대'), msg);
+});
+
+/* ---------- 실환경(기존 시트) 보호 ---------- */
+function preexisting() {
+  const env = makeContext();
+  const ss = env.ss;
+  env.get('setup')();                       // 구조만 만든 뒤, 사용자가 만든 시트 상태로 재현
+  const dash = env.sheet('DASHBOARD'); dash.clear();
+  dash.grid[0] = ['리치 베팅 장부']; dash.grid[2] = ['기준월', '=TEXT(TODAY(),"yyyy-mm")']; dash.grid[4] = ['총 베팅액', '=SUMIFS(BET_LOG!I:I,BET_LOG!B:B,">="&EOMONTH(TODAY(),-1)+1)'];
+  env.sheets.forEach(s => { s.calls = []; });
+  return env;
+}
+test('26. 기존 DASHBOARD(수식)는 setup/저장/결과처리에도 덮어쓰지 않음', () => {
+  const env = preexisting();
+  const snap = JSON.stringify(env.sheet('DASHBOARD').grid);
+  env.get('setup')();
+  const id = bet(env, {}).id; env.get('apiResolveBet')({ id, result: '적중', ret: 11000, reqId: 'p1' });
+  assert.strictEqual(JSON.stringify(env.sheet('DASHBOARD').grid), snap);
+  assert.deepStrictEqual(env.sheet('DASHBOARD').calls || [], []);
+  assert.strictEqual(env.get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상');
+  assert.strictEqual(dash(env).summary.profit, 6000);   // 웹앱 집계는 정상
+});
+test('27. 기존 시트: 날짜/금액/ROI 서식·헤더 스타일을 건드리지 않고 ID/회차/등록일시만 텍스트 지정', () => {
+  const env = preexisting();
+  env.get('setup')();
+  const bc = env.sheet('BET_LOG').calls.map(c => c[0] + ':' + c[1]);
+  assert.deepStrictEqual(bc, ['setNumberFormat:1', 'setNumberFormat:16']);   // A(ID), P(등록일시) 뿐
+  const wc = env.sheet('WDL_LOG').calls.map(c => c[0] + ':' + c[1]);
+  assert.deepStrictEqual(wc, ['setNumberFormat:1', 'setNumberFormat:2', 'setNumberFormat:25']);
+  assert.ok(!env.sheet('BET_LOG').calls.some(c => ['setFontWeight', 'setBackground', 'setFrozenRows'].includes(c[0])));
 });
 
 console.log(results.join('\n'));

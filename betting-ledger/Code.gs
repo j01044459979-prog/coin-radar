@@ -59,6 +59,7 @@ var TABLES = {
       ['roi', 'ROI'], ['grade', '리치등급'], ['memo', '메모'], ['createdAt', '등록일시']
     ],
     textKeys: ['id', 'date', 'createdAt'],
+    plainKeys: ['id', 'createdAt'],
     moneyKeys: ['stake', 'ret', 'profit'],
     roiKey: 'roi'
   },
@@ -72,6 +73,7 @@ var TABLES = {
         ['profit', '손익'], ['memo', '메모'], ['createdAt', '등록일시']
       ]),
     textKeys: ['id', 'round', 'date', 'createdAt'],
+    plainKeys: ['id', 'round', 'createdAt'],
     moneyKeys: ['stake', 'prize', 'profit'],
     roiKey: null
   }
@@ -129,7 +131,8 @@ function headersOf_(tbl) { return tbl.cols.map(function (c) { return c[1]; }); }
 function ensureTable_(ss, tbl) {
   var sh = ss.getSheetByName(tbl.name) || ss.insertSheet(tbl.name);
   var headers = headersOf_(tbl);
-  if (sh.getLastRow() === 0) {
+  var existed = sh.getLastRow() > 0;
+  if (!existed) {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   } else {
     var cur = sh.getRange(1, 1, 1, headers.length).getValues()[0];
@@ -139,13 +142,19 @@ function ensureTable_(ss, tbl) {
       }
     }
   }
+  var rows = Math.max(sh.getMaxRows() - 1, 1);
+  // 문자열로 저장해야 값이 변형되지 않는 열(ID/회차/등록일시)만 항상 텍스트 서식 지정 (데이터 행 한정)
+  tbl.cols.forEach(function (c, i) {
+    if (tbl.plainKeys.indexOf(c[0]) >= 0) sh.getRange(2, i + 1, rows, 1).setNumberFormat('@');
+  });
+  if (existed) return sh;   // 기존 시트: 헤더 스타일/고정행/날짜·금액·ROI 서식은 건드리지 않음
   sh.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#e8eaed');
   sh.setFrozenRows(1);
   tbl.cols.forEach(function (c, i) {
-    var col = sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1);
-    if (tbl.textKeys.indexOf(c[0]) >= 0 || /^g\d+$/.test(c[0])) col.setNumberFormat('@');
+    var col = sh.getRange(2, i + 1, rows, 1);
+    if (c[0] === 'date') col.setNumberFormat('yyyy-mm-dd');
     else if (tbl.moneyKeys.indexOf(c[0]) >= 0) col.setNumberFormat('#,##0');
-    else if (c[0] === tbl.roiKey) col.setNumberFormat('0.0"%"');
+    else if (c[0] === tbl.roiKey) col.setNumberFormat('0.0%');
   });
   return sh;
 }
@@ -218,6 +227,7 @@ function normalizeRow_(tbl, o) {
   tbl.moneyKeys.concat(['folders', 'odds', 'hits', 'roi']).forEach(function (k) {
     if (k in o) o[k] = numOrNull_(o[k]);
   });
+  if (tbl.roiKey && o[tbl.roiKey] !== null && o[tbl.roiKey] !== undefined) o[tbl.roiKey] = round2_(o[tbl.roiKey] * 100);
   return o;
 }
 
@@ -237,7 +247,12 @@ function readRows_(tbl) {
 }
 
 function rowToArray_(tbl, o) {
-  return tbl.cols.map(function (c) { var v = o[c[0]]; return v == null ? '' : v; });
+  return tbl.cols.map(function (c) {
+    var v = o[c[0]];
+    if (v == null) return '';
+    if (c[0] === tbl.roiKey && v !== '') return Math.round(v * 100) / 10000;  // % → 비율(시트 서식 0.0%)
+    return v;
+  });
 }
 
 function appendRow_(tbl, o) {
@@ -606,6 +621,10 @@ function buildStats_(month) {
 function refreshDashboard_() {
   var ss = getSS_();
   var sh = ss.getSheetByName(DASH_SHEET_NAME) || ss.insertSheet(DASH_SHEET_NAME);
+  // 사용자가 만든 DASHBOARD(수식 등)는 덮어쓰지 않음: 비어 있거나 이 스크립트가 만든 시트일 때만 갱신
+  if (sh.getLastRow() > 0 && String(sh.getRange(1, 1).getValue()).indexOf(CONFIG.APP_TITLE + ' — ') !== 0) {
+    return buildStats_(monthOf_(todayStr_()));
+  }
   var st = buildStats_(monthOf_(todayStr_()));
   var s = st.summary;
   var W = 6;
