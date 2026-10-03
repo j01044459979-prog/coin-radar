@@ -447,9 +447,13 @@ test('Cron: */2 는 Telegram 포함 정보 수집, 1분 Cron 은 기존 Upbit �
   globalThis.fetch = async (u) => { seen.push(new URL(String(u)).hostname); return new Response('x', { status: 500 }); };
   const db = new FakeD1();
   const waits = [];
-  await worker.scheduled({ cron: '*/2 * * * *', scheduledTime: NOW }, { DB: db }, { waitUntil: (p) => waits.push(p) });
-  assert.equal(waits.length, 1);
-  await Promise.all(waits);
+  // 실행당 CPU 예산 안에서 출처가 돌아가며 수집되므로 몇 번 실행하면 Telegram 도 요청됨 (한 번에 전부 하지 않음)
+  for (let k = 0; k < 6; k += 1) {
+    waits.length = 0;
+    await worker.scheduled({ cron: '*/2 * * * *', scheduledTime: NOW + k * 2 * MIN }, { DB: db }, { waitUntil: (p) => waits.push(p) });
+    assert.equal(waits.length, 1);
+    await Promise.all(waits);
+  }
   assert.ok(seen.includes('t.me'));
   assert.ok(!seen.includes('coinpan.com')); // 기본 비활성
   seen.length = 0; waits.length = 0;

@@ -24,8 +24,23 @@ export function resetCronThrottleForTests() {
 
 const num = (m, key) => (m.get(key) ? Number(m.get(key).value) : null);
 
-// status API 의 diagnostics. code: never_ran | cron_not_seen | incomplete | error | ok
-export async function diagnostics(db, now) {
+// 출처 상태 요약: ok(모두 정상) | degraded(일부 오류/지연) | down(정상인 출처 없음) | pending(아직 한 번도 수집 안 함)
+export function summarizeSources(sources) {
+  const counts = { total: sources.length, ok: 0, error: 0, delayed: 0, pending: 0 };
+  for (const s of sources) counts[s.status] = (counts[s.status] || 0) + 1;
+  const problem = sources.filter((s) => s.status === 'error' || s.status === 'delayed').map((s) => s.id);
+  const status = problem.length ? (counts.ok === 0 ? 'down' : 'degraded') : counts.pending === counts.total && counts.total > 0 ? 'pending' : 'ok';
+  const official = sources.filter((s) => s.type === 'official');
+  return { status, counts, problem_sources: problem, official_ok: official.length > 0 && official.every((s) => s.status === 'ok') };
+}
+
+const CRON_STALE_MS = 6 * 60000; // 정보 Cron 은 2분마다 → 6분 넘게 안 보이면 지연
+const COLLECTOR_STALL_MS = 10 * 60000; // 완료 기록이 10분 넘게 갱신되지 않으면 멈춘 것으로 봄
+const ago = (t, now) => (t ? `${Math.max(0, Math.round((now - t) / 60000))}분 전` : '기록 없음');
+
+// status API 의 diagnostics. Cron · Collector · Source 를 따로 판정하고, 전부 정상일 때만 code 'ok'.
+//  code: ok | cron_not_seen | never_ran | cron_stale | incomplete | collector_error | sources_down | sources_degraded | sources_pending
+export async function diagnostics(db, now, sourceSummary = null) {
   const m = await store.loadMeta(db);
   const crons = {};
   let seenAt = null;
@@ -42,26 +57,42 @@ export async function diagnostics(db, now) {
   const intelSeen = Object.entries(crons).filter(([e]) => cronKind(e) === 'intel').map(([, t]) => t);
   const lastIntelCron = intelSeen.length ? Math.max(...intelSeen) : null;
 
+  // ① Cron
+  const cronStatus = lastIntelCron === null && started === null ? 'not_seen' : now - Math.max(lastIntelCron || 0, started || 0) <= CRON_STALE_MS ? 'ok' : 'stale';
+  // ② Collector
+  let collectorStatus;
+  if (started === null) collectorStatus = 'never_ran';
+  else if (finished === null || finished < started) collectorStatus = now - started > 90000 ? 'incomplete' : 'running';
+  else if (now - finished > COLLECTOR_STALL_MS && cronStatus === 'ok') collectorStatus = 'incomplete'; // Cron 은 오는데 완료 기록이 멈춤
+  else if (error) collectorStatus = 'error';
+  else collectorStatus = 'ok';
+  // ③ Source
+  const src = sourceSummary || { status: 'ok', counts: null, problem_sources: [] };
+
   let code = 'ok';
-  let hint = '정상: Cron 과 collector 가 실행되고 있습니다.';
-  if (started === null && lastIntelCron === null) {
-    code = 'cron_not_seen';
-    hint = `정보 수집 Cron(${INTEL_CRON}) 실행 기록이 없습니다. Cloudflare Worker 의 Triggers 에 이 Cron 이 등록됐는지, 최신 배포(main)가 적용됐는지 확인하세요.`;
-  } else if (started === null) {
-    code = 'never_ran';
-    hint = 'Cron 은 실행되지만 collector 가 한 번도 시작하지 못했습니다. Worker 로그(Observability)에서 오류를 확인하세요.';
-  } else if (finished === null || finished < started) {
-    if (now - started > 90000) {
-      code = 'incomplete';
-      hint = 'collector 가 시작했지만 완료 기록이 없습니다. 실행 시간/CPU 제한 초과가 의심됩니다. INTEL_DISABLED 로 출처를 줄이거나 Worker 로그를 확인하세요.';
-    }
-  } else if (error) {
-    code = 'error';
-    hint = '마지막 collector 실행에 오류가 있었습니다 (last_collector_error 참고). 개별 출처 오류는 sources 항목을 보세요.';
-  }
+  if (cronStatus === 'not_seen' && collectorStatus === 'never_ran') code = 'cron_not_seen';
+  else if (collectorStatus === 'never_ran') code = 'never_ran';
+  else if (collectorStatus === 'incomplete') code = 'incomplete';
+  else if (cronStatus === 'stale') code = 'cron_stale';
+  else if (collectorStatus === 'error') code = 'collector_error';
+  else if (src.status === 'down') code = 'sources_down';
+  else if (src.status === 'degraded') code = 'sources_degraded';
+  else if (src.status === 'pending') code = 'sources_pending';
+
+  const cronText = cronStatus === 'ok' ? '정상' : cronStatus === 'stale' ? `지연 (마지막 ${ago(lastIntelCron, now)})` : '실행 기록 없음';
+  const colText = { ok: '정상', running: '실행 중', incomplete: '미완료 (실행 시간/CPU 제한 의심)', error: '오류', never_ran: '시작 기록 없음' }[collectorStatus];
+  const srcText = { ok: '모두 정상', degraded: `일부 오류 (${src.problem_sources.join(', ')})`, down: `전체 오류 (${src.problem_sources.join(', ')})`, pending: '수집 준비 중' }[src.status] || '확인 불가';
+  let hint = `Cron ${cronText} · Collector ${colText} · Source ${srcText}`;
+  if (code === 'cron_not_seen') hint += ` — 정보 수집 Cron(${INTEL_CRON}) 실행 기록이 없습니다. Cloudflare Worker 의 Triggers 에 이 Cron 이 등록됐는지, 최신 배포(main)가 적용됐는지 확인하세요.`;
+  else if (code === 'never_ran') hint += ' — Cron 은 실행되지만 collector 가 한 번도 시작하지 못했습니다. Worker 로그(Observability)에서 오류를 확인하세요.';
+  else if (code === 'incomplete') hint += ' — collector 가 시작했지만 완료 기록이 없습니다. 실행 시간/CPU 제한 초과가 의심됩니다. INTEL_DISABLED 로 출처를 줄이거나 Worker 로그를 확인하세요.';
+  else if (code === 'sources_degraded' || code === 'sources_down') hint += ' — 오류 출처의 last_error 는 sources 항목을 보세요 (한 출처의 오류는 다른 출처 수집에 영향 없음).';
   return {
     code,
     hint,
+    cron_status: { status: cronStatus, last_seen_at: lastIntelCron, expression: INTEL_CRON, seconds_since_last_seen: lastIntelCron ? Math.round((now - lastIntelCron) / 1000) : null },
+    collector_status: { status: collectorStatus, started_at: started, finished_at: finished, last_error: error },
+    source_status: src,
     last_cron_seen_at: seenAt,
     last_cron_expression: seenExpr,
     crons_seen: crons,

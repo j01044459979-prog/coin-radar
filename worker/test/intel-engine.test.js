@@ -197,47 +197,56 @@ test('연속 실패: 3회 이상이면 health 가 수집 오류, 성공하면 �
   assert.equal(healthView(src, undefined, NOW).status, 'pending');
 });
 
-test('출처별 실행 주기: 공식 2분 · Telegram 6분 · 뉴스 8분(예산 안에서 순환), 실패 시 간격 증가', () => {
+test('출처별 실행 주기: 공식 2분 · Telegram 10분 · 뉴스 12분(예산 안에서 순환), 실패 시 간격 증가', () => {
   const off = SOURCES.find((s) => s.id === 'upbit');
   const news = SOURCES.find((s) => s.id === 'coindesk');
   assert.equal(off.intervalMs, 2 * MIN);
-  assert.equal(news.intervalMs, 8 * MIN);
-  assert.equal(SOURCES.find((x) => x.id === 'tg-emperorcoin').intervalMs, 6 * MIN);
+  assert.equal(news.intervalMs, 12 * MIN);
+  assert.equal(SOURCES.find((x) => x.id === 'tg-emperorcoin').intervalMs, 10 * MIN);
   assert.equal(isDue(news, undefined, NOW), true);
   assert.equal(isDue(news, { last_attempt_at: NOW - 2 * MIN, consecutive_failures: 0 }, NOW), false);
-  assert.equal(isDue(news, { last_attempt_at: NOW - 8 * MIN, consecutive_failures: 0 }, NOW), true);
-  assert.equal(isDue(news, { last_attempt_at: NOW - 9 * MIN, consecutive_failures: 2 }, NOW), false); // 3배 백오프
+  assert.equal(isDue(news, { last_attempt_at: NOW - 12 * MIN, consecutive_failures: 0 }, NOW), true);
+  assert.equal(isDue(news, { last_attempt_at: NOW - 13 * MIN, consecutive_failures: 2 }, NOW), false); // 3배 백오프
   assert.equal(isDue(off, { last_attempt_at: NOW - 2 * MIN, consecutive_failures: 0 }, NOW), true);
 });
 
-test('Cron 실행(force 없음): 공식은 매번, 나머지는 실행당 CPU 예산(4) 안에서 오래 기다린 순서로 순환', async () => {
+test('Cron 실행(force 없음): 실행당 base cost 합계 ≤ 예산(4), 공식이 굶지 않고 모든 출처가 한 번 이상 순환', async () => {
   const db = new FakeD1();
   const attempted = new Set();
-  for (let k = 0; k < 10; k += 1) { // 2분 간격 10번 = 20분
+  const officialRuns = [];
+  for (let k = 0; k < 14; k += 1) { // 2분 간격 14번 = 28분
     const log = [];
     const r = await runIntelligence({ DB: db }, NOW + k * 2 * MIN, { fetchImpl: makeFetch({}, log), candleIntervalMs: 0 });
-    const ext = log.filter((l) => !l.startsWith('api.upbit.com'));
-    assert.equal(ext.filter((l) => l.startsWith('www.binance.com')).length, 3, `공식(Binance) +${k * 2}분`);
-    assert.equal(ext.filter((l) => l.startsWith('api-manager.upbit.com')).length, 1, `공식(Upbit) +${k * 2}분`);
-    const ids = r.sources.map((x) => x.id).filter((id) => id !== 'binance' && id !== 'upbit');
+    const ids = r.sources.map((x) => x.id);
     const cost = ids.reduce((t, id) => t + SOURCES.find((x) => x.id === id).cost, 0);
     assert.ok(cost <= 4, `실행당 예산 초과 (+${k * 2}분: ${ids} = ${cost})`);
-    assert.ok(ids.filter((id) => ['blockmedia', 'coindesk', 'cointelegraph'].includes(id)).length <= 1, '뉴스 RSS 는 실행당 최대 1개');
+    officialRuns.push(ids.filter((id) => id === 'binance' || id === 'upbit').length);
     ids.forEach((id) => attempted.add(id));
   }
-  // 20분 안에 뉴스 3개와 Telegram 4개가 모두 한 번 이상 시도됨 (굶는 출처 없음). 기본 비활성 Coinpan 은 제외.
-  assert.deepEqual([...attempted].sort(), ['blockmedia', 'coindesk', 'cointelegraph', 'tg-blockmedia', 'tg-emperorcoin', 'tg-enjoymyhobby', 'tg-wecryptotogether']);
+  // 28분 안에 뉴스 3개와 Telegram 4개가 모두 시도됨 (굶는 출처 없음). 기본 비활성 Coinpan 은 제외.
+  assert.deepEqual([...attempted].sort(), ['binance', 'blockmedia', 'coindesk', 'cointelegraph', 'tg-blockmedia', 'tg-emperorcoin', 'tg-enjoymyhobby', 'tg-wecryptotogether', 'upbit']);
+  // 공식(Binance·Upbit)은 2분 주기라 14번 중 대부분의 실행에 포함 (뉴스/Telegram 때문에 연속으로 밀리지 않음)
+  assert.ok(officialRuns.filter((n) => n > 0).length >= 10, `공식 실행 횟수 ${officialRuns}`);
 });
 
-test('selectSources: 공식(cost 0)은 모두, 나머지는 가장 오래 기다린 순서로 예산 안에서', () => {
+test('selectSources: 공식 먼저 예약 + 나머지는 목표 주기를 가장 많이 넘긴 순서로 base cost 합계가 예산 안에서 (Telegram 도 뉴스도 굶지 않음)', () => {
   const by = (id) => SOURCES.find((s) => s.id === id);
-  const due = [by('binance'), by('upbit'), by('blockmedia'), by('coindesk'), by('cointelegraph'), by('tg-wecryptotogether'), by('tg-emperorcoin')];
-  const health = new Map([['blockmedia', { last_attempt_at: NOW - 10 * MIN }], ['coindesk', { last_attempt_at: NOW - 30 * MIN }], ['tg-emperorcoin', { last_attempt_at: NOW - 50 * MIN }]]);
-  // 시도 기록 없는 cointelegraph(3) → 다음으로 오래된 것 중 남은 예산(1)에 맞는 Telegram(1)
-  assert.deepEqual(selectSources(due, health).map((s) => s.id), ['binance', 'upbit', 'cointelegraph', 'tg-wecryptotogether']);
-  assert.deepEqual(selectSources(due, health, 1).map((s) => s.id), ['binance', 'upbit', 'tg-wecryptotogether']);
-  assert.equal(selectSources(due, health, Infinity).length, 7);
-  assert.deepEqual(selectSources([by('coindesk')], new Map(), 1).map((s) => s.id), ['coindesk']); // 예산보다 큰 출처도 단독 실행은 허용
+  const due = [by('binance'), by('upbit'), by('blockmedia'), by('coindesk'), by('tg-wecryptotogether'), by('tg-emperorcoin')];
+  // blockmedia 는 목표 12분 중 36분 지남(3.0), tg-emperorcoin 은 10분 중 30분(3.0), binance 는 2분 중 4분(2.0), 나머지는 시도 기록 없음(∞)
+  const health = new Map([['blockmedia', { last_attempt_at: NOW - 36 * MIN }], ['tg-emperorcoin', { last_attempt_at: NOW - 30 * MIN }], ['binance', { last_attempt_at: NOW - 4 * MIN }], ['upbit', { last_attempt_at: NOW - 2 * MIN }]]);
+  const ids = (b) => selectSources(due, health, b, NOW).map((s) => s.id);
+  const four = ids(4);
+  assert.deepEqual(four.slice(0, 2), ['binance', 'upbit']); // 공식이 항상 먼저 (Telegram/뉴스가 한꺼번에 때가 돼도 밀리지 않음)
+  assert.equal(four[2], 'coindesk'); // 남은 예산(2)은 시도 기록 없음(∞) 중 가장 앞, cost 2
+  assert.equal(four.reduce((t, id) => t + by(id).cost, 0) <= 4, true);
+  assert.deepEqual(ids(3).slice(0, 2), ['binance', 'upbit']);
+  assert.equal(ids(3)[2], 'tg-wecryptotogether'); // 남은 예산 1 → cost 1 인 Telegram (∞)
+  // 예산이 작아도 굶지 않음: 가장 늦은 1개는 항상 실행
+  assert.equal(selectSources([by('coindesk')], new Map(), 1, NOW).length, 1);
+  assert.equal(selectSources(due, health, Infinity, NOW).length, 6);
+  // 공식이 밀려도 오래 기다릴수록 순위가 올라가 결국 선택됨 (starvation 방지)
+  const late = new Map([['binance', { last_attempt_at: NOW - 40 * MIN }], ['blockmedia', { last_attempt_at: NOW - 2 * MIN }], ['coindesk', { last_attempt_at: NOW - 2 * MIN }], ['tg-wecryptotogether', { last_attempt_at: NOW - MIN }], ['tg-emperorcoin', { last_attempt_at: NOW - MIN }], ['upbit', { last_attempt_at: NOW - 30 * MIN }]]);
+  assert.deepEqual(selectSources(due, late, 2, NOW).map((s) => s.id), ['binance', 'upbit']);
 });
 
 test('INTEL_DISABLED 로 특정 출처를 끌 수 있음', async () => {
@@ -487,14 +496,18 @@ test('scheduled(*/2): collector 실행 → source_health · 진단(meta) 기록 
   assert.equal(h.upbit.last_success_at, NOW);
   assert.equal(h.upbit.last_error, null);
   assert.equal(h.blockmedia.last_success_at, NOW);
-  const s = await (await worker.fetch(new Request('https://x.test/api/intelligence/status'), { DB: db }, {})).json();
+  const s = await (await handleIntelligence('/api/intelligence/status', new URL('https://x.test/api/intelligence/status'), { DB: db }, NOW + MIN)).json();
   const d = s.diagnostics;
   assert.equal(d.last_cron_expression, '*/2 * * * *');
   assert.equal(d.last_cron_seen_at, NOW);
   assert.equal(d.last_collector_started_at, NOW);
   assert.ok(d.last_collector_finished_at >= NOW);
   assert.equal(d.last_collector_error, null);
-  assert.equal(d.code, 'ok');
+  assert.equal(d.cron_status.status, 'ok');
+  assert.equal(d.collector_status.status, 'ok');
+  assert.equal(d.code, 'sources_degraded'); // Binance 451 → Cron·Collector 는 정상이지만 Source 는 일부 오류 (전체 ok 로 보이지 않음)
+  assert.equal(s.status, 'degraded');
+  assert.match(d.hint, /Cron 정상 · Collector 정상 · Source 일부 오류 \(binance\)/);
   assert.ok(s.last_run_at);
 });
 
@@ -526,7 +539,9 @@ test('진단 코드: 실행 기록 없음 → cron_not_seen, Cron 만 실행 →
   assert.equal((await status(NOW + MIN)).diagnostics.code, 'never_ran');
   // collector 시작만 기록되고 완료 없음
   db.db.exec(`INSERT INTO intel_meta VALUES ('last_collector_started_at', '${NOW}', ${NOW})`);
-  assert.equal((await status(NOW + 10 * 1000)).diagnostics.code, 'ok'); // 아직 진행 중일 수 있음
+  const running = await status(NOW + 10 * 1000);
+  assert.equal(running.diagnostics.collector_status.status, 'running'); // 아직 진행 중일 수 있음 (미완료로 단정하지 않음)
+  assert.equal(running.diagnostics.code, 'sources_pending'); // 출처는 아직 한 번도 수집 전
   const inc = await status(NOW + 5 * MIN);
   assert.equal(inc.diagnostics.code, 'incomplete');
   assert.match(inc.diagnostics.hint, /CPU/);

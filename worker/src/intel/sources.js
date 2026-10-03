@@ -3,13 +3,15 @@
 // 어댑터 형식:
 //   { id, label, type: 'official'|'news'|'social'|'community', intervalMs, maxAgeMs,
 //     fetchRaw(fetchImpl)      → 네트워크 응답 원문 (여러 출처를 병렬로 받는 단계, CPU 를 거의 쓰지 않음)
-//     parse(raw, now)          → [{ title, url, publishedAt(ms|null), summary, hint? }] (출처마다 순서대로 처리하는 단계) }
+//     scan(raw, now)           → { keys, build(skip, limit) } 항목(공식/뉴스): 키만 싸게 훑고, 이미 저장된 항목(skip)은 build 에서 제외
+//     (소셜은 peekIds + parse(raw, now, { skip, limit }))
+//   cost: 실행당 CPU 예산에서 차지하는 '평상시(새 항목 없음)' 비용 단위, intervalMs: 목표 수집 주기 }
 // 실패는 예외로 던지면 엔진이 그 출처의 상태(source_health)만 기록합니다. 다른 출처와 전체 Worker 에는 영향이 없습니다.
-import { parseFeed } from './feed.js';
+import { parseFeed, scanFeed } from './feed.js';
 import { TELEGRAM_CHANNELS, TELEGRAM_PREVIEW, parseTelegramPreview, peekMessageIds, MAX_MESSAGES } from './telegram.js';
 import { COMMUNITY_SOURCES, parseCommunity } from './community.js';
 import { safeUrl } from './text.js';
-import { BINANCE_CATALOGS, binanceListUrl, UPBIT_NOTICE_API, parseBinanceAnnouncements, parseUpbitNotices } from './official.js';
+import { BINANCE_CATALOGS, binanceListUrl, UPBIT_NOTICE_API, scanBinance, scanUpbit } from './official.js';
 
 export const FETCH_TIMEOUT_MS = 8000;
 const MAX_BODY = 1_500_000;
@@ -41,16 +43,17 @@ export async function fetchText(fetchImpl, url, accept, opts = {}) {
 }
 
 const MIN = 60000;
-// 뉴스 RSS 는 실행당 CPU 예산(cost)을 많이 쓰므로 실행마다 1개씩 돌아가며 수집합니다 (무료 플랜 CPU 10ms 보호).
+// 뉴스 RSS: 실행마다 예산 안에서 돌아가며 수집 (무료 플랜 CPU 10ms 보호). 평상시 비용 = 링크 키 훑기 + D1 확인.
 const feedSource = (id, label, url) => ({
-  id, label, type: 'news', intervalMs: 8 * MIN, maxAgeMs: 3 * 86400000, cost: 3,
+  id, label, type: 'news', intervalMs: 12 * MIN, maxAgeMs: 3 * 86400000, cost: 2,
   fetchRaw: (fetchImpl) => fetchText(fetchImpl, url, 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.5'),
-  parse: (raw, now) => parseFeed(raw, now, url),
+  scan: (raw, now, o) => scanFeed(raw, now, url, o && o.maxAgeMs),
+  parse: (raw, now) => parseFeed(raw, now, url), // 호환용 (전체 파싱)
 });
 
 export const SOURCES = [
   {
-    id: 'binance', label: 'Binance 공지', type: 'official', intervalMs: 2 * MIN, maxAgeMs: 7 * 86400000, cost: 0,
+    id: 'binance', label: 'Binance 공지', type: 'official', intervalMs: 2 * MIN, maxAgeMs: 7 * 86400000, cost: 1,
     // Binance 는 Worker 위치에 따라 451/403 으로 차단될 수 있음(docs/MONITOR.md). 실패해도 source_health 에만 기록됩니다.
     async fetchRaw(fetchImpl) {
       const results = await Promise.allSettled(BINANCE_CATALOGS.map((c) => fetchText(fetchImpl, binanceListUrl(c.id), 'application/json')));
@@ -58,20 +61,12 @@ export const SOURCES = [
       if (!ok.length) throw results[0].reason;
       return ok;
     },
-    parse(raws, now) {
-      const lists = [];
-      let firstErr = null;
-      for (const raw of raws) {
-        try { lists.push(parseBinanceAnnouncements(JSON.parse(raw), now)); } catch (e) { firstErr = firstErr || e; }
-      }
-      if (!lists.length) throw firstErr;
-      return lists.flat();
-    },
+    scan: (raws, now, o) => scanBinance(raws, now, o && o.maxAgeMs),
   },
   {
-    id: 'upbit', label: 'Upbit 공지', type: 'official', intervalMs: 2 * MIN, maxAgeMs: 7 * 86400000, cost: 0,
+    id: 'upbit', label: 'Upbit 공지', type: 'official', intervalMs: 2 * MIN, maxAgeMs: 7 * 86400000, cost: 1,
     fetchRaw: (fetchImpl) => fetchText(fetchImpl, UPBIT_NOTICE_API, 'application/json'),
-    parse: (raw, now) => parseUpbitNotices(JSON.parse(raw), now),
+    scan: (raw, now, o) => scanUpbit(raw, now, o && o.maxAgeMs),
   },
   feedSource('blockmedia', 'BlockMedia', 'https://www.blockmedia.co.kr/feed'),
   feedSource('coindesk', 'CoinDesk', 'https://www.coindesk.com/arc/outboundfeeds/rss'),
@@ -79,7 +74,7 @@ export const SOURCES = [
   // ── Phase 6B: Telegram 공개 채널 (채널 목록은 telegram.js 의 TELEGRAM_CHANNELS) ──
   ...TELEGRAM_CHANNELS.map((ch) => ({
     id: ch.id, label: `Telegram · ${ch.name}`, type: 'social', kind: 'telegram', channel: ch.name, pipeline: 'social', reliabilityTier: ch.reliabilityTier,
-    enabled: ch.enabled, intervalMs: 6 * MIN, maxAgeMs: 14 * 86400000, cost: 1, // 보관 기간(14일)과 같게: 저장된 글은 다시 파싱하지 않음
+    enabled: ch.enabled, intervalMs: 10 * MIN, maxAgeMs: 14 * 86400000, cost: 1, // 보관 기간(14일)과 같게: 저장된 글은 다시 파싱하지 않음
     fetchRaw: (fetchImpl) => fetchText(fetchImpl, TELEGRAM_PREVIEW(ch.username), 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5', { allowHosts: ['t.me'] }),
     peekIds: (raw) => peekMessageIds(raw, ch.username),
     parse: (raw, now, o) => parseTelegramPreview(raw, ch.username, now, { skip: o && o.skip, limit: MAX_MESSAGES, minTime: now - 14 * 86400000 }),
@@ -87,7 +82,7 @@ export const SOURCES = [
   // ── Phase 6B: 국내 커뮤니티 (기본 비활성: INTEL_ENABLE=coinpan + COINPAN_BOARDS) ──
   ...COMMUNITY_SOURCES.map((c) => ({
     id: c.id, label: `${c.name} (국내 커뮤니티)`, type: 'community', kind: 'community', channel: c.name, pipeline: 'social', reliabilityTier: c.reliabilityTier,
-    enabled: c.enabled, disabledReason: c.reason, intervalMs: 8 * MIN, maxAgeMs: 7 * 86400000, cost: 2,
+    enabled: c.enabled, disabledReason: c.reason, intervalMs: 12 * MIN, maxAgeMs: 7 * 86400000, cost: 2,
     async fetchRaw(fetchImpl, env) {
       const host = new URL(c.site).hostname.replace(/^www\./, '');
       const boards = String((env && env.COINPAN_BOARDS) || '').split(',').map((u) => safeUrl(u.trim())).filter((u) => { const bh = u && new URL(u).hostname.toLowerCase(); return bh && (bh === host || bh === 'www.' + host || bh.endsWith('.' + host)); }).slice(0, 3); // 'notcoinpan.com' 같은 비슷한 호스트 거부

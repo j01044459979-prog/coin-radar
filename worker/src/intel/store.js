@@ -84,14 +84,27 @@ export const INTEL_SCHEMA = [
   )`,
 ];
 
+// 스키마 버전: 올리면 다음 실행에서 한 번만 전체 준비(CREATE IF NOT EXISTS + ALTER)를 다시 수행합니다.
+// Cron 실행은 대개 새 인스턴스라 메모리 플래그만으로는 매번 14개 CREATE 문을 보내게 되므로, D1 에 버전을 기록해 건너뜁니다.
+export const SCHEMA_VERSION = 3; // 1 = 6A, 2 = 6A 운영 수정(intel_meta), 3 = 6B(social_*, 클러스터 컬럼)
+
 let ready = false;
 let pending = null;
 export function ensureIntelSchema(db) {
   if (ready) return Promise.resolve();
   if (!pending) {
     pending = (async () => {
-      await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
-      await ensureSocialSchema(db); // Phase 6B: 소셜 테이블 + 클러스터 컬럼 (이미 있으면 건너뜀)
+      // 평상시: CREATE intel_meta(없을 때만) + 버전 조회 — 2개 문장으로 끝
+      const [, ver] = await db.batch([
+        db.prepare(`CREATE TABLE IF NOT EXISTS intel_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`),
+        db.prepare(`SELECT value FROM intel_meta WHERE key = 'schema_version'`),
+      ]);
+      const have = ver && ver.results && ver.results[0] ? Number(ver.results[0].value) : 0;
+      if (!(have >= SCHEMA_VERSION)) {
+        await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
+        await ensureSocialSchema(db); // Phase 6B: 소셜 테이블 + 클러스터 컬럼 (이미 있으면 건너뜀)
+        await setMeta(db, 'schema_version', SCHEMA_VERSION, Date.now());
+      }
       ready = true;
     })().finally(() => { pending = null; });
   }
@@ -147,8 +160,18 @@ const parseJson = (s, d) => {
   }
 };
 
-export async function loadRecentClusters(db, now, limit = 300) {
-  const r = await db.prepare(`SELECT * FROM event_clusters WHERE last_time >= ? ORDER BY last_time DESC LIMIT ?`).bind(now - 48 * 3600000, limit).all();
+// 새 항목을 클러스터에 붙일 때만 필요 (24시간 창 + 여유). 평상시 실행에서는 호출하지 않습니다.
+export async function loadRecentClusters(db, now, limit = 150) {
+  const r = await db.prepare(`SELECT * FROM event_clusters WHERE last_time >= ? ORDER BY last_time DESC LIMIT ?`).bind(now - 30 * 3600000, limit).all();
+  return r.results.map(rowToCluster);
+}
+
+// 시세 반응을 갱신할 '젊은' 클러스터: 최근 1시간 안의 이벤트 중 코인이 있는 것만 (작은 쿼리)
+export async function loadYoungClusters(db, now, limit = 10) {
+  const r = await db
+    .prepare(`SELECT * FROM event_clusters WHERE symbols != '[]' AND ((published_known = 1 AND event_time >= ?) OR (published_known = 0 AND first_seen_at >= ?)) ORDER BY importance DESC LIMIT ?`)
+    .bind(now - 60 * 60000, now - 60 * 60000, limit)
+    .all();
   return r.results.map(rowToCluster);
 }
 

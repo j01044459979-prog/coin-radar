@@ -10,7 +10,8 @@ import { checkAllExchanges } from './reachability.js';
 import { json } from './response.js';
 import { runMonitor, monitorStatus } from './monitor.js';
 import { runIntelligence } from './intel/engine.js';
-import { handleIntelligence } from './intel/api.js';
+import { handleIntelligence, INTEL_ROUTES } from './intel/api.js';
+import { deployInfo, WORKER_VERSION } from './meta.js';
 import { recordCronSeen } from './intel/diag.js';
 import { cronKind } from './cron.js';
 
@@ -18,21 +19,20 @@ import { cronKind } from './cron.js';
 //       Cloudflare 런타임이 export 된 값을 모두 요청 처리기로 해석해서 시작에 실패합니다.
 const SERVICE_NAME = 'coin-radar-engine';
 const PHASE = 5; // 기존 상태 응답과 호환을 위해 유지 (Phase 6A 는 VERSION 0.6.0 · /api/intelligence)
-const VERSION = '0.7.0';
+const VERSION = WORKER_VERSION; // 값은 src/meta.js 한 곳에서 관리
 
-const ENDPOINTS = {
-  'GET /': '사용 가능한 주소 목록 (지금 보고 있는 화면)',
-  'GET /api/health': '서버가 정상 작동 중인지 확인',
-  'GET /debug/reachability': 'Binance Spot / Binance Futures / Upbit 접속 가능 여부를 실제 요청으로 확인',
-  'GET /api/monitor/status': 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 순위, 최근 이벤트, Cron 정상 여부)',
-  'GET /api/intelligence/events': '중요 정보 이벤트(같은 사건은 하나로 묶음). ?limit=1~50&symbol=BTC&source=official|news&min_importance=0~100',
-  'GET /api/intelligence/latest': '수집된 공지/뉴스 원본 항목 최신순 (같은 쿼리 지원)',
-  'GET /api/intelligence/status': '정보 출처별 수집 상태 + 진단 (공식·뉴스·Telegram·커뮤니티)',
-  'GET /api/intelligence/social': 'Telegram 공개 채널 최근 글 요약(excerpt). ?limit=1~50&symbol=SOL&channel=tg-blockmedia',
-  'GET /api/intelligence/community': '국내 커뮤니티 최근 글 요약 (기본 비활성). 같은 쿼리 지원',
-  'GET /api/intelligence/attention': '코인별 소셜 관심도(15분/1시간/6시간/24시간 개수·평소 대비 배수·점수). ?kind=telegram|community|all&limit&symbol',
-  'GET /api/monitor/preview': 'Upbit 감시 계산을 지금 한 번 실행해 결과 미리보기 (저장·알림 없음, 1분에 1회)',
-};
+// 라우트 표: 라우터(fetch)와 주소 목록(GET /, /api/health 의 available_endpoints, 404 안내)이 모두 이 표 하나에서 만들어집니다.
+// → "코드에는 있는데 라우터에 연결 안 된 주소" 나 "목록에만 있는 주소" 가 생길 수 없습니다 (테스트가 실제 fetch 로 전부 호출해 404 가 아님을 확인).
+const ROUTES = [
+  { path: '/', desc: '사용 가능한 주소 목록 (지금 보고 있는 화면)', run: () => handleIndex() },
+  { path: '/api/health', desc: '서버가 정상 작동 중인지 + 배포된 코드 버전(worker_version, api_revision, available_endpoints)', run: (c) => handleHealth(c.request, c.env) },
+  { path: '/debug/reachability', desc: 'Binance Spot / Binance Futures / Upbit 접속 가능 여부를 실제 요청으로 확인', run: (c) => handleReachability(c.request) },
+  { path: '/api/monitor/status', desc: 'Upbit 24시간 감시 상태 (최근 수집 시각, 감시 종목 수, 최근 순위, 최근 이벤트, Cron 정상 여부)', run: async (c) => json(await monitorStatus(c.env, Date.now())) },
+  { path: '/api/monitor/preview', desc: 'Upbit 감시 계산을 지금 한 번 실행해 결과 미리보기 (저장·알림 없음, 1분에 1회)', run: (c) => handlePreview(c.env) },
+  ...INTEL_ROUTES.map((r) => ({ path: '/api/intelligence' + r.path, desc: r.desc, run: (c) => handleIntelligence(c.path, c.url, c.env, Date.now()) })),
+];
+const ENDPOINTS = Object.fromEntries(ROUTES.map((r) => ['GET ' + r.path, r.desc]));
+const AVAILABLE = ROUTES.map((r) => 'GET ' + r.path);
 
 // /api/monitor/preview 는 Upbit 요청을 많이 보내므로 같은 인스턴스에서 1분에 한 번만 실제 실행
 const previewCache = { at: 0, body: null };
@@ -78,7 +78,7 @@ function handleIndex() {
   });
 }
 
-function handleHealth(request) {
+function handleHealth(request, env) {
   const now = new Date();
   return json({
     status: 'ok',
@@ -86,6 +86,8 @@ function handleHealth(request) {
     service: SERVICE_NAME,
     phase: PHASE,
     version: VERSION,
+    ...deployInfo(env),
+    available_endpoints: AVAILABLE,
     time_utc: now.toISOString(),
     time_kst: kstString(now),
     ...whereAmI(request),
@@ -126,12 +128,10 @@ export default {
     }
 
     try {
-      if (path === '/') return handleIndex();
-      if (path === '/api/health') return handleHealth(request);
-      if (path === '/debug/reachability') return await handleReachability(request);
+      const route = ROUTES.find((r) => r.path === path);
+      if (route) return await route.run({ request, env: env || {}, url, path });
+      // '/api/intelligence' 아래 알 수 없는 주소는 정보 API 가 자체 404(가능한 주소 목록 포함)로 답함
       if (path === '/api/intelligence' || path.startsWith('/api/intelligence/')) return await handleIntelligence(path, url, env || {}, Date.now());
-      if (path === '/api/monitor/status') return json(await monitorStatus(env || {}, Date.now()));
-      if (path === '/api/monitor/preview') return await handlePreview(env || {});
     } catch (err) {
       return json({ status: 'error', message: '서버 내부 오류가 발생했습니다.', detail: String(err && err.message) }, 500);
     }
