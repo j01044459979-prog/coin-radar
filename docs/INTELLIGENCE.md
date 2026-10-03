@@ -1,5 +1,7 @@
 # COIN RADAR Crypto Intelligence Engine (Phase 6A)
 
+> Phase 6B(Telegram 공개 채널 · 국내 커뮤니티)는 [SOCIAL-INTELLIGENCE.md](SOCIAL-INTELLIGENCE.md) 를 보세요. 아래 6A 수치 중 **수집 주기·CPU 예산**은 바뀌었습니다 → 이 문서 끝의 **"부록: 6B 운영 수정 후 수집 구조"** 가 최신입니다.
+
 시장 이상징후(가격·거래 활동·OI·Funding)에 **"무슨 일이 발생했는가"** 를 붙이는 정보 레이어입니다.
 거래소 공식 공지와 주요 뉴스를 수집해 같은 사건은 하나로 묶고, 관련 코인을 찾고, 현재 시장 데이터와 나란히 보여줍니다.
 
@@ -73,7 +75,7 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 
 - Cron 2개 사용 (계정 한도 5개): `* * * * *` (기존 Upbit 감시), `*/2 * * * *` (정보 수집). 표현식은 `worker/src/cron.js` 에 상수로 있고 `wrangler.toml` 과 일치하는지 테스트로 확인합니다.
 - **Cron 분기 규칙**: `controller.cron` 이 `* * * * *` 이거나 없으면 Upbit 감시, **그 밖의 모든 표현식은 정보 수집**입니다. (초기 버전은 `*/2 * * * *` 문자열과 정확히 같을 때만 수집하고 나머지는 감시로 보냈습니다.)
-- 정보 Cron 은 2분마다 깨어나 **공식 출처(Binance·Upbit)는 때가 되면 모두**, **뉴스(RSS)는 가장 오래 기다린 1개만** 수집합니다. 따라서 뉴스 3개 출처의 실제 주기는 약 6분입니다. 연속 실패/미완료면 그 출처의 간격을 늘립니다 (× min(1+n, 4)).
+- 정보 Cron 은 2분마다 깨어나 **공식 출처(Binance·Upbit)는 때가 되면 모두**, 나머지는 **실행당 CPU 예산(cost 합계 4) 안에서 가장 오래 기다린 순서로** 수집합니다 (뉴스 RSS cost 3, Telegram 1, 커뮤니티 2). 6B 이후 뉴스 RSS 주기는 8분입니다. 연속 실패/미완료면 그 출처의 간격을 늘립니다 (× min(1+n, 4)).
 - **CPU 제한(중요)**: 무료 플랜은 실행당 CPU 약 10ms 입니다. 피드 파싱·종목 분석이 이를 넘으면 Cloudflare 가 실행을 **오류 로그 외 흔적 없이 중단**할 수 있습니다. 그래서 (1) 실행당 뉴스 1개, (2) RSS 는 항목 앞부분(3.5KB)·25개만 읽고 기사 전문은 읽지 않음, (3) 종목 사전은 큰 정규식 대신 Map 조회, (4) **시작을 가장 먼저 D1 에 기록하고 출처마다 처리 직후 상태를 기록**합니다. 그래도 반복해서 미완료라면 status 의 `diagnostics.code = incomplete` 와 해당 출처의 "수집 미완료" 오류로 드러납니다 → `INTEL_DISABLED` 로 출처를 줄이거나 Workers Paid 로 전환하세요.
 - 실행당 외부 요청: Binance 3 + Upbit 공지 1 + 뉴스 1 + Upbit 마켓 목록 1 + 시세 캔들 최대 4 = **최대 10개** (무료 한도 50개). 기존 감시는 별도 실행이라 각자 한도가 적용됩니다.
 - D1 쓰기 상한: 출처당 새 항목 최대 30건/회, 시세 스냅샷 최대 12행/회, 이미 저장된 URL 은 분석하지 않고 건너뜀.
@@ -220,3 +222,54 @@ Tier 숫자는 D1(`source_tier`)에만 있고 화면에는 "공식/뉴스/소셜
 2. 특정 출처가 `error` 이고 `last_error` 가 `HTTP 451/403` 이면 그 출처가 Worker 위치에서 차단된 것입니다 (Binance 공지 가능성 있음). 다른 출처에는 영향이 없습니다.
 3. `/api/intelligence/events?limit=5` 에 항목이 있는지.
 4. 사이트 상단 **📰 뉴스** 탭.
+
+
+---
+
+## 부록: 6B 운영 수정 후 수집 구조 (CPU 안정화 · 진단 분리 · 배포 식별)
+
+운영에서 Binance/Upbit 가 `수집 미완료 … (실행 시간/CPU 제한 의심)` 로 33회 연속 실패한 문제의 원인과 수정입니다.
+(⚠️ 아래 측정은 Node 콜드 + 스텁 D1 이며 Cloudflare Workers 의 실제 CPU 시간이 아닙니다. 운영에서 `/api/intelligence/status` 로 확인하세요.)
+
+### 원인
+6A 엔진은 **새 항목이 하나도 없는 평상시 실행에서도** 매번 아래를 모두 했습니다.
+1. Upbit 마켓 목록(250개) fetch → 심볼 사전 구성 (약 3ms)
+2. 최근 클러스터 최대 300개 조회·JSON 해석
+3. 각 출처 응답의 **모든 항목을 분석(enrich: 심볼·카테고리·중요도)한 뒤에야** 이미 저장된 항목인지 확인 — Binance 60개 + Upbit 20개 + 뉴스 25개 (약 5ms)
+4. 시세 반응 갱신
+→ 합계가 무료 플랜 실행당 CPU(약 10ms)를 넘어, 공식 출처(가장 먼저 처리)가 상태를 기록하기 전에 실행이 중단 → "미완료" 가 33회 연속 누적. (6B 코드는 아직 배포되지 않은 상태에서 발생한 문제라 6B 회귀가 아닙니다.)
+
+### 수정
+- **키만 훑기 → 새 항목만 분석**: `scan()` 이 응답에서 url_key 만 싸게 뽑고(URL 파싱 없는 빠른 경로, `urlKey` 와 같은 값임을 테스트로 고정), D1 에서 이미 저장된 키를 제외한 뒤 **새 항목만** 정리·분석·저장. 보관 기간(공식 7일, 뉴스 3일, Telegram 14일)보다 오래된 항목은 훑기에서 제외.
+- **지연 로딩**: 마켓 목록·심볼 사전·클러스터 조회는 **새 항목이 있을 때만**. 시세 반응 갱신은 새 이벤트가 있거나 6분마다, 예산이 남을 때만 (작은 쿼리로 최근 1시간 이벤트만 조회).
+- **새 항목 상한**: 출처당 한 실행에서 새 항목 최대 8개 (나머지는 다음 실행에서 이어서, 최신부터).
+- **스키마 버전 기록**: 평상시에는 `CREATE intel_meta` + 버전 조회 2문장으로 끝 (이전에는 매 실행 14개 CREATE).
+- **처리 직전 시도 기록(JIT)**: 출처마다 처리 직전에 시도를 기록하고 직후에 결과를 기록. 실행 도중 예산을 넘으면 남은 출처는 **시도 기록도 남기지 않고** 다음 실행으로 이월 (`deferred`).
+- **미완료 복구 모드**: 이전 실행이 죽어 `수집 미완료` 로 남은 출처가 있으면 그 출처 하나만 **단독·축소(8 → 4 → 2개)** 로 실행 → 반복해서 같은 무거운 실행에 죽지 않고 반드시 진행. 성공하면 오류·실패 횟수 초기화. 연속 실패 시 간격이 최대 4배로 늘어(backoff) 다른 출처가 굶지 않음.
+- **소스 스케줄(Cron 은 그대로 2개)**: 실행마다 ① 공식 공지를 먼저 예약, ② 남은 예산 안에서 목표 주기를 가장 많이 넘긴 출처 순. 예산(base cost 합) 기본 4, 실행 도중 한계 = 예산 × 1.5.
+
+  | 출처 | 목표 주기 | base cost |
+  |---|---|---|
+  | Binance / Upbit 공지 | 2분 | 1 / 1 |
+  | Telegram 채널 각각 | 10분 | 1 |
+  | 뉴스 RSS 각각 | 12분 | 2 |
+  | Coinpan(켰을 때) | 12분 | 2 |
+  새 항목 1개 = +0.3, 사전 구성 +1.5, 클러스터 조회 +0.7, 시세 갱신 +1.5. `INTEL_BUDGET` 변수로 조정(최대 20).
+
+  측정(Node 콜드, 스텁 D1, 새 항목 0): 평상시 한 번의 `runIntelligence` **17ms → 8.7ms** (이 중 상당 부분은 Node 내부 초기화이고 프로젝트 코드 자체는 약 3~4ms). 구간별: 6A 는 사전 3.3 + 클러스터 0.7 + 파싱 5 + 이미 저장된 항목 분석 5 ≈ 15ms, 새 구조는 훑기 0.2~2ms/출처.
+
+### 진단 (`/api/intelligence/status`)
+`diagnostics` 가 세 가지를 따로 판정하고, **전부 정상일 때만 `code: "ok"`, `status: "ok"`** 입니다.
+
+| 필드 | 값 |
+|---|---|
+| `cron_status.status` | `ok`(정보 Cron 이 6분 이내 실행) / `stale` / `not_seen` |
+| `collector_status.status` | `ok` / `running` / `incomplete`(시작만 있고 완료 없음, 또는 완료가 10분 넘게 멈춤) / `error` / `never_ran` |
+| `source_status.status` | `ok` / `degraded`(일부 오류·지연) / `down`(정상 출처 없음) / `pending`(수집 준비 중), `problem_sources`, `counts`, `official_ok` |
+| `diagnostics.code` | `ok` · `cron_not_seen` · `never_ran` · `incomplete` · `cron_stale` · `collector_error` · `sources_down` · `sources_degraded` · `sources_pending` |
+| `diagnostics.hint` | 예: `Cron 정상 · Collector 정상 · Source 일부 오류 (binance, upbit)` |
+
+### 배포 식별 (`/api/health`, `/api/intelligence/status`)
+`worker_version`, `api_revision`, `intelligence.api_version / schema_version / features`, `available_endpoints`(라우터 표에서 생성 → 라우터와 항상 일치), `deployment`(Cloudflare `[version_metadata]` 바인딩의 `version_id`, `tag`, `deployed_at`; 바인딩이 없으면 `null`).
+- 코드를 바꾸는 PR 마다 `worker/src/meta.js` 의 `WORKER_VERSION` / `API_REVISION` 을 올려 "지금 어떤 코드가 배포됐는지" 바로 알 수 있게 합니다.
+- PR 이 **merge 되지 않으면 Cloudflare Builds 는 새 코드를 배포하지 않습니다** (main 기준 배포). 운영에서 새 endpoint 가 404 이면 먼저 PR 이 merge 됐는지 확인하세요.
