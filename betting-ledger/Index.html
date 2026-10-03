@@ -59,8 +59,8 @@
   <div class="row"><span>사용</span><span class="num"><span id="hUsed">-</span> / <span id="hBudget">-</span></span></div>
   <div class="bar" id="hBar"><i style="width:0"></i></div>
   <div class="row"><span>남은 예산</span><span class="num" id="hRemain">-</span></div>
-  <div class="row"><span>현재 손익</span><span class="num" id="hProfit">-</span></div>
-  <div class="row"><span>ROI</span><span class="num" id="hRoi">-</span></div>
+  <div class="row"><span>확정 손익</span><span class="num" id="hProfit">-</span></div>
+  <div class="row"><span>확정 ROI</span><span class="num" id="hRoi">-</span></div>
   <div class="sub" id="hPend"></div>
 </div>
 
@@ -174,7 +174,7 @@ function renderHead(s) {
   $('hRemain').textContent = won(s.remain);
   $('hProfit').textContent = signed(s.profit); $('hProfit').className = 'num ' + cls(s.profit);
   $('hRoi').textContent = spct(s.roi); $('hRoi').className = 'num ' + cls(s.roi);
-  $('hPend').textContent = s.pendingStake > 0 ? '미확정 ' + won(s.pendingStake) + ' 제외한 확정 건 기준 손익' : '';
+  $('hPend').textContent = '미확정 ' + won(s.pendingStake) + ' · 확정 베팅액 ' + won(s.settledStake);
 }
 
 function renderHints() {
@@ -287,10 +287,11 @@ function loadMonthly() {
     var w = res.wdl;
     $('mBody').innerHTML =
       '<div class="grid3">' +
-      stat('총 베팅금액', won(s.used)) + stat('총 반환금', won(s.totalReturn)) +
-      stat('순손익', signed(s.profit), cls(s.profit)) + stat('ROI', spct(s.roi), cls(s.roi)) +
-      stat('적중률', pct(s.hitRate)) + stat('남은 예산', won(s.remain)) + '</div>' +
-      (s.pendingStake > 0 ? '<div class="sub">미확정 ' + won(s.pendingStake) + ' 은 반환금/손익/ROI 에서 제외</div>' : '') +
+      stat('총 베팅액', won(s.totalStake)) + stat('남은 예산', won(s.remain)) +
+      stat('미확정 베팅액', won(s.pendingStake)) + stat('확정 베팅액', won(s.settledStake)) +
+      stat('총 반환금(확정)', won(s.totalReturn)) + stat('적중률', pct(s.hitRate)) +
+      stat('확정 손익', signed(s.profit), cls(s.profit)) + stat('확정 ROI', spct(s.roi), cls(s.roi)) + '</div>' +
+      '<div class="sub">확정 손익·ROI 는 결과가 확정된 건만 계산합니다(대기 제외).</div>' +
       tbl('종목별', ['종목', '횟수', '베팅금액', '반환금', '손익', 'ROI'], res.bySport.map(function (g) {
         return [esc(g.label), g.count, won(g.stake), won(g.ret), pc(g.profit, signed), pc(g.roi, spct)]; })) +
       tbl('폴더수별', ['폴더', '횟수', '적중률', '손익', 'ROI'], res.byFolder.map(function (g) {

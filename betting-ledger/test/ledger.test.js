@@ -15,6 +15,7 @@ function makeSheet(name) {
     getName: () => name,
     getLastRow() { let l = 0; grid.forEach((r, i) => { if (r && r.some(v => v !== '' && v !== undefined)) l = i + 1; }); return l; },
     getMaxRows: () => 1000,
+    getLastColumn() { return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
         getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')),
@@ -56,7 +57,7 @@ function makeContext(now = new Date('2026-10-03T03:00:00Z')) {
           : `${Y}-${M}-${D} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}:${p(k.getUTCSeconds())}`;
       },
     },
-    HtmlService: {},
+    HtmlService: {}, Logger: { log() {} },
   };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
@@ -272,6 +273,90 @@ test('F. 미적중은 반환금 0 강제, 적중은 반환금 필수, 취소는 
   assert.strictEqual(env.get('apiResolveBet')({ id: b, result: '적중', ret: 0, reqId: 'f2' }).ok, false);
   const r = env.get('apiResolveBet')({ id: c, result: '취소', ret: 1000, reqId: 'f3' });
   assert.deepStrictEqual([r.profit, r.roi], [0, 0]);
+});
+
+
+/* ---------- V1 안정화 추가 테스트 ---------- */
+test('18. 확정 5,000→10,000 + 대기 5,000 → ROI 분모에 대기 제외 (+100%)', () => {
+  const env = setup();
+  const a = bet(env, { stake: 5000 }).id; bet(env, { stake: 5000, date: '2026-10-04' });
+  env.get('apiResolveBet')({ id: a, result: '적중', ret: 10000, reqId: 'n1' });
+  const s = dash(env).summary;
+  assert.deepStrictEqual([s.totalStake, s.pendingStake, s.settledStake, s.totalReturn, s.profit, s.roi], [10000, 5000, 5000, 10000, 5000, 100]);
+  const row = env.sheet('DASHBOARD').grid.find(r => r[0] === 200000);
+  assert.deepStrictEqual([row[1], row[3], row[4], row[5]], [10000, 10000, 5000, 100]);
+  const row2 = env.sheet('DASHBOARD').grid.find(r => r[3] === 5000 && r[4] === 5000);
+  assert.ok(row2, '미확정/확정 베팅액이 대시보드 시트에 분리 표시');
+});
+test('19. 적특 실제 반환 7,500 → +2,500 / +50%, 반환금 필수', () => {
+  const env = setup();
+  const a = bet(env, {}).id, b = bet(env, { date: '2026-10-04' }).id;
+  assert.strictEqual(env.get('apiResolveBet')({ id: a, result: '적특', ret: '', reqId: 'n2' }).ok, false);
+  assert.strictEqual(env.get('apiResolveBet')({ id: a, result: '적특', ret: 0, reqId: 'n3' }).ok, false);
+  const r = env.get('apiResolveBet')({ id: a, result: '적특', ret: 7500, reqId: 'n4' });
+  assert.ok(r.ok, r.error); assert.deepStrictEqual([r.profit, r.roi], [2500, 50]);
+  const row = env.sheet('BET_LOG').grid[1];
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적특', 7500, 2500, 50]);
+  void b;
+});
+test('20. 취소 → 반환금 자동 5,000 / 손익 0 / ROI 0%', () => {
+  const env = setup();
+  const a = bet(env, {}).id;
+  const r = env.get('apiResolveBet')({ id: a, result: '취소', reqId: 'n5' });
+  assert.ok(r.ok, r.error); assert.deepStrictEqual([r.profit, r.roi], [0, 0]);
+  const row = env.sheet('BET_LOG').grid[1];
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['취소', 5000, 0, 0]);
+});
+test('21. 취소·반환·당첨이 있어도 월 사용액/남은 예산은 줄지 않음', () => {
+  const env = setup();
+  const a = bet(env, {}).id, b = bet(env, { date: '2026-10-04' }).id, c = bet(env, { date: '2026-10-05' }).id;
+  env.get('apiResolveBet')({ id: a, result: '취소', reqId: 'n6' });
+  env.get('apiResolveBet')({ id: b, result: '적중', ret: 50000, reqId: 'n7' });
+  const s = dash(env).summary;
+  assert.strictEqual(s.used, 15000); assert.strictEqual(s.remain, 185000);
+  // 환급/당첨 후에도 월 한도 검증은 총 베팅액 기준: 9월에 198,000 채우고 취소·당첨 처리해도 차단
+  const env2 = setup(); fill198k(env2);
+  const first = env2.sheet('BET_LOG').grid[1][0];
+  env2.get('apiResolveBet')({ id: first, result: '적중', ret: 100000, reqId: 'n8' });
+  assert.strictEqual(env2.get('apiGetMonthly')('2026-09').summary.remain, 2000);
+  assert.strictEqual(bet(env2, { date: '2026-09-30', stake: 3000 }).ok, false);
+  void c;
+});
+test('22. 승무패 1경기 미선택 → 차단 + 친절한 메시지', () => {
+  const env = setup();
+  const g = GAMES.slice(); g[6] = '';
+  const r = wdl(env, { games: g });
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.error, '7경기의 승/무/패를 선택해주세요.');
+  assert.strictEqual(env.sheet('WDL_LOG').getLastRow(), 1);
+  assert.strictEqual(wdl(env, { games: Array(14).fill('') }).error, '1~14경기의 승/무/패를 모두 선택해주세요.');
+  const g2 = GAMES.slice(); g2[2] = ''; g2[9] = '';
+  assert.strictEqual(wdl(env, { games: g2 }).error, '3, 10경기의 승/무/패를 선택해주세요.');
+});
+test('23. diagnoseSetup: 정상이면 정상 메시지, 데이터 변경 없음', () => {
+  const env = setup(); bet(env, { stake: 1000 });
+  const snap = JSON.stringify(env.sheets.map(s => [s.name, s.grid]));
+  assert.strictEqual(env.get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상');
+  assert.strictEqual(JSON.stringify(env.sheets.map(s => [s.name, s.grid])), snap);
+});
+test('24. diagnoseSetup: 빈 스프레드시트는 생성 없이 문제 보고', () => {
+  const env = makeContext();
+  const msg = env.get('diagnoseSetup')();
+  ['BET_LOG', 'WDL_LOG', 'DASHBOARD', 'SETTINGS'].forEach(n => assert.ok(msg.includes('시트 "' + n + '"가 없습니다'), msg));
+  assert.strictEqual(env.sheets.length, 0);
+});
+test('25. diagnoseSetup: 헤더 오류/중복/설정값 누락·불량 위치 안내', () => {
+  const env = setup();
+  env.sheet('BET_LOG').grid[0][4] = '경기명';        // E열 틀림
+  env.sheet('WDL_LOG').grid[0][26] = '메모';          // AA열 중복 헤더(X열 메모와 동일)
+  env.sheet('SETTINGS').grid[2][0] = '일반토토 일 최대 ';   // 공백은 허용
+  env.sheet('SETTINGS').grid[3][1] = '0';              // 회차 최대 불량
+  env.sheet('SETTINGS').grid[1][0] = '월예산';          // 월 예산 누락
+  const msg = env.get('diagnoseSetup')();
+  assert.ok(msg.includes('BET_LOG 5열 헤더: 기대 "경기/조합명", 실제 "경기명"'), msg);
+  assert.ok(msg.includes('WDL_LOG 중복 헤더 "메모"'), msg);
+  assert.ok(msg.includes('SETTINGS에 "월 예산" 항목이 없습니다'), msg);
+  assert.ok(msg.includes('SETTINGS "승무패 회차 최대" 값이 올바르지 않습니다'), msg);
+  assert.ok(!msg.includes('일반토토 일 최대'), msg);
 });
 
 console.log(results.join('\n'));

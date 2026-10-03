@@ -416,8 +416,14 @@ function saveWdl_(p) {
     stake: stakeField_(p.stake),
     memo: textField_(p.memo, '메모', CONFIG.MAX_MEMO, false)
   };
-  var games = p.games || [];
-  for (var i = 1; i <= 14; i++) rec['g' + i] = enumField_(games[i - 1], ENUM.PICK, i + '경기');
+  var games = Array.isArray(p.games) ? p.games : [];
+  var missing = [];
+  for (var i = 1; i <= 14; i++) {
+    var gv = String(games[i - 1] == null ? '' : games[i - 1]).trim();
+    if (ENUM.PICK.indexOf(gv) < 0) missing.push(i); else rec['g' + i] = gv;
+  }
+  if (missing.length === 14) fail_('1~14경기의 승/무/패를 모두 선택해주세요.');
+  if (missing.length) fail_(missing.join(', ') + '경기의 승/무/패를 선택해주세요.');
 
   var bets = readRows_(TABLES.BET);
   var wdl = readRows_(TABLES.WDL);
@@ -449,14 +455,20 @@ function saveWdl_(p) {
 
 function resolveBet_(p) {
   var result = enumField_(p.result, ENUM.BET_RESOLVE, '결과');
-  var ret = intField_(p.ret, '반환금');
-  if (ret < 0) fail_('반환금은 0 이상이어야 합니다.');
-  if (result === '미적중') ret = 0;
-  if (result === '적중' && ret <= 0) fail_('적중은 반환금(원금 포함)을 입력해야 합니다.');
   var rows = readRows_(TABLES.BET);
   var rec = rows.filter(function (r) { return r.id === String(p.id); })[0];
   if (!rec) fail_('기록을 찾을 수 없습니다.');
   if (rec.result !== '대기') fail_('이미 결과가 처리된 기록입니다.');
+  var blank = String(p.ret == null ? '' : p.ret).trim() === '';
+  var ret;
+  if (result === '미적중') ret = 0;
+  else if (result === '취소' && blank) ret = rec.stake;   // 취소 기본 반환금 = 원래 베팅금액
+  else {
+    ret = intField_(p.ret, '반환금');
+    if (ret < 0) fail_('반환금은 0 이상이어야 합니다.');
+    if (result === '적중' && ret <= 0) fail_('적중은 반환금(원금 포함)을 입력해야 합니다.');
+    if (result === '적특' && ret <= 0) fail_('적특은 실제 반환받은 금액을 입력해주세요.');
+  }
   rec.result = result;
   rec.ret = ret;
   rec.profit = calcProfit_(rec.stake, ret);
@@ -568,14 +580,15 @@ function buildStats_(month) {
     summary: {
       budget: settings.budget,
       used: used,
+      totalStake: used,   // 총 베팅액 = 사용액 (대기/취소 포함, 반환금과 무관)
       betUsed: bt.stake,
       wdlUsed: wt.stake,
       remain: settings.budget - used,
       totalReturn: totalReturn,
       settledStake: settledStake,
       pendingStake: bt.pendingStake + wt.pendingStake,
-      profit: profit,
-      roi: calcRoi_(settledStake, profit),
+      profit: profit,                       // 확정 손익 (확정 건만)
+      roi: calcRoi_(settledStake, profit),  // 확정 ROI = 확정 손익 / 확정 베팅액 (대기 제외)
       hitRate: bt.hitRate
     },
     bySport: bySport,
@@ -606,9 +619,9 @@ function refreshDashboard_() {
   }
   add([CONFIG.APP_TITLE + ' — ' + st.month], [TXT]);
   add([]);
-  add(['이번달 예산', '이번달 사용액', '남은 예산', '총 반환금', '순손익', 'ROI']);
+  add(['이번달 예산', '총 베팅액(사용액)', '남은 예산', '총 반환금(확정)', '확정 손익', '확정 ROI']);
   add([s.budget, s.used, s.remain, s.totalReturn, s.profit, s.roi], [MONEY, MONEY, MONEY, MONEY, SIGN, SPCT]);
-  add(['적중률(일반)', '일반토토 사용', '승무패 사용', '미확정 금액', '확정 베팅금액'], [TXT]);
+  add(['적중률(일반)', '일반토토 베팅액', '승무패 베팅액', '미확정 베팅액', '확정 베팅액'], [TXT]);
   add([s.hitRate === null ? '-' : s.hitRate, s.betUsed, s.wdlUsed, s.pendingStake, s.settledStake], [PCT, MONEY, MONEY, MONEY, MONEY]);
   add([]);
 
@@ -683,4 +696,60 @@ function apiGetMonthly(month) {
     if (!/^\d{4}-\d{2}$/.test(m)) m = monthOf_(todayStr_());
     return buildStats_(m);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* 진단 (읽기 전용: 시트/데이터/속성을 생성·수정·삭제하지 않음)        */
+/* ------------------------------------------------------------------ */
+
+function diagnoseSetup() {
+  var problems = [];
+  var ss = null;
+  try {
+    var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+    ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  } catch (e) { problems.push('스프레드시트를 열 수 없습니다: ' + e.message); }
+  if (!ss) problems.push('스프레드시트를 찾을 수 없습니다. 시트에 연결된 스크립트인지 확인하세요.');
+  else {
+    function checkHeaders(name, expected) {
+      var sh = ss.getSheetByName(name);
+      if (!sh) { problems.push('시트 "' + name + '"가 없습니다.'); return null; }
+      var width = Math.max(sh.getLastColumn(), expected.length);
+      var cur = sh.getLastRow() === 0 ? [] : sh.getRange(1, 1, 1, width).getValues()[0];
+      expected.forEach(function (h, i) {
+        if (String(cur[i] === undefined ? '' : cur[i]).trim() !== h) {
+          problems.push(name + ' ' + (i + 1) + '열 헤더: 기대 "' + h + '", 실제 "' + (cur[i] === undefined ? '' : cur[i]) + '"');
+        }
+      });
+      var seen = {};
+      cur.forEach(function (h, i) {
+        var k = String(h).trim();
+        if (!k) return;
+        if (seen[k]) problems.push(name + ' 중복 헤더 "' + k + '" (' + seen[k] + '열, ' + (i + 1) + '열)');
+        else seen[k] = i + 1;
+      });
+      return sh;
+    }
+    checkHeaders(TABLES.BET.name, headersOf_(TABLES.BET));
+    checkHeaders(TABLES.WDL.name, headersOf_(TABLES.WDL));
+    if (!ss.getSheetByName(DASH_SHEET_NAME)) problems.push('시트 "' + DASH_SHEET_NAME + '"가 없습니다.');
+    var set = checkHeaders(SETTINGS_SHEET.name, SETTINGS_SHEET.headers);
+    if (set) {
+      var last = set.getLastRow();
+      var rows = last >= 2 ? set.getRange(2, 1, last - 1, 2).getValues() : [];
+      var count = {};
+      rows.forEach(function (r) { var k = String(r[0]).trim(); if (k) count[k] = (count[k] || 0) + 1; });
+      Object.keys(SETTING_KEYS).forEach(function (k) {
+        var key = SETTING_KEYS[k];
+        if (!count[key]) { problems.push('SETTINGS에 "' + key + '" 항목이 없습니다.'); return; }
+        if (count[key] > 1) problems.push('SETTINGS "' + key + '" 항목이 ' + count[key] + '번 중복되어 있습니다.');
+        var r = rows.filter(function (x) { return String(x[0]).trim() === key; })[0];
+        var n = Number(String(r[1]).replace(/,/g, '').trim());
+        if (String(r[1]).trim() === '' || !isFinite(n) || n <= 0) problems.push('SETTINGS "' + key + '" 값이 올바르지 않습니다: "' + r[1] + '" (양수 필요)');
+      });
+    }
+  }
+  var msg = problems.length ? '문제 ' + problems.length + '건:\n- ' + problems.join('\n- ') : '리치 베팅 장부 V1 환경 정상';
+  Logger.log(msg);
+  return msg;
 }
