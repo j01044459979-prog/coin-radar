@@ -23,6 +23,7 @@ var ENUM = {
   BET_RESOLVE: ['적중', '미적중', '적특', '취소'],
   GRADE: ['메인', '대박', '기타'],
   COMBO: ['주력', '보조1', '보조2'],
+  BUY: ['미확인', '구매', '미구매'],
   PICK: ['승', '무', '패'],
   RANK: ['대기', '1등', '2등', '3등', '4등', '미당첨'],
   RANK_RESOLVE: ['1등', '2등', '3등', '4등', '미당첨']
@@ -56,11 +57,13 @@ var TABLES = {
       ['id', 'ID'], ['date', '베팅일'], ['sport', '종목'], ['league', '리그'],
       ['name', '경기/조합명'], ['pick', '픽 내용'], ['folders', '폴더수'], ['odds', '총배당'],
       ['stake', '베팅금액'], ['result', '결과'], ['ret', '반환금'], ['profit', '손익'],
-      ['roi', 'ROI'], ['grade', '리치등급'], ['memo', '메모'], ['createdAt', '등록일시']
+      ['roi', 'ROI'], ['grade', '리치등급'], ['memo', '메모'], ['createdAt', '등록일시'],
+      ['buyStatus', '구매여부'], ['buyStake', '실제베팅금액'], ['buyAt', '구매일시']
     ],
-    textKeys: ['id', 'date', 'createdAt'],
-    plainKeys: ['id', 'createdAt'],
-    moneyKeys: ['stake', 'ret', 'profit'],
+    textKeys: ['id', 'date'],
+    dtKeys: ['createdAt', 'buyAt'],
+    plainKeys: ['id'],
+    moneyKeys: ['stake', 'ret', 'profit', 'buyStake'],
     roiKey: 'roi'
   },
   WDL: {
@@ -70,11 +73,13 @@ var TABLES = {
       .concat(wdlGameCols_())
       .concat([
         ['stake', '베팅금액'], ['hits', '적중개수'], ['rank', '등수'], ['prize', '당첨금'],
-        ['profit', '손익'], ['memo', '메모'], ['createdAt', '등록일시']
+        ['profit', '손익'], ['memo', '메모'], ['createdAt', '등록일시'],
+        ['buyStatus', '구매여부'], ['buyStake', '실제베팅금액'], ['buyAt', '구매일시']
       ]),
-    textKeys: ['id', 'round', 'date', 'createdAt'],
-    plainKeys: ['id', 'round', 'createdAt'],
-    moneyKeys: ['stake', 'prize', 'profit'],
+    textKeys: ['id', 'round', 'date'],
+    dtKeys: ['createdAt', 'buyAt'],
+    plainKeys: ['id', 'round'],
+    moneyKeys: ['stake', 'prize', 'profit', 'buyStake'],
     roiKey: null
   }
 };
@@ -153,6 +158,7 @@ function ensureTable_(ss, tbl) {
   tbl.cols.forEach(function (c, i) {
     var col = sh.getRange(2, i + 1, rows, 1);
     if (c[0] === 'date') col.setNumberFormat('yyyy-mm-dd');
+    else if (tbl.dtKeys.indexOf(c[0]) >= 0) col.setNumberFormat('yyyy-mm-dd hh:mm:ss');
     else if (tbl.moneyKeys.indexOf(c[0]) >= 0) col.setNumberFormat('#,##0');
     else if (c[0] === tbl.roiKey) col.setNumberFormat('0.0%');
   });
@@ -185,7 +191,6 @@ function setup() {
     var d = ss.getSheetByName(n);
     if (d && d.getLastRow() === 0 && ss.getSheets().length > 4) ss.deleteSheet(d);
   });
-  refreshDashboard_();
   return '설정 완료';
 }
 
@@ -216,6 +221,11 @@ function toDateStr_(v) {
   return String(v == null ? '' : v).trim().slice(0, 10);
 }
 
+function toDateTimeStr_(v) {
+  if (Object.prototype.toString.call(v) === '[object Date]') return Utilities.formatDate(v, CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss');
+  return String(v == null ? '' : v).trim().slice(0, 19);
+}
+
 function numOrNull_(v) {
   if (v === '' || v === null || v === undefined) return null;
   var n = Number(v);
@@ -227,6 +237,8 @@ function normalizeRow_(tbl, o) {
   tbl.moneyKeys.concat(['folders', 'odds', 'hits', 'roi']).forEach(function (k) {
     if (k in o) o[k] = numOrNull_(o[k]);
   });
+  tbl.dtKeys.forEach(function (k) { o[k + 'Str'] = toDateTimeStr_(o[k]); });
+  o.buyStatus = String(o.buyStatus == null ? '' : o.buyStatus).trim() || '미확인';   // 빈값 = 미확인
   if (tbl.roiKey && o[tbl.roiKey] !== null && o[tbl.roiKey] !== undefined) o[tbl.roiKey] = round2_(o[tbl.roiKey] * 100);
   return o;
 }
@@ -259,6 +271,14 @@ function appendRow_(tbl, o) {
   var sh = getSheet_(tbl.name);
   var r = sh.getLastRow() + 1;
   sh.getRange(r, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
+}
+
+/** 연속된 열(keys 순서가 시트 열 순서와 같아야 함)만 갱신 */
+function updateCells_(tbl, rowNum, keys, o) {
+  var idx = keys.map(function (k) { return tbl.cols.map(function (c) { return c[0]; }).indexOf(k); });
+  idx.forEach(function (v, i) { if (v < 0 || v !== idx[0] + i) fail_('내부 오류: 열 순서'); });
+  getSheet_(tbl.name).getRange(rowNum, idx[0] + 1, 1, keys.length)
+    .setValues([keys.map(function (k) { return o[k] == null ? '' : o[k]; })]);
 }
 
 function updateRow_(tbl, rowNum, o) {
@@ -309,7 +329,6 @@ function textField_(v, label, max, required) {
   return s;
 }
 
-function nowStr_() { return Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss'); }
 function todayStr_() { return Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd'); }
 
 function newId_(tbl, rows) {
@@ -323,10 +342,12 @@ function newId_(tbl, rows) {
   return id;
 }
 
+/** 실제 구매(구매여부=구매)의 실제베팅금액 합계. 월은 구매일시 기준(대시보드 수식과 동일). */
 function monthUsage_(month, bets, wdl) {
   var used = 0;
-  bets.forEach(function (r) { if (r.date.slice(0, 7) === month) used += r.stake; });
-  wdl.forEach(function (r) { if (r.date.slice(0, 7) === month) used += r.stake; });
+  bets.concat(wdl).forEach(function (r) {
+    if (r.buyStatus === '구매' && r.buyAtStr.slice(0, 7) === month) used += r.buyStake || 0;
+  });
   return used;
 }
 
@@ -351,7 +372,6 @@ function writeApi_(payload, fn) {
         if (prev) { var p = JSON.parse(prev); p.duplicate = true; return p; }
       }
       var res = fn();
-      refreshDashboard_();
       res.ok = true;
       res.summary = buildStats_(monthOf_(todayStr_())).summary;
       res.todayBetUsed = betUsedOn_(todayStr_());
@@ -372,7 +392,7 @@ function monthOf_(dateStr) { return dateStr.slice(0, 7); }
 
 function betUsedOn_(date) {
   var s = 0;
-  readRows_(TABLES.BET).forEach(function (r) { if (r.date === date) s += r.stake; });
+  readRows_(TABLES.BET).forEach(function (r) { if (r.buyStatus === '구매' && r.date === date) s += r.buyStake || 0; });
   return s;
 }
 
@@ -381,7 +401,6 @@ function betUsedOn_(date) {
 /* ------------------------------------------------------------------ */
 
 function saveBet_(p) {
-  var settings = getSettings_();
   var rec = {
     date: dateField_(p.date, '베팅일'),
     sport: enumField_(p.sport, ENUM.SPORT, '종목'),
@@ -399,31 +418,16 @@ function saveBet_(p) {
   rec.odds = round2_(Number(odds));
 
   var bets = readRows_(TABLES.BET);
-  var wdl = readRows_(TABLES.WDL);
-
-  var dayUsed = 0;
-  bets.forEach(function (r) { if (r.date === rec.date) dayUsed += r.stake; });
-  if (dayUsed + rec.stake > settings.daily) {
-    fail_('일 최대 ' + fmtWon_(settings.daily) + ' 초과: 해당일 사용 ' + fmtWon_(dayUsed) + ' + 신규 ' + fmtWon_(rec.stake) +
-      ' = ' + fmtWon_(dayUsed + rec.stake));
-  }
-  var month = monthOf_(rec.date);
-  var used = monthUsage_(month, bets, wdl);
-  if (used + rec.stake > settings.budget) {
-    fail_('월 예산 ' + fmtWon_(settings.budget) + ' 초과: ' + month + ' 사용 ' + fmtWon_(used) + ' + 신규 ' + fmtWon_(rec.stake) +
-      ' = ' + fmtWon_(used + rec.stake));
-  }
-
   rec.id = newId_(TABLES.BET, bets);
   rec.result = '대기';
   rec.ret = ''; rec.profit = ''; rec.roi = '';
-  rec.createdAt = nowStr_();
+  rec.createdAt = new Date();
+  rec.buyStatus = '미확인'; rec.buyStake = ''; rec.buyAt = '';
   appendRow_(TABLES.BET, rec);
-  return { id: rec.id, message: '저장 완료 (' + fmtWon_(rec.stake) + ')' };
+  return { id: rec.id, message: '추천 저장 완료 (' + fmtWon_(rec.stake) + ') · 구매 확인에서 처리하세요' };
 }
 
 function saveWdl_(p) {
-  var settings = getSettings_();
   var rec = {
     round: textField_(p.round, '회차', 20, true),
     date: dateField_(p.date, '구매일'),
@@ -440,32 +444,60 @@ function saveWdl_(p) {
   if (missing.length === 14) fail_('1~14경기의 승/무/패를 모두 선택해주세요.');
   if (missing.length) fail_(missing.join(', ') + '경기의 승/무/패를 선택해주세요.');
 
-  var bets = readRows_(TABLES.BET);
   var wdl = readRows_(TABLES.WDL);
-
-  var roundUsed = 0;
   wdl.forEach(function (r) {
-    if (r.round === rec.round) {
-      roundUsed += r.stake;
-      if (r.combo === rec.combo) fail_(rec.round + '회차에 "' + rec.combo + '" 조합이 이미 있습니다.');
-    }
+    if (r.round === rec.round && r.combo === rec.combo) fail_(rec.round + '회차에 "' + rec.combo + '" 조합이 이미 있습니다.');
   });
-  if (roundUsed + rec.stake > settings.wdlRound) {
-    fail_('회차 최대 ' + fmtWon_(settings.wdlRound) + ' 초과: ' + rec.round + '회차 기존 ' + fmtWon_(roundUsed) + ' + 신규 ' +
-      fmtWon_(rec.stake) + ' = ' + fmtWon_(roundUsed + rec.stake));
-  }
-  var month = monthOf_(rec.date);
-  var used = monthUsage_(month, bets, wdl);
-  if (used + rec.stake > settings.budget) {
-    fail_('월 예산 ' + fmtWon_(settings.budget) + ' 초과: ' + month + ' 사용 ' + fmtWon_(used) + ' + 신규 ' + fmtWon_(rec.stake) +
-      ' = ' + fmtWon_(used + rec.stake));
-  }
 
   rec.id = newId_(TABLES.WDL, wdl);
   rec.hits = ''; rec.rank = '대기'; rec.prize = ''; rec.profit = '';
-  rec.createdAt = nowStr_();
+  rec.createdAt = new Date();
+  rec.buyStatus = '미확인'; rec.buyStake = ''; rec.buyAt = '';
   appendRow_(TABLES.WDL, rec);
-  return { id: rec.id, message: '저장 완료 (' + rec.round + '회차 ' + rec.combo + ' ' + fmtWon_(rec.stake) + ')' };
+  return { id: rec.id, message: '추천 저장 완료 (' + rec.round + '회차 ' + rec.combo + ' ' + fmtWon_(rec.stake) + ') · 구매 확인에서 처리하세요' };
+}
+
+/** 구매 확인: 샀다(구매) / 안 샀다(미구매). 한도는 실제 구매 기준으로 서버에서 다시 검증. */
+function purchaseRecord_(p) {
+  var tbl = p.kind === 'wdl' ? TABLES.WDL : p.kind === 'bet' ? TABLES.BET : null;
+  if (!tbl) fail_('구분이 올바르지 않습니다.');
+  var buy = p.buy === true || p.buy === 'true';
+  var settings = getSettings_();
+  var bets = readRows_(TABLES.BET);
+  var wdl = readRows_(TABLES.WDL);
+  var rec = (tbl === TABLES.BET ? bets : wdl).filter(function (r) { return r.id === String(p.id); })[0];
+  if (!rec) fail_('기록을 찾을 수 없습니다.');
+  if (rec.buyStatus !== '미확인') fail_('이미 처리된 기록입니다 (' + rec.buyStatus + ').');
+
+  var now = new Date();
+  if (buy) {
+    var amount = rec.stake;
+    if (tbl === TABLES.BET) {
+      var dayUsed = 0;
+      bets.forEach(function (r) { if (r.buyStatus === '구매' && r.date === rec.date) dayUsed += r.buyStake || 0; });
+      if (dayUsed + amount > settings.daily) {
+        fail_('일 최대 ' + fmtWon_(settings.daily) + ' 초과: 해당일 구매 ' + fmtWon_(dayUsed) + ' + 신규 ' + fmtWon_(amount) +
+          ' = ' + fmtWon_(dayUsed + amount));
+      }
+    } else {
+      var roundUsed = 0;
+      wdl.forEach(function (r) { if (r.buyStatus === '구매' && r.round === rec.round) roundUsed += r.buyStake || 0; });
+      if (roundUsed + amount > settings.wdlRound) {
+        fail_('회차 최대 ' + fmtWon_(settings.wdlRound) + ' 초과: ' + rec.round + '회차 구매 ' + fmtWon_(roundUsed) + ' + 신규 ' +
+          fmtWon_(amount) + ' = ' + fmtWon_(roundUsed + amount));
+      }
+    }
+    var month = monthOf_(todayStr_());
+    var used = monthUsage_(month, bets, wdl);
+    if (used + amount > settings.budget) {
+      fail_('월 예산 ' + fmtWon_(settings.budget) + ' 초과: ' + month + ' 구매 ' + fmtWon_(used) + ' + 신규 ' + fmtWon_(amount) +
+        ' = ' + fmtWon_(used + amount));
+    }
+    updateCells_(tbl, rec._row, ['buyStatus', 'buyStake', 'buyAt'], { buyStatus: '구매', buyStake: amount, buyAt: now });
+    return { id: rec.id, buyStatus: '구매', message: '구매 처리 완료 (' + fmtWon_(amount) + ')' };
+  }
+  updateCells_(tbl, rec._row, ['buyStatus', 'buyStake', 'buyAt'], { buyStatus: '미구매', buyStake: '', buyAt: now });
+  return { id: rec.id, buyStatus: '미구매', message: '미구매로 기록했습니다' };
 }
 
 function resolveBet_(p) {
@@ -520,9 +552,9 @@ function resolveWdl_(p) {
 function aggBets_(rows) {
   var g = { count: rows.length, stake: 0, settledStake: 0, pendingStake: 0, ret: 0, hit: 0, miss: 0 };
   rows.forEach(function (r) {
-    g.stake += r.stake;
-    if (r.result === '대기') { g.pendingStake += r.stake; return; }
-    g.settledStake += r.stake;
+    g.stake += r.buyStake;
+    if (r.result === '대기') { g.pendingStake += r.buyStake; return; }
+    g.settledStake += r.buyStake;
     g.ret += r.ret || 0;
     if (r.result === '적중') g.hit++;
     if (r.result === '미적중') g.miss++;
@@ -539,9 +571,9 @@ function aggWdl_(rows) {
   var bestIdx = null;
   rows.forEach(function (r) {
     rounds[r.round] = true;
-    g.stake += r.stake;
-    if (r.rank === '대기') { g.pendingStake += r.stake; return; }
-    g.settledStake += r.stake;
+    g.stake += r.buyStake;
+    if (r.rank === '대기') { g.pendingStake += r.buyStake; return; }
+    g.settledStake += r.buyStake;
     g.prize += r.prize || 0;
     if (r.hits != null && (g.bestHits === null || r.hits > g.bestHits)) g.bestHits = r.hits;
     var idx = ENUM.RANK_RESOLVE.indexOf(r.rank);
@@ -556,8 +588,10 @@ function aggWdl_(rows) {
 
 function buildStats_(month) {
   var settings = getSettings_();
-  var bets = readRows_(TABLES.BET).filter(function (r) { return r.date.slice(0, 7) === month; });
-  var wdl = readRows_(TABLES.WDL).filter(function (r) { return r.date.slice(0, 7) === month; });
+  // 실제 구매(구매여부=구매)만 집계, 월은 구매일시 기준. 미확인/미구매 추천은 제외.
+  function boughtIn(r) { return r.buyStatus === '구매' && r.buyAtStr.slice(0, 7) === month; }
+  var bets = readRows_(TABLES.BET).filter(boughtIn);
+  var wdl = readRows_(TABLES.WDL).filter(boughtIn);
 
   var bt = aggBets_(bets);
   var wt = aggWdl_(wdl);
@@ -580,11 +614,11 @@ function buildStats_(month) {
   });
 
   var recent = bets.map(function (r) {
-    return { kind: '일반', date: r.date, title: r.name, stake: r.stake, status: r.result,
-      profit: r.result === '대기' ? null : r.profit, createdAt: r.createdAt, id: r.id };
+    return { kind: '일반', date: r.date, title: r.name, stake: r.buyStake, status: r.result,
+      profit: r.result === '대기' ? null : r.profit, createdAt: r.buyAtStr, id: r.id };
   }).concat(wdl.map(function (r) {
-    return { kind: '승무패', date: r.date, title: r.round + '회차 ' + r.combo, stake: r.stake, status: r.rank,
-      profit: r.rank === '대기' ? null : r.profit, createdAt: r.createdAt, id: r.id };
+    return { kind: '승무패', date: r.date, title: r.round + '회차 ' + r.combo, stake: r.buyStake, status: r.rank,
+      profit: r.rank === '대기' ? null : r.profit, createdAt: r.buyAtStr, id: r.id };
   })).sort(function (a, b) {
     return a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : (a.createdAt < b.createdAt ? 1 : -1);
   }).slice(0, 10);
@@ -615,71 +649,6 @@ function buildStats_(month) {
 }
 
 /* ------------------------------------------------------------------ */
-/* DASHBOARD 시트 (현재 월, 서버 집계값 기록)                          */
-/* ------------------------------------------------------------------ */
-
-function refreshDashboard_() {
-  var ss = getSS_();
-  var sh = ss.getSheetByName(DASH_SHEET_NAME) || ss.insertSheet(DASH_SHEET_NAME);
-  // 사용자가 만든 DASHBOARD(수식 등)는 덮어쓰지 않음: 비어 있거나 이 스크립트가 만든 시트일 때만 갱신
-  if (sh.getLastRow() > 0 && String(sh.getRange(1, 1).getValue()).indexOf(CONFIG.APP_TITLE + ' — ') !== 0) {
-    return buildStats_(monthOf_(todayStr_()));
-  }
-  var st = buildStats_(monthOf_(todayStr_()));
-  var s = st.summary;
-  var W = 6;
-  var rows = [], fmts = [];
-  var MONEY = '#,##0', PCT = '0.0"%"', SIGN = '+#,##0;-#,##0;0', SPCT = '+0.0"%";-0.0"%";0.0"%"', TXT = '@', GEN = 'General';
-  function add(vals, f) {
-    while (vals.length < W) vals.push('');
-    var ff = f || [];
-    while (ff.length < W) ff.push(GEN);
-    rows.push(vals); fmts.push(ff);
-  }
-  add([CONFIG.APP_TITLE + ' — ' + st.month], [TXT]);
-  add([]);
-  add(['이번달 예산', '총 베팅액(사용액)', '남은 예산', '총 반환금(확정)', '확정 손익', '확정 ROI']);
-  add([s.budget, s.used, s.remain, s.totalReturn, s.profit, s.roi], [MONEY, MONEY, MONEY, MONEY, SIGN, SPCT]);
-  add(['적중률(일반)', '일반토토 베팅액', '승무패 베팅액', '미확정 베팅액', '확정 베팅액'], [TXT]);
-  add([s.hitRate === null ? '-' : s.hitRate, s.betUsed, s.wdlUsed, s.pendingStake, s.settledStake], [PCT, MONEY, MONEY, MONEY, MONEY]);
-  add([]);
-
-  function table(title, list) {
-    add([title], [TXT]);
-    add(['구분', '베팅횟수', '베팅금액', '반환금', '손익', 'ROI']);
-    list.forEach(function (g) {
-      add([g.label, g.count, g.stake, g.ret, g.profit, g.roi], [TXT, '0', MONEY, MONEY, SIGN, SPCT]);
-    });
-    add([]);
-  }
-  table('종목별', st.bySport);
-  function table2(title, list) {
-    add([title], [TXT]);
-    add(['구분', '베팅횟수', '적중률', '손익', 'ROI']);
-    list.forEach(function (g) {
-      add([g.label, g.count, g.hitRate === null ? '-' : g.hitRate, g.profit, g.roi], [TXT, '0', PCT, SIGN, SPCT]);
-    });
-    add([]);
-  }
-  table2('폴더별', st.byFolder);
-  table2('리치등급별', st.byGrade);
-  var w = st.wdl;
-  add(['승무패'], [TXT]);
-  add(['참가 회차 수', '총 투입금', '총 당첨금', '순손익', '최고 적중개수', '최고 등수']);
-  add([w.rounds, w.stake, w.prize, w.profit, w.bestHits === null ? '-' : w.bestHits, w.bestRank || '-'], ['0', MONEY, MONEY, SIGN, GEN, TXT]);
-
-  sh.clear();
-  var rng = sh.getRange(1, 1, rows.length, W);
-  rng.setNumberFormats(fmts);
-  rng.setValues(rows);
-  sh.getRange(1, 1).setFontWeight('bold').setFontSize(14);
-  rows.forEach(function (r, i) {
-    if (r[0] !== '' && r[1] === '' && i > 0) sh.getRange(i + 1, 1).setFontWeight('bold');
-  });
-  return st;
-}
-
-/* ------------------------------------------------------------------ */
 /* 웹앱 API (google.script.run)                                        */
 /* ------------------------------------------------------------------ */
 
@@ -695,14 +664,31 @@ function apiBootstrap() {
 function apiSaveBet(payload) { return writeApi_(payload, function () { return saveBet_(payload); }); }
 function apiSaveWdl(payload) { return writeApi_(payload, function () { return saveWdl_(payload); }); }
 function apiResolveBet(payload) { return writeApi_(payload, function () { return resolveBet_(payload); }); }
+function apiPurchase(payload) { return writeApi_(payload, function () { return purchaseRecord_(payload); }); }
 function apiResolveWdl(payload) { return writeApi_(payload, function () { return resolveWdl_(payload); }); }
 
 function apiGetPending() {
   return readApi_(function () {
     var bets = readRows_(TABLES.BET).filter(function (r) { return r.result === '대기'; })
-      .map(function (r) { return { id: r.id, date: r.date, sport: r.sport, name: r.name, pick: r.pick, odds: r.odds, stake: r.stake, grade: r.grade }; });
+      .map(function (r) { return { id: r.id, date: r.date, sport: r.sport, name: r.name, pick: r.pick, odds: r.odds, stake: r.stake, grade: r.grade, buy: r.buyStatus }; });
     var wdl = readRows_(TABLES.WDL).filter(function (r) { return r.rank === '대기'; })
-      .map(function (r) { return { id: r.id, round: r.round, date: r.date, combo: r.combo, stake: r.stake }; });
+      .map(function (r) { return { id: r.id, round: r.round, date: r.date, combo: r.combo, stake: r.stake, buy: r.buyStatus }; });
+    bets.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+    wdl.sort(function (a, b) { return a.round === b.round ? (a.combo < b.combo ? -1 : 1) : (a.round < b.round ? 1 : -1); });
+    return { bets: bets, wdl: wdl };
+  });
+}
+
+/** 구매 확인 대기(구매여부=미확인) 목록 */
+function apiGetUnconfirmed() {
+  return readApi_(function () {
+    var bets = readRows_(TABLES.BET).filter(function (r) { return r.buyStatus === '미확인'; })
+      .map(function (r) { return { id: r.id, date: r.date, name: r.name, pick: r.pick, stake: r.stake, odds: r.odds }; });
+    var wdl = readRows_(TABLES.WDL).filter(function (r) { return r.buyStatus === '미확인'; })
+      .map(function (r) {
+        var picks = ''; for (var i = 1; i <= 14; i++) picks += r['g' + i];
+        return { id: r.id, round: r.round, date: r.date, combo: r.combo, stake: r.stake, picks: picks };
+      });
     bets.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     wdl.sort(function (a, b) { return a.round === b.round ? (a.combo < b.combo ? -1 : 1) : (a.round < b.round ? 1 : -1); });
     return { bets: bets, wdl: wdl };

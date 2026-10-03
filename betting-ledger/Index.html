@@ -23,6 +23,11 @@
   .plus { color:var(--up); } .minus { color:var(--down); }
   .nav { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
   .nav button { padding:14px 4px; font-size:16px; font-weight:700; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:10px; }
+  .nav .wide { grid-column:1 / -1; }
+  .buybtns { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+  .buybtns button { padding:14px 0; font-size:17px; font-weight:800; border:0; border-radius:10px; color:#fff; }
+  .buybtns .yes { background:var(--pri); } .buybtns .no { background:#6b7280; }
+  .buybtns button:disabled { opacity:.5; }
   .nav button.on { background:var(--pri); color:#fff; border-color:var(--pri); }
   label { display:block; font-size:13px; color:var(--sub); margin:10px 0 4px; }
   input, select, textarea { width:100%; font-size:17px; padding:11px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
@@ -65,14 +70,21 @@
 </div>
 
 <div class="nav">
-  <button data-tab="bet" class="on">일반 토토 입력</button>
+  <button data-tab="buy" class="on wide" id="navBuy">구매 확인</button>
+  <button data-tab="bet">일반 토토 입력</button>
   <button data-tab="wdl">승무패 입력</button>
   <button data-tab="res">결과 처리</button>
   <button data-tab="mon">월간 성적</button>
 </div>
 
+<!-- 구매 확인 -->
+<section id="tab-buy">
+  <div class="card"><h2 style="margin-top:0">리치 추천픽 (구매 미확인)</h2><div id="uBody" class="sub">불러오는 중…</div></div>
+  <div class="msg" id="uMsg"></div>
+</section>
+
 <!-- 일반 토토 -->
-<section id="tab-bet" class="card">
+<section id="tab-bet" class="card hidden">
   <div class="two">
     <div><label>베팅일</label><input type="date" id="bDate"></div>
     <div><label>종목</label><select id="bSport"></select></div>
@@ -179,8 +191,8 @@ function renderHead(s) {
 
 function renderHints() {
   if (!S.settings) return;
-  $('bHint').textContent = '오늘 일반토토 ' + won(S.todayBetUsed || 0) + ' / ' + won(S.settings.daily);
-  $('wHint').textContent = '회차당 최대 ' + won(S.settings.wdlRound) + ' (모든 조합 합산)';
+  $('bHint').textContent = '추천 저장 후 구매 확인에서 처리 · 오늘 실구매 ' + won(S.todayBetUsed || 0) + ' / ' + won(S.settings.daily);
+  $('wHint').textContent = '추천 저장 후 구매 확인에서 처리 · 회차당 실구매 최대 ' + won(S.settings.wdlRound);
 }
 
 function fillSelect(el, list) { el.innerHTML = list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); }
@@ -189,7 +201,8 @@ function fillSelect(el, list) { el.innerHTML = list.map(function (v) { return '<
 document.querySelectorAll('.nav button').forEach(function (b) {
   b.addEventListener('click', function () {
     document.querySelectorAll('.nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
-    ['bet', 'wdl', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
+    ['buy', 'bet', 'wdl', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
+    if (b.dataset.tab === 'buy') loadUnconfirmed();
     if (b.dataset.tab === 'res') loadPending();
     if (b.dataset.tab === 'mon') loadMonthly();
   });
@@ -229,20 +242,53 @@ $('wSave').addEventListener('click', function () {
   });
 });
 
+/* ---------- 구매 확인 ---------- */
+function loadUnconfirmed() {
+  call('apiGetUnconfirmed').then(function (res) {
+    if (!res.ok) { show('uMsg', false, res.error); return; }
+    var n = res.bets.length + res.wdl.length;
+    $('navBuy').textContent = '구매 확인' + (n ? ' (' + n + ')' : '');
+    function item(kind, id, top, pick, line) {
+      return '<div class="pend" data-kind="' + kind + '" data-id="' + esc(id) + '"><div><b>' + esc(top) + '</b></div>' +
+        '<div>' + esc(pick) + '</div><div class="sub">' + line + '</div>' +
+        '<div class="buybtns"><button class="yes" data-buy="1">샀다</button><button class="no" data-buy="0">안 샀다</button></div></div>';
+    }
+    var html = res.bets.map(function (r) {
+      return item('bet', r.id, r.date + ' · ' + r.name, r.pick || '-', '추천금액 ' + won(r.stake) + ' · 총배당 ' + r.odds);
+    }).concat(res.wdl.map(function (r) {
+      return item('wdl', r.id, r.round + '회차 · ' + r.date, r.picks, '추천금액 ' + won(r.stake) + ' · ' + esc(r.combo));
+    })).join('');
+    $('uBody').innerHTML = html || '구매 확인할 추천픽이 없습니다.';
+  });
+}
+/* 처리 중에는 같은 항목의 두 버튼을 모두 잠그고, 서버도 구매여부=미확인일 때만 처리 */
+$('tab-buy').addEventListener('click', function (e) {
+  var btn = e.target.closest('button[data-buy]'); if (!btn) return;
+  var box = btn.closest('.pend');
+  var all = box.querySelectorAll('button');
+  var key = 'u' + box.dataset.id;
+  if (S.busy[key]) return;
+  S.busy[key] = true; Array.prototype.forEach.call(all, function (b) { b.disabled = true; });
+  call('apiPurchase', { kind:box.dataset.kind, id:box.dataset.id, buy:btn.dataset.buy === '1', reqId:reqId() }).then(function (res) {
+    if (res.ok) { show('uMsg', true, '✔ ' + res.message); applySummary(res); loadUnconfirmed(); }
+    else { show('uMsg', false, '✖ ' + res.error); Array.prototype.forEach.call(all, function (b) { b.disabled = false; }); }
+  }).then(function () { S.busy[key] = false; });
+});
+
 /* ---------- 결과 처리 ---------- */
 function loadPending() {
   call('apiGetPending').then(function (res) {
     if (!res.ok) { show('rMsg', false, res.error); return; }
     $('pBets').innerHTML = res.bets.length ? res.bets.map(function (r) {
       return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.name) + '</b></div>' +
-        '<div class="sub">' + esc(r.date) + ' · ' + esc(r.sport) + ' · ' + esc(r.pick) + ' · ' + r.odds + '배 · ' + won(r.stake) + ' · ' + esc(r.grade) + '</div>' +
+        '<div class="sub">' + esc(r.date) + ' · ' + esc(r.sport) + ' · ' + esc(r.pick) + ' · ' + r.odds + '배 · ' + won(r.stake) + ' · ' + esc(r.grade) + ' · <b>' + esc(r.buy) + '</b></div>' +
         '<div class="two"><select class="rRes"><option>적중</option><option>미적중</option><option>적특</option><option>취소</option></select>' +
         '<input class="rRet" type="number" inputmode="numeric" min="0" placeholder="반환금(원금 포함)" data-stake="' + r.stake + '"></div>' +
         '<button class="mini rBetSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
     }).join('') : '대기 중인 기록이 없습니다.';
     $('pWdl').innerHTML = res.wdl.length ? res.wdl.map(function (r) {
       return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.round) + '회차 · ' + esc(r.combo) + '</b></div>' +
-        '<div class="sub">' + esc(r.date) + ' · ' + won(r.stake) + '</div>' +
+        '<div class="sub">' + esc(r.date) + ' · ' + won(r.stake) + ' · <b>' + esc(r.buy) + '</b></div>' +
         '<div class="two"><select class="wHits">' + Array.apply(null, Array(15)).map(function (_, i) { return '<option value="' + i + '">' + i + '개 적중</option>'; }).join('') + '</select>' +
         '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option></select></div>' +
         '<input class="wPrize" type="number" inputmode="numeric" min="0" placeholder="당첨금(원)" style="margin-top:8px">' +
@@ -314,6 +360,7 @@ function init() {
     fillSelect($('bSport'), res.enums.SPORT); fillSelect($('bGrade'), res.enums.GRADE); fillSelect($('wCombo'), res.enums.COMBO);
     $('bDate').value = res.today; $('wDate').value = res.today; $('mMonth').value = res.month;
     renderHead(res.summary); renderHints();
+    loadUnconfirmed();
   });
 }
 init();
