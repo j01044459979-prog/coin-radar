@@ -51,6 +51,7 @@
   h2 { font-size:15px; margin:14px 0 6px; }
   .grid3 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .stat .v { font-size:20px; }
+  .pend { overflow-wrap:anywhere; word-break:break-word; }
   .pend { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
   .pend:first-child { border-top:0; margin-top:0; padding-top:0; }
   .hidden { display:none; }
@@ -61,7 +62,7 @@
 
 <div class="card" id="head">
   <div class="sub" id="hMonth">불러오는 중…</div>
-  <div class="row"><span>사용</span><span class="num"><span id="hUsed">-</span> / <span id="hBudget">-</span></span></div>
+  <div class="row"><span>실제 사용액</span><span class="num"><span id="hUsed">-</span> / <span id="hBudget">-</span></span></div>
   <div class="bar" id="hBar"><i style="width:0"></i></div>
   <div class="row"><span>남은 예산</span><span class="num" id="hRemain">-</span></div>
   <div class="row"><span>확정 손익</span><span class="num" id="hProfit">-</span></div>
@@ -254,9 +255,11 @@ function loadUnconfirmed() {
         '<div class="buybtns"><button class="yes" data-buy="1">샀다</button><button class="no" data-buy="0">안 샀다</button></div></div>';
     }
     var html = res.bets.map(function (r) {
-      return item('bet', r.id, r.date + ' · ' + r.name, r.pick || '-', '추천금액 ' + won(r.stake) + ' · 총배당 ' + r.odds);
+      return item('bet', r.id, r.name, r.pick || '-',
+        esc(r.date) + ' · ' + esc(r.sport) + (r.league ? '/' + esc(r.league) : '') + '<br>총배당 ' + r.odds + ' · 추천금액 ' + won(r.stake) + ' · ' + esc(r.grade));
     }).concat(res.wdl.map(function (r) {
-      return item('wdl', r.id, r.round + '회차 · ' + r.date, r.picks, '추천금액 ' + won(r.stake) + ' · ' + esc(r.combo));
+      var picks = r.picks.split('').map(function (c, i) { return (i + 1) + c; }).join(' ');
+      return item('wdl', r.id, r.round + '회차 · ' + r.combo, picks, esc(r.date) + ' · 추천금액 ' + won(r.stake));
     })).join('');
     $('uBody').innerHTML = html || '구매 확인할 추천픽이 없습니다.';
   });

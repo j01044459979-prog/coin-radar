@@ -50,6 +50,7 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
     CacheService: { getScriptCache: () => ({ get: k => cache[k] || null, put: (k, v) => { cache[k] = v; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     Utilities: {
+      parseDate: (str) => new RealDate(str + 'T00:00:00+09:00'),
       getUuid: () => 'uuid-' + String(++uuidN).padStart(8, '0') + '-aaaa-bbbb-cccc-dddddddddddd',
       formatDate(d, tz, fmt) {
         const k = new RealDate(d.getTime() + 9 * 3600 * 1000); // Asia/Seoul
@@ -194,7 +195,7 @@ function seedMixed(env) {
 test('8. BET_LOG + WDL_LOG 합산 사용액 = 대시보드(시트/웹앱) 일치', () => {
   const env = setup(); seedMixed(env);
   const sumCol = (name, col, monthPrefix, dateCol) => env.sheet(name).grid.slice(1)
-    .filter(r => String(r[dateCol]).startsWith(monthPrefix)).reduce((s, r) => s + r[col], 0);
+    .filter(r => env.ctx.toDateStr_(r[dateCol]).startsWith(monthPrefix)).reduce((s, r) => s + r[col], 0);
   const raw = sumCol('BET_LOG', 8, '2026-10', 1) + sumCol('WDL_LOG', 18, '2026-10', 2);
   assert.strictEqual(raw, 5000 + 4000 + 3000 + 6000 + 4000);
   const s = dash(env).summary;
@@ -414,6 +415,7 @@ test('29. 샀다 = 구매 / 실제베팅금액=추천금액 / 구매일시=현�
   const g = env.sheet('BET_LOG').grid;
   assert.deepStrictEqual([g[1][16], g[1][17], g[1][8]], ['구매', 4000, 4000]);
   assert.ok(isDate(g[1][18]));
+  assert.ok(isDate(g[1][1]) && isDate(g[1][15]), '베팅일/등록일시도 실제 Date 값');
   assert.deepStrictEqual([g[2][16], g[2][17], g[2][8]], ['미구매', '', 3000]);   // 추천 기록 보존
   assert.ok(isDate(g[2][18]));
   const bs = env.get('apiGetMonthly')('2026-10'); assert.strictEqual(bs.summary.used, 4000);   // 미구매 제외

@@ -9,6 +9,7 @@
  */
 
 var CONFIG = {
+  SPREADSHEET_ID: '1CiE3iOGJFEmcDbh3HnkuS5_BtSDhN8JPDMWff4IgIZI',
   TZ: 'Asia/Seoul',
   APP_TITLE: '리치 베팅 장부',
   LOCK_WAIT_MS: 20000,
@@ -116,12 +117,15 @@ var ssCache_ = null;
 
 function getSS_() {
   if (ssCache_) return ssCache_;
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty('SPREADSHEET_ID');
-  var ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss) throw new Error('스프레드시트를 찾을 수 없습니다. 시트에 연결된 스크립트에서 setup()을 먼저 실행하세요.');
-  if (!id) props.setProperty('SPREADSHEET_ID', ss.getId());
-  ssCache_ = ss;
+  ssCache_ = openSpreadsheet_();
+  return ssCache_;
+}
+
+function openSpreadsheet_() {
+  var ss = null;
+  try { ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID); } catch (e) { ss = null; }
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('스프레드시트를 열 수 없습니다. CONFIG.SPREADSHEET_ID 와 접근 권한을 확인하세요.');
   return ss;
 }
 
@@ -158,7 +162,7 @@ function ensureTable_(ss, tbl) {
   tbl.cols.forEach(function (c, i) {
     var col = sh.getRange(2, i + 1, rows, 1);
     if (c[0] === 'date') col.setNumberFormat('yyyy-mm-dd');
-    else if (tbl.dtKeys.indexOf(c[0]) >= 0) col.setNumberFormat('yyyy-mm-dd hh:mm:ss');
+    else if (tbl.dtKeys.indexOf(c[0]) >= 0) col.setNumberFormat('yyyy-mm-dd hh:mm');
     else if (tbl.moneyKeys.indexOf(c[0]) >= 0) col.setNumberFormat('#,##0');
     else if (c[0] === tbl.roiKey) col.setNumberFormat('0.0%');
   });
@@ -262,8 +266,19 @@ function rowToArray_(tbl, o) {
   return tbl.cols.map(function (c) {
     var v = o[c[0]];
     if (v == null) return '';
+    if (c[0] === 'date' && typeof v === 'string' && v !== '') return Utilities.parseDate(v, CONFIG.TZ, 'yyyy-MM-dd');   // 실제 Date 값
     if (c[0] === tbl.roiKey && v !== '') return Math.round(v * 100) / 10000;  // % → 비율(시트 서식 0.0%)
     return v;
+  });
+}
+
+/** 날짜/일시/ROI 셀의 표시 서식 (값은 Date / 비율 숫자) */
+function formatRowCells_(sh, tbl, rowNum) {
+  tbl.cols.forEach(function (c, i) {
+    var k = c[0];
+    if (k === 'date') sh.getRange(rowNum, i + 1).setNumberFormat('yyyy-mm-dd');
+    else if (tbl.dtKeys.indexOf(k) >= 0) sh.getRange(rowNum, i + 1).setNumberFormat('yyyy-mm-dd hh:mm');
+    else if (k === tbl.roiKey) sh.getRange(rowNum, i + 1).setNumberFormat('0.0%');
   });
 }
 
@@ -271,18 +286,23 @@ function appendRow_(tbl, o) {
   var sh = getSheet_(tbl.name);
   var r = sh.getLastRow() + 1;
   sh.getRange(r, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
+  formatRowCells_(sh, tbl, r);
 }
 
 /** 연속된 열(keys 순서가 시트 열 순서와 같아야 함)만 갱신 */
 function updateCells_(tbl, rowNum, keys, o) {
   var idx = keys.map(function (k) { return tbl.cols.map(function (c) { return c[0]; }).indexOf(k); });
   idx.forEach(function (v, i) { if (v < 0 || v !== idx[0] + i) fail_('내부 오류: 열 순서'); });
-  getSheet_(tbl.name).getRange(rowNum, idx[0] + 1, 1, keys.length)
+  var sh = getSheet_(tbl.name);
+  sh.getRange(rowNum, idx[0] + 1, 1, keys.length)
     .setValues([keys.map(function (k) { return o[k] == null ? '' : o[k]; })]);
+  formatRowCells_(sh, tbl, rowNum);
 }
 
 function updateRow_(tbl, rowNum, o) {
-  getSheet_(tbl.name).getRange(rowNum, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
+  var sh = getSheet_(tbl.name);
+  sh.getRange(rowNum, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
+  formatRowCells_(sh, tbl, rowNum);
 }
 
 /* ------------------------------------------------------------------ */
@@ -365,17 +385,19 @@ function withLock_(fn) {
 function writeApi_(payload, fn) {
   try {
     var reqId = payload && payload.reqId ? 'req_' + String(payload.reqId).slice(0, 60) : null;
-    var cache = reqId ? CacheService.getScriptCache() : null;
+    var cache = null;
+    try { cache = reqId ? CacheService.getScriptCache() : null; } catch (e) { cache = null; }
     return withLock_(function () {
       if (cache) {
-        var prev = cache.get(reqId);
+        var prev = null;
+        try { prev = cache.get(reqId); } catch (e) { prev = null; }
         if (prev) { var p = JSON.parse(prev); p.duplicate = true; return p; }
       }
       var res = fn();
       res.ok = true;
       res.summary = buildStats_(monthOf_(todayStr_())).summary;
       res.todayBetUsed = betUsedOn_(todayStr_());
-      if (cache) cache.put(reqId, JSON.stringify(res), CONFIG.REQ_CACHE_SEC);
+      if (cache) { try { cache.put(reqId, JSON.stringify(res), CONFIG.REQ_CACHE_SEC); } catch (e) { /* 캐시 실패는 무시(구매 상태 검사가 2차 방어) */ } }
       return res;
     });
   } catch (e) {
@@ -500,6 +522,9 @@ function purchaseRecord_(p) {
   return { id: rec.id, buyStatus: '미구매', message: '미구매로 기록했습니다' };
 }
 
+/** 손익 계산 기준 금액: 구매 건은 실제베팅금액, 그 외(추천 분석용)는 추천 베팅금액 */
+function baseStake_(rec) { return rec.buyStatus === '구매' && rec.buyStake ? rec.buyStake : rec.stake; }
+
 function resolveBet_(p) {
   var result = enumField_(p.result, ENUM.BET_RESOLVE, '결과');
   var rows = readRows_(TABLES.BET);
@@ -509,7 +534,7 @@ function resolveBet_(p) {
   var blank = String(p.ret == null ? '' : p.ret).trim() === '';
   var ret;
   if (result === '미적중') ret = 0;
-  else if (result === '취소' && blank) ret = rec.stake;   // 취소 기본 반환금 = 원래 베팅금액
+  else if (result === '취소' && blank) ret = baseStake_(rec);   // 취소 기본 반환금 = 실제 베팅금액
   else {
     ret = intField_(p.ret, '반환금');
     if (ret < 0) fail_('반환금은 0 이상이어야 합니다.');
@@ -518,8 +543,9 @@ function resolveBet_(p) {
   }
   rec.result = result;
   rec.ret = ret;
-  rec.profit = calcProfit_(rec.stake, ret);
-  rec.roi = calcRoi_(rec.stake, rec.profit);
+  var base = baseStake_(rec);
+  rec.profit = calcProfit_(base, ret);
+  rec.roi = calcRoi_(base, rec.profit);
   updateRow_(TABLES.BET, rec._row, rec);
   return { id: rec.id, profit: rec.profit, roi: rec.roi, message: '결과 저장 완료' };
 }
@@ -539,7 +565,7 @@ function resolveWdl_(p) {
   rec.hits = hits;
   rec.rank = rank;
   rec.prize = prize;
-  rec.profit = calcProfit_(rec.stake, prize);
+  rec.profit = calcProfit_(baseStake_(rec), prize);
   updateRow_(TABLES.WDL, rec._row, rec);
   return { id: rec.id, profit: rec.profit, message: '결과 저장 완료' };
 }
@@ -683,7 +709,7 @@ function apiGetPending() {
 function apiGetUnconfirmed() {
   return readApi_(function () {
     var bets = readRows_(TABLES.BET).filter(function (r) { return r.buyStatus === '미확인'; })
-      .map(function (r) { return { id: r.id, date: r.date, name: r.name, pick: r.pick, stake: r.stake, odds: r.odds }; });
+      .map(function (r) { return { id: r.id, date: r.date, sport: r.sport, league: r.league, name: r.name, pick: r.pick, stake: r.stake, odds: r.odds, grade: r.grade }; });
     var wdl = readRows_(TABLES.WDL).filter(function (r) { return r.buyStatus === '미확인'; })
       .map(function (r) {
         var picks = ''; for (var i = 1; i <= 14; i++) picks += r['g' + i];
@@ -711,8 +737,7 @@ function diagnoseSetup() {
   var problems = [];
   var ss = null;
   try {
-    var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-    ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+    ss = openSpreadsheet_();
   } catch (e) { problems.push('스프레드시트를 열 수 없습니다: ' + e.message); }
   if (!ss) problems.push('스프레드시트를 찾을 수 없습니다. 시트에 연결된 스크립트인지 확인하세요.');
   else {
