@@ -1,0 +1,16 @@
+# 리치 베팅 장부 V1 (Google Sheets + Apps Script 웹앱)
+
+## 배포 (최초 1회, 약 3분)
+1. 새 Google 스프레드시트 생성 → 확장 프로그램 → Apps Script
+2. `Code.gs`, `Index.html` 내용을 그대로 붙여넣기 (`Index` 이름의 HTML 파일), 프로젝트 설정에서 "appsscript.json 표시" 후 `appsscript.json` 내용도 반영
+3. 함수 `setup` 실행(권한 승인) → BET_LOG / WDL_LOG / DASHBOARD / SETTINGS 시트 생성
+4. 배포 → 새 배포 → 웹 앱 (실행: 나, 액세스: 나만) → URL을 모바일 홈 화면에 추가
+
+## 테스트
+- `node betting-ledger/test/ledger.test.js` — 실제 Code.gs 를 메모리 시트 목 위에서 실행
+- `node betting-ledger/test/ui-smoke.mjs` — Index.html 을 Chromium 에서 구동(서버는 목)
+
+## 집계 기준
+- 사용액 = 대기 포함 모든 베팅금액(일반 + 승무패, 취소 포함)
+- 반환금/손익/ROI/적중률 = 결과가 확정된 건만 (대기 건은 손실로 계산하지 않음)
+- 설정값(월 예산/일 최대/회차 최대)은 SETTINGS 시트에서 수정

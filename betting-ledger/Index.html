@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<title>리치 베팅 장부</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --ink:#1b1f24; --sub:#6b7280; --line:#e2e5ea; --pri:#2457d6; --up:#d62d2d; --down:#1c6ddb; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1a1f26; --ink:#eef0f3; --sub:#9aa3af; --line:#2c333d; --pri:#6c93ff; --up:#ff6b6b; --down:#6aa8ff; --warn:#f0a95b; }
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 -apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; padding:0 12px 80px; max-width:640px; margin:0 auto; }
+  h1 { font-size:18px; margin:12px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; }
+  .num { font-variant-numeric:tabular-nums; font-weight:700; }
+  .row { display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:2px 0; }
+  .sub { color:var(--sub); font-size:13px; }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:6px 0; }
+  .bar > i { display:block; height:100%; background:var(--pri); }
+  .bar.over > i { background:var(--up); }
+  .plus { color:var(--up); } .minus { color:var(--down); }
+  .nav { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+  .nav button { padding:14px 4px; font-size:16px; font-weight:700; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:10px; }
+  .nav button.on { background:var(--pri); color:#fff; border-color:var(--pri); }
+  label { display:block; font-size:13px; color:var(--sub); margin:10px 0 4px; }
+  input, select, textarea { width:100%; font-size:17px; padding:11px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .big { width:100%; margin-top:14px; padding:16px; font-size:18px; font-weight:800; border:0; border-radius:12px; background:var(--pri); color:#fff; }
+  .big:disabled, .mini:disabled { opacity:.5; }
+  .mini { padding:10px 14px; font-weight:700; border:0; border-radius:8px; background:var(--pri); color:#fff; font-size:15px; }
+  .msg { margin-top:10px; padding:10px; border-radius:8px; font-size:15px; display:none; }
+  .msg.ok { display:block; background:#e6f6ea; color:#14532d; }
+  .msg.err { display:block; background:#fde8e8; color:#7f1d1d; }
+  .games { display:grid; gap:6px; margin-top:6px; }
+  .g { display:grid; grid-template-columns:44px 1fr 1fr 1fr; gap:6px; align-items:center; }
+  .g span { font-size:14px; color:var(--sub); }
+  .g button { padding:10px 0; font-size:17px; font-weight:700; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+  .g button.on { background:var(--pri); color:#fff; border-color:var(--pri); }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:460px; font-size:14px; }
+  th, td { padding:7px 6px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--sub); font-weight:600; }
+  h2 { font-size:15px; margin:14px 0 6px; }
+  .grid3 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stat .v { font-size:20px; }
+  .pend { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
+  .pend:first-child { border-top:0; margin-top:0; padding-top:0; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<h1>리치 베팅 장부</h1>
+
+<div class="card" id="head">
+  <div class="sub" id="hMonth">불러오는 중…</div>
+  <div class="row"><span>사용</span><span class="num"><span id="hUsed">-</span> / <span id="hBudget">-</span></span></div>
+  <div class="bar" id="hBar"><i style="width:0"></i></div>
+  <div class="row"><span>남은 예산</span><span class="num" id="hRemain">-</span></div>
+  <div class="row"><span>현재 손익</span><span class="num" id="hProfit">-</span></div>
+  <div class="row"><span>ROI</span><span class="num" id="hRoi">-</span></div>
+  <div class="sub" id="hPend"></div>
+</div>
+
+<div class="nav">
+  <button data-tab="bet" class="on">일반 토토 입력</button>
+  <button data-tab="wdl">승무패 입력</button>
+  <button data-tab="res">결과 처리</button>
+  <button data-tab="mon">월간 성적</button>
+</div>
+
+<!-- 일반 토토 -->
+<section id="tab-bet" class="card">
+  <div class="two">
+    <div><label>베팅일</label><input type="date" id="bDate"></div>
+    <div><label>종목</label><select id="bSport"></select></div>
+  </div>
+  <label>리그</label><input id="bLeague" placeholder="예: K리그1" autocomplete="off">
+  <label>경기/조합명</label><input id="bName" autocomplete="off">
+  <label>픽 내용</label><input id="bPick" autocomplete="off">
+  <div class="two">
+    <div><label>폴더수</label><input id="bFolders" type="number" inputmode="numeric" min="1" value="1"></div>
+    <div><label>총배당</label><input id="bOdds" type="number" inputmode="decimal" step="0.01" min="1"></div>
+  </div>
+  <div class="two">
+    <div><label>베팅금액(원)</label><input id="bStake" type="number" inputmode="numeric" min="1"></div>
+    <div><label>리치등급</label><select id="bGrade"></select></div>
+  </div>
+  <div class="sub" id="bHint" style="margin-top:6px"></div>
+  <label>메모</label><input id="bMemo" autocomplete="off">
+  <button class="big" id="bSave">저장</button>
+  <div class="msg" id="bMsg"></div>
+</section>
+
+<!-- 승무패 -->
+<section id="tab-wdl" class="card hidden">
+  <div class="two">
+    <div><label>회차</label><input id="wRound" inputmode="numeric" autocomplete="off"></div>
+    <div><label>구매일</label><input type="date" id="wDate"></div>
+  </div>
+  <label>조합구분</label><select id="wCombo"></select>
+  <div class="games" id="wGames"></div>
+  <div class="two">
+    <div><label>베팅금액(원)</label><input id="wStake" type="number" inputmode="numeric" min="1"></div>
+    <div><label>메모</label><input id="wMemo" autocomplete="off"></div>
+  </div>
+  <div class="sub" id="wHint" style="margin-top:6px"></div>
+  <button class="big" id="wSave">저장</button>
+  <div class="msg" id="wMsg"></div>
+</section>
+
+<!-- 결과 처리 -->
+<section id="tab-res" class="hidden">
+  <div class="card"><h2 style="margin-top:0">일반 토토 (대기)</h2><div id="pBets" class="sub">불러오는 중…</div></div>
+  <div class="card"><h2 style="margin-top:0">승무패 (대기)</h2><div id="pWdl" class="sub">불러오는 중…</div></div>
+  <div class="msg" id="rMsg"></div>
+</section>
+
+<!-- 월간 성적 -->
+<section id="tab-mon" class="hidden">
+  <div class="card"><label style="margin-top:0">월 선택</label><input type="month" id="mMonth"></div>
+  <div id="mBody" class="sub">불러오는 중…</div>
+</section>
+
+<script>
+var S = { today:'', month:'', settings:null, enums:null, busy:{}, games:[] };
+var $ = function (id) { return document.getElementById(id); };
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function won(n) { return Math.round(n).toLocaleString('ko-KR') + '원'; }
+function signed(n) { return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(Math.round(n)).toLocaleString('ko-KR') + '원'; }
+function pct(n) { return n === null || n === undefined ? '-' : n.toFixed(1) + '%'; }
+function spct(n) { return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n).toFixed(1) + '%'; }
+function cls(n) { return n > 0 ? 'plus' : n < 0 ? 'minus' : ''; }
+function reqId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+
+function call(fn, arg) {
+  return new Promise(function (resolve) {
+    var r = google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (e) { resolve({ ok:false, error:(e && e.message) || '서버 연결 오류' }); });
+    arg === undefined ? r[fn]() : r[fn](arg);
+  });
+}
+
+function show(id, ok, text) { var m = $(id); m.className = 'msg ' + (ok ? 'ok' : 'err'); m.textContent = text; }
+
+/* 저장 버튼: 응답이 올 때까지 잠금, 같은 reqId 로 서버도 중복 차단 */
+function guarded(btn, key, msgId, fn, payload, onOk) {
+  if (S.busy[key]) return;
+  S.busy[key] = true; btn.disabled = true;
+  var old = btn.textContent; btn.textContent = '저장 중…';
+  payload.reqId = payload.reqId || reqId();
+  call(fn, payload).then(function (res) {
+    if (res.ok) { show(msgId, true, '✔ ' + res.message + (res.duplicate ? ' (이미 저장된 요청)' : '')); applySummary(res); onOk && onOk(res); }
+    else show(msgId, false, '✖ ' + res.error);
+  }).then(function () { S.busy[key] = false; btn.disabled = false; btn.textContent = old; });
+}
+
+function applySummary(res) {
+  if (res.summary) renderHead(res.summary);
+  if (res.todayBetUsed !== undefined) { S.todayBetUsed = res.todayBetUsed; renderHints(); }
+}
+
+function renderHead(s) {
+  $('hMonth').textContent = '이번달 ' + S.month;
+  $('hUsed').textContent = won(s.used);
+  $('hBudget').textContent = won(s.budget);
+  var ratio = s.budget ? Math.min(100, s.used / s.budget * 100) : 0;
+  $('hBar').className = 'bar' + (s.used > s.budget ? ' over' : '');
+  $('hBar').firstChild.style.width = ratio + '%';
+  $('hRemain').textContent = won(s.remain);
+  $('hProfit').textContent = signed(s.profit); $('hProfit').className = 'num ' + cls(s.profit);
+  $('hRoi').textContent = spct(s.roi); $('hRoi').className = 'num ' + cls(s.roi);
+  $('hPend').textContent = s.pendingStake > 0 ? '미확정 ' + won(s.pendingStake) + ' 제외한 확정 건 기준 손익' : '';
+}
+
+function renderHints() {
+  if (!S.settings) return;
+  $('bHint').textContent = '오늘 일반토토 ' + won(S.todayBetUsed || 0) + ' / ' + won(S.settings.daily);
+  $('wHint').textContent = '회차당 최대 ' + won(S.settings.wdlRound) + ' (모든 조합 합산)';
+}
+
+function fillSelect(el, list) { el.innerHTML = list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); }
+
+/* ---------- 탭 ---------- */
+document.querySelectorAll('.nav button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
+    ['bet', 'wdl', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
+    if (b.dataset.tab === 'res') loadPending();
+    if (b.dataset.tab === 'mon') loadMonthly();
+  });
+});
+
+/* ---------- 일반 토토 ---------- */
+$('bSave').addEventListener('click', function () {
+  var p = { date:$('bDate').value, sport:$('bSport').value, league:$('bLeague').value, name:$('bName').value, pick:$('bPick').value,
+    folders:$('bFolders').value, odds:$('bOdds').value, stake:$('bStake').value, grade:$('bGrade').value, memo:$('bMemo').value };
+  guarded($('bSave'), 'bet', 'bMsg', 'apiSaveBet', p, function () {
+    ['bName', 'bPick', 'bOdds', 'bStake', 'bMemo'].forEach(function (id) { $(id).value = ''; });
+  });
+});
+
+/* ---------- 승무패 ---------- */
+function buildGames() {
+  var h = '';
+  for (var i = 0; i < 14; i++) {
+    h += '<div class="g" data-i="' + i + '"><span>' + (i + 1) + '경기</span>' +
+      ['승', '무', '패'].map(function (v) { return '<button type="button" data-v="' + v + '">' + v + '</button>'; }).join('') + '</div>';
+  }
+  $('wGames').innerHTML = h;
+  S.games = new Array(14).fill('');
+  $('wGames').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var i = +b.parentNode.dataset.i;
+    S.games[i] = b.dataset.v;
+    Array.prototype.forEach.call(b.parentNode.querySelectorAll('button'), function (x) { x.classList.toggle('on', x === b); });
+  });
+}
+$('wSave').addEventListener('click', function () {
+  var p = { round:$('wRound').value, date:$('wDate').value, combo:$('wCombo').value, games:S.games.slice(),
+    stake:$('wStake').value, memo:$('wMemo').value };
+  guarded($('wSave'), 'wdl', 'wMsg', 'apiSaveWdl', p, function () {
+    $('wStake').value = ''; $('wMemo').value = '';
+    buildGames();
+  });
+});
+
+/* ---------- 결과 처리 ---------- */
+function loadPending() {
+  call('apiGetPending').then(function (res) {
+    if (!res.ok) { show('rMsg', false, res.error); return; }
+    $('pBets').innerHTML = res.bets.length ? res.bets.map(function (r) {
+      return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.name) + '</b></div>' +
+        '<div class="sub">' + esc(r.date) + ' · ' + esc(r.sport) + ' · ' + esc(r.pick) + ' · ' + r.odds + '배 · ' + won(r.stake) + ' · ' + esc(r.grade) + '</div>' +
+        '<div class="two"><select class="rRes"><option>적중</option><option>미적중</option><option>적특</option><option>취소</option></select>' +
+        '<input class="rRet" type="number" inputmode="numeric" min="0" placeholder="반환금(원금 포함)" data-stake="' + r.stake + '"></div>' +
+        '<button class="mini rBetSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
+    }).join('') : '대기 중인 기록이 없습니다.';
+    $('pWdl').innerHTML = res.wdl.length ? res.wdl.map(function (r) {
+      return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.round) + '회차 · ' + esc(r.combo) + '</b></div>' +
+        '<div class="sub">' + esc(r.date) + ' · ' + won(r.stake) + '</div>' +
+        '<div class="two"><select class="wHits">' + Array.apply(null, Array(15)).map(function (_, i) { return '<option value="' + i + '">' + i + '개 적중</option>'; }).join('') + '</select>' +
+        '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option></select></div>' +
+        '<input class="wPrize" type="number" inputmode="numeric" min="0" placeholder="당첨금(원)" style="margin-top:8px">' +
+        '<button class="mini rWdlSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
+    }).join('') : '대기 중인 기록이 없습니다.';
+  });
+}
+$('tab-res').addEventListener('click', function (e) {
+  var btn = e.target.closest('button'); if (!btn) return;
+  var box = btn.closest('.pend'); if (!box) return;
+  var id = box.dataset.id;
+  if (btn.classList.contains('rBetSave')) {
+    var sel = box.querySelector('.rRes').value, retEl = box.querySelector('.rRet');
+    var ret = retEl.value;
+    if (ret === '' && sel === '취소') ret = retEl.dataset.stake;   // 취소는 원금 환급이 기본
+    if (ret === '' && sel === '미적중') ret = '0';
+    guarded(btn, 'r' + id, 'rMsg', 'apiResolveBet', { id:id, result:sel, ret:ret }, function (res) {
+      $('rMsg').textContent = '✔ 손익 ' + signed(res.profit) + ' / ROI ' + spct(res.roi); loadPending();
+    });
+  } else if (btn.classList.contains('rWdlSave')) {
+    var rank = box.querySelector('.wRank').value, prize = box.querySelector('.wPrize').value;
+    if (prize === '' && rank === '미당첨') prize = '0';
+    guarded(btn, 'r' + id, 'rMsg', 'apiResolveWdl', { id:id, hits:box.querySelector('.wHits').value, rank:rank, prize:prize }, function (res) {
+      $('rMsg').textContent = '✔ 손익 ' + signed(res.profit); loadPending();
+    });
+  }
+});
+
+/* ---------- 월간 성적 ---------- */
+$('mMonth').addEventListener('change', loadMonthly);
+function loadMonthly() {
+  var m = $('mMonth').value || S.month;
+  call('apiGetMonthly', m).then(function (res) {
+    if (!res.ok) { $('mBody').textContent = res.error; return; }
+    var s = res.summary;
+    function stat(l, v, c) { return '<div class="card stat"><div class="sub">' + l + '</div><div class="v num ' + (c || '') + '">' + v + '</div></div>'; }
+    function tbl(title, cols, rows) {
+      return '<h2>' + title + '</h2><div class="card scroll"><table><tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr>' +
+        rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table></div>';
+    }
+    function pc(v, f) { return '<span class="' + cls(v) + '">' + f(v) + '</span>'; }
+    var w = res.wdl;
+    $('mBody').innerHTML =
+      '<div class="grid3">' +
+      stat('총 베팅금액', won(s.used)) + stat('총 반환금', won(s.totalReturn)) +
+      stat('순손익', signed(s.profit), cls(s.profit)) + stat('ROI', spct(s.roi), cls(s.roi)) +
+      stat('적중률', pct(s.hitRate)) + stat('남은 예산', won(s.remain)) + '</div>' +
+      (s.pendingStake > 0 ? '<div class="sub">미확정 ' + won(s.pendingStake) + ' 은 반환금/손익/ROI 에서 제외</div>' : '') +
+      tbl('종목별', ['종목', '횟수', '베팅금액', '반환금', '손익', 'ROI'], res.bySport.map(function (g) {
+        return [esc(g.label), g.count, won(g.stake), won(g.ret), pc(g.profit, signed), pc(g.roi, spct)]; })) +
+      tbl('폴더수별', ['폴더', '횟수', '적중률', '손익', 'ROI'], res.byFolder.map(function (g) {
+        return [esc(g.label), g.count, pct(g.hitRate), pc(g.profit, signed), pc(g.roi, spct)]; })) +
+      tbl('메인픽 / 대박픽', ['등급', '횟수', '적중률', '손익', 'ROI'], res.byGrade.map(function (g) {
+        return [esc(g.label), g.count, pct(g.hitRate), pc(g.profit, signed), pc(g.roi, spct)]; })) +
+      tbl('승무패', ['회차수', '투입금', '당첨금', '순손익', '최고적중', '최고등수'], [[w.rounds, won(w.stake), won(w.prize),
+        pc(w.profit, signed), w.bestHits === null ? '-' : w.bestHits + '개', w.bestRank || '-']]) +
+      tbl('최근 기록 10개', ['날짜', '구분', '내용', '금액', '상태', '손익'], res.recent.map(function (r) {
+        return [esc(r.date.slice(5)), esc(r.kind), esc(r.title), won(r.stake), esc(r.status), r.profit === null ? '-' : pc(r.profit, signed)]; }));
+  });
+}
+
+/* ---------- 시작 ---------- */
+function init() {
+  buildGames();
+  call('apiBootstrap').then(function (res) {
+    if (!res.ok) { $('hMonth').textContent = '오류: ' + res.error; return; }
+    S.today = res.today; S.month = res.month; S.settings = res.settings; S.enums = res.enums; S.todayBetUsed = res.todayBetUsed;
+    fillSelect($('bSport'), res.enums.SPORT); fillSelect($('bGrade'), res.enums.GRADE); fillSelect($('wCombo'), res.enums.COMBO);
+    $('bDate').value = res.today; $('wDate').value = res.today; $('mMonth').value = res.month;
+    renderHead(res.summary); renderHints();
+  });
+}
+init();
+</script>
+</body>
+</html>
