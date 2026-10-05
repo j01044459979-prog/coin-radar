@@ -4,6 +4,7 @@
 #   bash betting-ledger/deploy/deploy.sh              # 테스트 → 원격 확인/백업 → push → 새 버전 → 기존 배포 갱신
 #   bash betting-ledger/deploy/deploy.sh --dry-run    # 빌드와 원격 확인/백업까지만 (push/배포 안 함)
 #   bash betting-ledger/deploy/deploy.sh --skip-tests
+#   bash betting-ledger/deploy/deploy.sh --seed-inbox=<json>  # 배포 후 1회 [{payload,purchase}] 를 RICH_INBOX 에 넣고 처리(파일은 저장소 밖에 둘 것)
 #   bash betting-ledger/deploy/deploy.sh --selftest     # 배포 후 1회 실환경 WDL_MULTI 자가테스트(테스트 데이터 자동 삭제)
 #
 # 필요한 것(저장소에 커밋하지 않음):
@@ -16,7 +17,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 CFG="${BETTING_DEPLOY_CONFIG:-$HERE/config.local.json}"
 CLASP_PKG="@google/clasp@3.4.1"
 DRY=0; TESTS=1
-for a in "$@"; do case "$a" in --dry-run) DRY=1;; --skip-tests) TESTS=0;; --selftest) SELFTEST=1;; *) echo "알 수 없는 옵션: $a" >&2; exit 2;; esac; done
+for a in "$@"; do case "$a" in --dry-run) DRY=1;; --skip-tests) TESTS=0;; --selftest) SELFTEST=1;; --seed-inbox=*) SEED="${a#--seed-inbox=}";; *) echo "알 수 없는 옵션: $a" >&2; exit 2;; esac; done
 
 die() { echo "✖ $*" >&2; exit 1; }
 [ -f "$CFG" ] || die "설정 파일이 없습니다: $CFG (config.example.json 을 복사해 채우세요)"
@@ -43,6 +44,7 @@ fi
 WORK="$HERE/dist"; rm -rf "$WORK"; mkdir -p "$WORK"
 cp "$ROOT/Code.gs" "$ROOT/Index.html" "$ROOT/appsscript.json" "$WORK/"
 printf "// 자동 생성(배포 스크립트). 저장소에는 없음.\nvar CODE_REV = '%s';\n" "$REV" > "$WORK/Rev.gs"
+[ -n "${SEED:-}" ] && { [ -f "$SEED" ] || { echo "seed 파일 없음: $SEED" >&2; exit 2; }; printf "var CODE_SEED_INBOX = %s;\n" "$(python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),ensure_ascii=False))' "$SEED")" >> "$WORK/Rev.gs"; }
 [ "${SELFTEST:-0}" = 1 ] && printf "var CODE_SELFTEST = true;\n" >> "$WORK/Rev.gs"
 printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > "$WORK/.clasp.json"
 echo "▶ 빌드 완료: $(ls "$WORK" | tr '\n' ' ') (REV=$REV)"

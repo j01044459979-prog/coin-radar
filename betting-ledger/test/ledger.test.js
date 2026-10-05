@@ -1552,6 +1552,22 @@ test('111. 조합순번(AD)은 숫자 서식 "0" 으로 고정: 옆 열의 날�
   assert.ok(env.get('apiSaveRichPick')(mp()).ok);
   assert.ok(sh.calls.some(c => c[0] === 'setNumberFormat' && c[1] === 30 && c[2] === '0'));
 });
+test('112. 배포 seed: 저장→전체 구매 확정(8행 구매, 1,000원), 같은 requestId 재배포 시 중복 없음, 기존 ERROR 행 보존', () => {
+  const env = bridgeEnv(); const err = inboxAdd(env, 'rich-wdl-seed-main', 'bad'); env.sheet('RICH_INBOX').grid[err][3] = 'ERROR';
+  env.ctx.CODE_REV = 'sd00001'; env.ctx.CODE_SEED_INBOX = [{ payload: JSON.parse(JSON.stringify(mp({ requestId: 'rich-wdl-seed-0001' }))), purchase: true }];
+  env.get('processRichInbox')();
+  const r = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'rich-wdl-seed-0001');
+  assert.deepStrictEqual([r[3], r[6]], ['DONE', 'WDL_MULTI']);
+  const rows = wdlRows(env).filter(x => x[0]);
+  assert.strictEqual(rows.length, 8); assert.strictEqual(new Set(rows.map(x => x[28])).size, 1);
+  assert.deepStrictEqual(rows.map(x => x[29]), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(rows.every(x => x.length === 30 && x[25] === '구매' && x[26] === 1000 && x[27]));
+  env.ctx.CODE_REV = 'sd00002'; env.get('processRichInbox')();
+  assert.strictEqual(env.sheet('RICH_INBOX').grid.filter(x => x[0] === 'rich-wdl-seed-0001').length, 1);
+  assert.strictEqual(wdlRows(env).filter(x => x[0]).length, 8);
+  assert.strictEqual(env.sheet('RICH_INBOX').grid[err][3], 'ERROR');
+  const sys = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'system-deploy-sd00001'); assert.match(sys[7], /구매 확정 8조합 8000원/);
+});
 
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} passed`);

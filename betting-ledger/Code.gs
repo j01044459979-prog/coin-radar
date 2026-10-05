@@ -1571,6 +1571,49 @@ function selfTest_(rev) {
 }
 
 /**
+ * 배포 스크립트가 `--seed-inbox=<json>` 으로 만든 Rev.gs 의 CODE_SEED_INBOX([{payload, purchase}] 배열)를 처리한다.
+ * payload 는 Rich 가 보내는 것과 같은 요청이며 RICH_INBOX 에 PENDING 으로 넣어 processRichInbox_ 가 처리한다(저장은 WDL_MULTI 원자 저장).
+ * purchase:true 이고 저장이 DONE 이면 그 묶음 전체를 기존 wdl_group 구매 로직(purchaseRecord_)으로 한 번에 구매 확정한다.
+ * 같은 requestId 가 이미 Inbox 에 있으면 다시 넣지 않는다(ERROR/DONE 포함 → 재사용 금지). 구매는 아직 '미확인'인 묶음에만 시도한다.
+ */
+function seedInbox_() {
+  if (typeof CODE_SEED_INBOX === 'undefined' || !CODE_SEED_INBOX || !CODE_SEED_INBOX.length) return '';
+  var inbox = getSS_().getSheetByName(INBOX.name);
+  if (!inbox) return 'seed 생략: RICH_INBOX 없음';
+  var msgs = [];
+  CODE_SEED_INBOX.forEach(function (item) {
+    var p = item && item.payload, id = String(p && p.requestId || '');
+    if (!id) return;
+    try {
+      withLock_(function () {
+        var last = inbox.getLastRow(), exists = false;
+        if (last >= 2) inbox.getRange(2, 1, last - 1, 1).getValues().forEach(function (v) { if (String(v[0]) === id) exists = true; });
+        if (exists) return;
+        var now = nowKstStr_(), rng = inbox.getRange(last + 1, 1, 1, INBOX.headers.length);
+        rng.setNumberFormat('@');
+        rng.setValues([[id, now, JSON.stringify(p), 'PENDING', '', '', '', '']]);
+        SpreadsheetApp.flush();
+        msgs.push('seed ' + id);
+      });
+      processRichInbox_();
+      if (!item.purchase) return;
+      withLock_(function () {
+        memoClear_();
+        var last = inbox.getLastRow();
+        var row = last < 2 ? null : inbox.getRange(2, 1, last - 1, INBOX.headers.length).getValues().filter(function (v) { return String(v[0]) === id; })[0];
+        if (!row || String(row[3]) !== 'DONE' || String(row[6]) !== 'WDL_MULTI') { msgs.push('구매 보류(Inbox ' + (row ? row[3] : '없음') + ')'); return; }
+        var gid = String(row[5]);
+        var rows = readRows_(TABLES.WDL).filter(function (r) { return r.groupId === gid; });
+        if (!rows.length || rows.some(function (r) { return r.buyStatus !== '미확인'; })) { msgs.push('구매 생략(이미 처리/없음)'); return; }
+        var res = purchaseRecord_({ kind: 'wdl_group', id: gid, buy: true });
+        msgs.push('구매 확정 ' + res.comboCount + '조합 ' + res.total + '원');
+      });
+    } catch (e) { msgs.push('seed 실패 ' + id + ': ' + richErr_(e).slice(0, 120)); }
+  });
+  return msgs.join(' / ');
+}
+
+/**
  * 배포 직후 1회 자동 점검(시간 트리거가 실행): 배포 스크립트가 만든 Rev.gs 의 CODE_REV 가 이전과 다를 때만 동작한다.
  *  1) WDL_LOG 묶음 열(구매묶음ID/조합순번) + 조합구분 드롭다운(조합1~N)을 비파괴로 보강  2) (선택) 실환경 셀프테스트
  *  3) diagnoseSetup() 실행  4) 결과를 RICH_INBOX 감사 행 1줄로 남김(requestId=system-deploy-<rev>, resultType=POST_DEPLOY_CHECK, error 열=점검 메시지)
@@ -1586,6 +1629,8 @@ function postDeployCheck_() {
     try { steps.push(setupWdlGroupColumns()); } catch (e) { steps.push('setupWdlGroupColumns 실패: ' + richErr_(e)); }
   });
   var selftest = (typeof CODE_SELFTEST !== 'undefined' && CODE_SELFTEST) ? selfTest_(rev) : '';
+  var seeded = seedInbox_();
+  if (seeded) selftest = (selftest ? selftest + ' | ' : '') + seeded;
   return withLock_(function () {
     if (props.getProperty('MAINT_REV') === rev) return null;
     var diag = diagnoseSetup();
