@@ -28,3 +28,11 @@ npm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# betting-ledger 배포 (자격증명/로컬 설정/백업은 커밋 금지)
+betting-ledger/deploy/config.local.json
+betting-ledger/deploy/dist/
+betting-ledger/deploy/backup/
+betting-ledger/deploy/.pull/
+.clasprc.json
+.clasp.json

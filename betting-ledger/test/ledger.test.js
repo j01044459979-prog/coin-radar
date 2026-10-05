@@ -1370,6 +1370,33 @@ test('100. 회귀: 기존 주력/보조1/보조2 WDL(5,000+3,000+2,000 허용, 3
   assert.deepStrictEqual([m.wdlGroups.length, m.wdlGroups[0].comboCount, m.wdl.rounds, m.wdl.stake], [2, 1, 1, 8000]);   // 기존 행은 행 하나 = 한 묶음
 });
 
+test('103. 배포 후 자동 점검: CODE_REV 가 바뀐 첫 트리거 실행에서 열 추가 + diagnose 기록(1회), 이후 반복 없음', () => {
+  const env = bridgeEnv(); const sh = env.sheet('WDL_LOG');
+  sh.grid[0].length = 28; sh._maxCols = 28;                                                    // 배포 전 사용자 시트(AB까지)
+  const pending = inboxAdd(env, 'rich-postdeploy-0001', betPayload({ name: '배포중 들어온 요청' }));
+  env.get('processRichInbox')();                                                               // CODE_REV 없음 → 점검 안 함
+  assert.strictEqual(sh.grid[0].length, 28); assert.strictEqual(inboxRow(env, pending)[3], 'DONE');
+  const n0 = env.sheet('RICH_INBOX').grid.length;
+  env.ctx.CODE_REV = 'abc1234';                                                                // 배포 스크립트가 넣는 Rev.gs 와 같은 효과
+  inboxAdd(env, 'rich-postdeploy-0002', betPayload({ name: '두번째' }));
+  env.get('processRichInbox')();
+  assert.deepStrictEqual([sh.grid[0][28], sh.grid[0][29]], ['구매묶음ID', '조합순번']);
+  const rows = env.sheet('RICH_INBOX').grid;
+  const sys = rows.find(r => r[0] === 'system-deploy-abc1234');
+  assert.ok(sys); assert.deepStrictEqual([sys[3], sys[5], sys[6]], ['DONE', 'abc1234', 'POST_DEPLOY_CHECK']);
+  assert.strictEqual(sys[7], '리치 베팅 장부 V1 환경 정상 / Rich Bridge 정상');
+  assert.strictEqual(rows.filter(r => r[0] === 'system-deploy-abc1234').length, 1);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);                                    // 일반 요청 처리는 정상 계속
+  env.get('processRichInbox')(); env.get('processRichInbox')();
+  assert.strictEqual(env.sheet('RICH_INBOX').grid.filter(r => r[0] === 'system-deploy-abc1234').length, 1);
+  env.ctx.CODE_REV = 'def5678'; env.get('processRichInbox')();                                // 새 배포 → 다시 1회
+  assert.strictEqual(env.sheet('RICH_INBOX').grid.filter(r => String(r[0]).startsWith('system-deploy-')).length, 2);
+  // 점검에서 문제가 있으면 그대로 기록된다
+  env.sheet('SETTINGS').grid[1][0] = '월예산'; env.ctx.CODE_REV = 'bad0001'; env.get('processRichInbox')();
+  assert.match(env.sheet('RICH_INBOX').grid.find(r => r[0] === 'system-deploy-bad0001')[7], /문제 1건/);
+  assert.ok(n0 > 1);
+});
+
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} passed`);
 process.exit(pass === results.length ? 0 : 1);

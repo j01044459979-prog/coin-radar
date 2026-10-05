@@ -1408,8 +1408,37 @@ function processRichInbox_() {
   });
 }
 
+/**
+ * 배포 직후 1회 자동 점검(시간 트리거가 실행): 배포 스크립트가 만든 Rev.gs 의 CODE_REV 가 이전과 다를 때만 동작한다.
+ *  1) WDL_LOG 묶음 열(구매묶음ID/조합순번)을 비파괴로 추가  2) diagnoseSetup() 실행
+ *  3) 결과를 RICH_INBOX 감사 행 1줄로 남김(requestId=system-deploy-<rev>, resultType=POST_DEPLOY_CHECK, error 열=점검 메시지)
+ * CODE_REV 가 없으면(수동 붙여넣기 등) 아무것도 하지 않는다.
+ */
+function postDeployCheck_() {
+  var rev = (typeof CODE_REV !== 'undefined') ? String(CODE_REV) : '';
+  if (!rev) return null;
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MAINT_REV') === rev) return null;
+  return withLock_(function () {
+    if (props.getProperty('MAINT_REV') === rev) return null;
+    var steps = [];
+    try { steps.push(setupWdlGroupColumns()); } catch (e) { steps.push('setupWdlGroupColumns 실패: ' + richErr_(e)); }
+    var diag = diagnoseSetup();
+    var inbox = getSS_().getSheetByName(INBOX.name);
+    if (inbox) {
+      var now = nowKstStr_(), rng = inbox.getRange(inbox.getLastRow() + 1, 1, 1, INBOX.headers.length);
+      rng.setNumberFormat('@');
+      rng.setValues([['system-deploy-' + rev, now, JSON.stringify({ system: 'post-deploy-check', rev: rev, steps: steps }), 'DONE', now, rev, 'POST_DEPLOY_CHECK', String(diag).slice(0, 500)]]);
+    }
+    props.setProperty('MAINT_REV', rev);
+    memoClear_();
+    return diag;
+  });
+}
+
 /** 시간 트리거 핸들러 (트리거는 공개 함수만 호출 가능) */
 function processRichInbox() {
+  try { postDeployCheck_(); } catch (e) { Logger.log('배포 후 점검 실패: ' + richErr_(e)); }
   try {
     var r = processRichInbox_();
     if (r.processed) Logger.log('RICH_INBOX 처리: ' + JSON.stringify(r));
