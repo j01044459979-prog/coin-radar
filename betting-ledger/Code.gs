@@ -414,7 +414,15 @@ function monthOf_(dateStr) { return dateStr.slice(0, 7); }
 
 function betUsedOn_(date) {
   var s = 0;
-  readRows_(TABLES.BET).forEach(function (r) { if (r.buyStatus === '구매' && r.date === date) s += r.buyStake || 0; });
+  readRows_(TABLES.BET).forEach(function (r) {
+    if (
+      r.buyStatus === '구매' &&
+      r.buyAtStr &&
+      r.buyAtStr.slice(0, 10) === date
+    ) {
+      s += r.buyStake || 0;
+    }
+  });
   return s;
 }
 
@@ -492,11 +500,20 @@ function purchaseRecord_(p) {
   if (rec.buyStatus !== '미확인') fail_('이미 처리된 기록입니다 (' + rec.buyStatus + ').');
 
   var now = new Date();
+  var purchaseDate = Utilities.formatDate(now, CONFIG.TZ, 'yyyy-MM-dd');
   if (buy) {
     var amount = rec.stake;
     if (tbl === TABLES.BET) {
       var dayUsed = 0;
-      bets.forEach(function (r) { if (r.buyStatus === '구매' && r.date === rec.date) dayUsed += r.buyStake || 0; });
+      bets.forEach(function (r) {
+        if (
+          r.buyStatus === '구매' &&
+          r.buyAtStr &&
+          r.buyAtStr.slice(0, 10) === purchaseDate
+        ) {
+          dayUsed += r.buyStake || 0;
+        }
+      });
       if (dayUsed + amount > settings.daily) {
         fail_('일 최대 ' + fmtWon_(settings.daily) + ' 초과: 해당일 구매 ' + fmtWon_(dayUsed) + ' + 신규 ' + fmtWon_(amount) +
           ' = ' + fmtWon_(dayUsed + amount));
@@ -509,7 +526,7 @@ function purchaseRecord_(p) {
           fmtWon_(amount) + ' = ' + fmtWon_(roundUsed + amount));
       }
     }
-    var month = monthOf_(todayStr_());
+    var month = purchaseDate.slice(0, 7);
     var used = monthUsage_(month, bets, wdl);
     if (used + amount > settings.budget) {
       fail_('월 예산 ' + fmtWon_(settings.budget) + ' 초과: ' + month + ' 구매 ' + fmtWon_(used) + ' + 신규 ' + fmtWon_(amount) +
@@ -530,6 +547,9 @@ function resolveBet_(p) {
   var rows = readRows_(TABLES.BET);
   var rec = rows.filter(function (r) { return r.id === String(p.id); })[0];
   if (!rec) fail_('기록을 찾을 수 없습니다.');
+  if (rec.buyStatus === '미확인') {
+    fail_('먼저 구매 확인에서 샀다/안 샀다를 처리해주세요.');
+  }
   if (rec.result !== '대기') fail_('이미 결과가 처리된 기록입니다.');
   var blank = String(p.ret == null ? '' : p.ret).trim() === '';
   var ret;
@@ -561,6 +581,9 @@ function resolveWdl_(p) {
   var rows = readRows_(TABLES.WDL);
   var rec = rows.filter(function (r) { return r.id === String(p.id); })[0];
   if (!rec) fail_('기록을 찾을 수 없습니다.');
+  if (rec.buyStatus === '미확인') {
+    fail_('먼저 구매 확인에서 샀다/안 샀다를 처리해주세요.');
+  }
   if (rec.rank !== '대기') fail_('이미 결과가 처리된 기록입니다.');
   rec.hits = hits;
   rec.rank = rank;
@@ -695,9 +718,13 @@ function apiResolveWdl(payload) { return writeApi_(payload, function () { return
 
 function apiGetPending() {
   return readApi_(function () {
-    var bets = readRows_(TABLES.BET).filter(function (r) { return r.result === '대기'; })
+    var bets = readRows_(TABLES.BET).filter(function (r) {
+      return r.result === '대기' && r.buyStatus !== '미확인';
+    })
       .map(function (r) { return { id: r.id, date: r.date, sport: r.sport, name: r.name, pick: r.pick, odds: r.odds, stake: r.stake, grade: r.grade, buy: r.buyStatus }; });
-    var wdl = readRows_(TABLES.WDL).filter(function (r) { return r.rank === '대기'; })
+    var wdl = readRows_(TABLES.WDL).filter(function (r) {
+      return r.rank === '대기' && r.buyStatus !== '미확인';
+    })
       .map(function (r) { return { id: r.id, round: r.round, date: r.date, combo: r.combo, stake: r.stake, buy: r.buyStatus }; });
     bets.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     wdl.sort(function (a, b) { return a.round === b.round ? (a.combo < b.combo ? -1 : 1) : (a.round < b.round ? 1 : -1); });

@@ -435,7 +435,9 @@ test('30. 일반토토 한도: 실구매 누적 기준(미확인 추천 무시),
   assert.ok(buy(env, 'bet', ids[2]).ok);                                     // 3,000 + 2,000 = 5,000 허용
   assert.strictEqual(buy(env, 'bet', ids[3]).ok, false);                     // +1,000 → 6,000 차단
   assert.ok(buy(env, 'bet', ids[1], false).ok);                              // 안 샀다는 한도와 무관
-  const other = recBet(env, { stake: 5000, date: '2026-10-04' }).id;         // 다른 날짜는 별도 한도
+  assert.strictEqual(env.get('apiBootstrap')().todayBetUsed, 5000);
+  env.setNow(kst('2026-10-04'));                                             // 일 한도는 실제 구매일 기준 → 다음 날은 별도 한도
+  const other = recBet(env, { stake: 5000, date: '2026-10-04' }).id;
   assert.ok(buy(env, 'bet', other).ok);
   assert.strictEqual(env.get('apiBootstrap')().todayBetUsed, 5000);
 });
@@ -524,6 +526,78 @@ test('35. 월 귀속은 구매일시 기준(대시보드 수식과 동일), 구�
   const s2 = env.get('apiGetMonthly')('2026-10').summary;
   assert.deepStrictEqual([s2.used, s2.profit, s2.settledStake], [5000, 6000, 5000]);
   assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);
+});
+
+/* ---------- 실제 구매일 기준 한도 / 결과 처리 전 구매 확인 ---------- */
+test('36. 추천일이 달라도 실제 구매일 합계 6,000원이면 차단 (일 한도는 구매일 기준)', () => {
+  const env = setup();
+  env.setNow(kst('2026-09-30'));
+  const a = recBet(env, { date: '2026-09-30', stake: 3000, name: 'A' }).id;      // 9/30 추천
+  const b = recBet(env, { date: '2026-10-02', stake: 3000, name: 'B' }).id;      // 다른 추천일
+  env.setNow(kst('2026-10-01'));                                                  // 둘 다 10/1 에 구매 시도
+  assert.ok(buy(env, 'bet', a).ok);
+  const r = buy(env, 'bet', b);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /일 최대 5,000원 초과: 해당일 구매 3,000원 \+ 신규 3,000원 = 6,000원/);
+  assert.deepStrictEqual(env.sheet('BET_LOG').grid[2].slice(16, 19), ['미확인', '', '']);
+  const used = env.get('betUsedOn_');
+  assert.deepStrictEqual([used('2026-10-01'), used('2026-09-30'), used('2026-10-02')], [3000, 0, 0]);   // 추천일이 아닌 구매일로 집계
+});
+test('37. 추천일이 서로 달라도 같은 구매일 3,000 + 2,000 = 5,000원 허용', () => {
+  const env = setup();
+  env.setNow(kst('2026-10-05'));
+  const a = recBet(env, { date: '2026-10-01', stake: 3000, name: 'A' }).id;
+  const b = recBet(env, { date: '2026-10-02', stake: 2000, name: 'B' }).id;
+  const c = recBet(env, { date: '2026-10-03', stake: 1000, name: 'C' }).id;
+  assert.ok(buy(env, 'bet', a).ok); assert.ok(buy(env, 'bet', b).ok);
+  assert.strictEqual(env.get('betUsedOn_')('2026-10-05'), 5000);
+  assert.strictEqual(env.get('apiBootstrap')().todayBetUsed, 5000);
+  assert.strictEqual(buy(env, 'bet', c).ok, false);                               // 5,000 초과분은 차단
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 5000);
+});
+test('38. 구매여부=미확인 기록은 결과 처리 서버 차단 + 결과 처리 목록에서 제외 (일반/승무패)', () => {
+  const env = setup(); env.setNow(kst('2026-10-03'));
+  const b = recBet(env, { stake: 2000 }).id, w = recWdl(env, { stake: 3000 }).id;
+  const msg = '먼저 구매 확인에서 샀다/안 샀다를 처리해주세요.';
+  const r1 = env.get('apiResolveBet')({ id: b, result: '적중', ret: 5000, reqId: 'q1' });
+  const r2 = env.get('apiResolveWdl')({ id: w, hits: 12, rank: '4등', prize: 9000, reqId: 'q2' });
+  assert.deepStrictEqual([r1.ok, r1.error, r2.ok, r2.error], [false, msg, false, msg]);
+  assert.deepStrictEqual([env.sheet('BET_LOG').grid[1][9], env.sheet('BET_LOG').grid[1][10]], ['대기', '']);   // 변경 없음
+  assert.deepStrictEqual([env.sheet('WDL_LOG').grid[1][20], env.sheet('WDL_LOG').grid[1][21]], ['대기', '']);
+  const p = env.get('apiGetPending')(); assert.deepStrictEqual([p.ok, p.bets.length, p.wdl.length], [true, 0, 0]);
+  assert.strictEqual(env.get('apiGetUnconfirmed')().bets.length, 1);                // 구매 확인 화면에는 나옴
+  buy(env, 'bet', b, false); buy(env, 'wdl', w, true);
+  const p2 = env.get('apiGetPending')(); assert.deepStrictEqual([p2.bets.length, p2.wdl.length], [1, 1]);   // 처리 후 결과 처리 목록에 등장
+});
+test('39. 미구매 추천 결과 처리는 허용, 실제 예산/실구매 ROI 에는 미반영', () => {
+  const env = setup(); env.setNow(kst('2026-10-03'));
+  const b = recBet(env, { stake: 5000 }).id, w = recWdl(env, { stake: 4000 }).id;
+  assert.ok(buy(env, 'bet', b, false).ok); assert.ok(buy(env, 'wdl', w, false).ok);
+  const r1 = env.get('apiResolveBet')({ id: b, result: '적중', ret: 11000, reqId: 'u1' });
+  const r2 = env.get('apiResolveWdl')({ id: w, hits: 13, rank: '3등', prize: 20000, reqId: 'u2' });
+  assert.ok(r1.ok, r1.error); assert.ok(r2.ok, r2.error);
+  assert.deepStrictEqual([env.sheet('BET_LOG').grid[1][9], env.sheet('BET_LOG').grid[1][10], env.sheet('BET_LOG').grid[1][11]], ['적중', 11000, 6000]);   // 추천 성적은 기록
+  assert.strictEqual(env.sheet('WDL_LOG').grid[1][20], '3등');
+  const s = dash(env).summary;
+  assert.deepStrictEqual([s.used, s.remain, s.settledStake, s.totalReturn, s.profit, s.roi], [0, 200000, 0, 0, 0, 0]);
+  assert.strictEqual(env.get('betUsedOn_')('2026-10-03'), 0);
+  assert.deepStrictEqual([env.sheet('BET_LOG').grid[1][16], env.sheet('BET_LOG').grid[1][17]], ['미구매', '']);   // 상태 보존
+});
+test('40. 구매 추천 결과 처리 정상 (실구매 손익/ROI 반영)', () => {
+  const env = setup(); env.setNow(kst('2026-10-03'));
+  const b = recBet(env, { stake: 5000 }).id, w = recWdl(env, { stake: 5000 }).id;
+  buy(env, 'bet', b, true); buy(env, 'wdl', w, true);
+  const before = env.get('apiGetPending')(); assert.deepStrictEqual([before.bets.length, before.wdl.length], [1, 1]);
+  assert.strictEqual(before.bets[0].buy, '구매');
+  const r1 = env.get('apiResolveBet')({ id: b, result: '적중', ret: 11000, reqId: 'v1' });
+  const r2 = env.get('apiResolveWdl')({ id: w, hits: 12, rank: '4등', prize: 9000, reqId: 'v2' });
+  assert.ok(r1.ok && r2.ok, JSON.stringify([r1, r2]));
+  assert.deepStrictEqual([r1.profit, r1.roi, r2.profit], [6000, 120, 4000]);
+  const row = env.sheet('BET_LOG').grid[1];
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적중', 11000, 6000, 1.2]);
+  const s = dash(env).summary;
+  assert.deepStrictEqual([s.used, s.settledStake, s.totalReturn, s.profit, s.roi], [10000, 10000, 20000, 10000, 100]);
+  const after = env.get('apiGetPending')(); assert.deepStrictEqual([after.bets.length, after.wdl.length], [0, 0]);
 });
 
 console.log(results.join('\n'));
