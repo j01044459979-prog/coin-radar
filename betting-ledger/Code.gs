@@ -222,6 +222,11 @@ function setupWdlGroupColumns() {
   if (!ss.getSheetByName(TABLES.WDL.name)) throw new Error('시트 "' + TABLES.WDL.name + '"가 없습니다. setup()을 실행하세요.');
   var sh = ensureTable_(ss, TABLES.WDL);
   var widened = ensureWdlComboValidation_(sh);
+  try {   // 새 열은 옆 열(구매일시)의 날짜 서식을 물려받을 수 있다 → 조합순번은 숫자 서식으로 고정(기존 데이터 값은 그대로)
+    var cn = TABLES.WDL.cols.map(function (c) { return c[0]; }).indexOf('comboNo') + 1;
+    if (cn > 0 && cn <= sh.getMaxColumns()) sh.getRange(2, cn, Math.max(1, sh.getMaxRows() - 1), 1).setNumberFormat('0');
+    SpreadsheetApp.flush();
+  } catch (e) { Logger.log('조합순번 서식 지정 실패: ' + richErr_(e)); }
   var msg = 'WDL_LOG 묶음 열 확인 완료 (구매묶음ID, 조합순번)' + (widened ? ' · 조합구분 드롭다운에 조합1~' + WDL_MULTI_MAX + ' 추가' : '');
   Logger.log(msg);
   return msg;
@@ -315,6 +320,7 @@ function formatRowCells_(sh, tbl, rowNum, count) {
     if (k === 'date') sh.getRange(rowNum, i + 1, n, 1).setNumberFormat('yyyy-mm-dd');
     else if (tbl.dtKeys.indexOf(k) >= 0) sh.getRange(rowNum, i + 1, n, 1).setNumberFormat('yyyy-mm-dd hh:mm');
     else if (k === tbl.roiKey) sh.getRange(rowNum, i + 1, n, 1).setNumberFormat('0.0%');
+    else if (k === 'comboNo') sh.getRange(rowNum, i + 1, n, 1).setNumberFormat('0');   // 옆 열(구매일시)의 날짜 서식이 번져 1,2,3 이 날짜로 읽히는 사고 방지(실환경 셀프테스트에서 발견)
   });
 }
 

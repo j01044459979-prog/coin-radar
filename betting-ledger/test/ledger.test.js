@@ -1544,6 +1544,14 @@ test('110. 셀프테스트 실패(구형 드롭다운 + 보강 불가): FAIL 기
   assert.strictEqual(wdlRows(env).filter(r => r[0] !== undefined && r[0] !== '').length, 0);
   assert.ok(!rows.some(r => String(r[0]).startsWith('selftest-') ));
 });
+test('111. 조합순번(AD)은 숫자 서식 "0" 으로 고정: 옆 열의 날짜 서식이 번져 1,2,3 이 날짜로 읽히는 실환경 사고 방지', () => {
+  const env = bridgeEnv(); const sh = env.sheet('WDL_LOG');
+  env.get('setupWdlGroupColumns')();
+  assert.ok(sh.calls.some(c => c[0] === 'setNumberFormat' && c[1] === 30 && c[2] === '0'));
+  sh.calls.length = 0;
+  assert.ok(env.get('apiSaveRichPick')(mp()).ok);
+  assert.ok(sh.calls.some(c => c[0] === 'setNumberFormat' && c[1] === 30 && c[2] === '0'));
+});
 
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} passed`);
