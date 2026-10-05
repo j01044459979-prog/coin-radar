@@ -831,13 +831,19 @@ function richSaveOne_(pick, key) {
 
 function richErr_(e) { return String(e && e.message ? e.message : e); }
 
+/** 내부 저장(인증/락 없음 — 호출자가 책임): requestId 검증 후 richSaveOne_ 에 위임. apiSaveRichPick 과 Inbox 처리기가 공유. */
+function saveRichPickInternal_(payload) {
+  var key = richRequestId_(payload && payload.requestId, 'requestId');
+  return richSaveOne_(payload, key);
+}
+
 /** 단건: { requestId, type:'BET'|'WDL', token?, ...saveBet_/saveWdl_ 필드 } */
 function apiSaveRichPick(payload) {
   try {
     richAuth_(payload);
-    var key = richRequestId_(payload && payload.requestId, 'requestId');
+    richRequestId_(payload && payload.requestId, 'requestId');
     return withLock_(function () {
-      var r = richSaveOne_(payload, key);
+      var r = saveRichPickInternal_(payload);
       r.ok = true;
       return r;
     });
@@ -874,6 +880,183 @@ function apiSaveRichPicks(payload) {
       return res;
     });
   } catch (e) {
+    return { ok: false, error: richErr_(e) };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Rich Bridge: RICH_INBOX (시트 큐) → 시간 트리거 → 기존 저장 엔진          */
+/*  - 공개 엔드포인트(doPost/웹훅) 없음. 시트가 큐, Apps Script 내부 트리거가 처리 */
+/*  - ChatGPT 는 RICH_INBOX 에 행만 추가. BET_LOG/WDL_LOG 에는 직접 쓰지 않음      */
+/*  - 토큰은 Inbox/시트에 저장하지 않음(내부 처리는 인증 없이 saveRichPickInternal_ 호출) */
+/* ------------------------------------------------------------------ */
+
+var INBOX = {
+  name: 'RICH_INBOX',
+  headers: ['requestId', 'createdAt', 'payloadJson', 'status', 'processedAt', 'resultId', 'resultType', 'error'],
+  STATUS: ['PENDING', 'PROCESSING', 'DONE', 'ERROR'],
+  MAX_PER_RUN: 20,
+  STALE_MIN: 10,
+  TRIGGER_FN: 'processRichInbox',   // 트리거 핸들러(공개 함수). 내부 로직은 processRichInbox_
+  TRIGGER_MIN: 1
+};
+
+function nowKstStr_() { return Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss'); }
+
+function inboxHeaderProblems_(sh) {
+  var out = [];
+  var width = Math.max(sh.getLastColumn(), INBOX.headers.length);
+  var cur = sh.getLastRow() === 0 ? [] : sh.getRange(1, 1, 1, width).getValues()[0];
+  INBOX.headers.forEach(function (h, i) {
+    if (String(cur[i] === undefined ? '' : cur[i]).trim() !== h) {
+      out.push(INBOX.name + ' ' + (i + 1) + '열 헤더: 기대 "' + h + '", 실제 "' + (cur[i] === undefined ? '' : cur[i]) + '"');
+    }
+  });
+  var seen = {};
+  cur.forEach(function (h, i) {
+    var k = String(h).trim();
+    if (!k) return;
+    if (seen[k]) out.push(INBOX.name + ' 중복 헤더 "' + k + '" (' + seen[k] + '열, ' + (i + 1) + '열)');
+    else seen[k] = i + 1;
+  });
+  return out;
+}
+
+function inboxTriggers_() {
+  return ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === INBOX.TRIGGER_FN && t.getEventType() === ScriptApp.EventType.CLOCK;
+  });
+}
+
+/** RICH_INBOX 생성/검증 + 1분 주기 트리거 설치. 여러 번 실행해도 트리거는 1개만 유지. */
+function setupRichBridge() {
+  var ss = getSS_();
+  var sh = ss.getSheetByName(INBOX.name);
+  var created = false;
+  if (!sh) { sh = ss.insertSheet(INBOX.name); created = true; }
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, INBOX.headers.length).setValues([INBOX.headers]);
+  } else {
+    var problems = inboxHeaderProblems_(sh);
+    if (problems.length) throw new Error(INBOX.name + ' 헤더가 예상과 다릅니다. 기존 데이터 보호를 위해 중단합니다.\n- ' + problems.join('\n- '));
+  }
+  sh.getRange(1, 1, 1, INBOX.headers.length).setFontWeight('bold').setBackground('#e8eaed');
+  // 모든 열을 텍스트 서식으로: payloadJson/error 등이 수식으로 해석되지 않도록
+  sh.getRange(2, 1, Math.max(sh.getMaxRows() - 1, 1), INBOX.headers.length).setNumberFormat('@');
+  try {
+    sh.getRange(2, 4, Math.max(sh.getMaxRows() - 1, 1), 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(INBOX.STATUS, true).setAllowInvalid(false).build());
+  } catch (e) { /* 검증 규칙 실패는 동작에 영향 없음 */ }
+  try {
+    if (!sh.isSheetHidden()) {
+      var other = ss.getSheetByName(TABLES.BET.name);
+      if (other) ss.setActiveSheet(other);   // 활성 시트는 숨길 수 없음
+      sh.hideSheet();
+    }
+  } catch (e) { /* 숨김 실패는 무시 */ }
+
+  var trg = inboxTriggers_();
+  for (var i = 1; i < trg.length; i++) ScriptApp.deleteTrigger(trg[i]);   // 중복 트리거 정리
+  var made = false;
+  if (!trg.length) {
+    ScriptApp.newTrigger(INBOX.TRIGGER_FN).timeBased().everyMinutes(INBOX.TRIGGER_MIN).create();
+    made = true;
+  }
+  var msg = 'Rich Bridge 설치 완료: ' + INBOX.name + (created ? ' 생성' : ' 확인') + ', 트리거 ' + (made ? '생성' : '이미 있음') +
+    (trg.length > 1 ? ' (중복 ' + (trg.length - 1) + '개 제거)' : '');
+  Logger.log(msg);
+  return msg;
+}
+
+/** 트리거 제거(필요 시 수동 실행) */
+function removeRichBridgeTrigger() {
+  var trg = inboxTriggers_();
+  trg.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  return '트리거 ' + trg.length + '개 제거';
+}
+
+/** 행의 D~H(status, processedAt, resultId, resultType, error)를 텍스트 서식 + 문자열로 기록 */
+function inboxWrite_(sh, rowNum, c) {
+  var rng = sh.getRange(rowNum, 4, 1, 5);
+  rng.setNumberFormat('@');
+  rng.setValues([[String(c.status), String(c.processedAt || ''), String(c.resultId || ''), String(c.resultType || ''),
+    String(c.error || '').slice(0, 500)]]);
+}
+
+/** 처리 시작/생성 시각 기준 경과 분. 시각을 알 수 없으면 오래된 것으로 본다. */
+function inboxAgeMin_(startedAt, createdAt) {
+  var s = String(startedAt || '').trim() || String(createdAt || '').trim();
+  if (!s) return Infinity;
+  try {
+    return (new Date().getTime() - Utilities.parseDate(s.slice(0, 19), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss').getTime()) / 60000;
+  } catch (e) { return Infinity; }
+}
+
+/**
+ * RICH_INBOX 의 PENDING(및 10분 이상 방치된 PROCESSING) 행을 최대 20건 처리한다.
+ * 행 하나의 실패가 다른 행 처리를 막지 않는다. ERROR/DONE 행은 건드리지 않는다.
+ */
+function processRichInbox_() {
+  var sh = getSheet_(INBOX.name);
+  return withLock_(function () {
+    var out = { ok: true, processed: 0, done: 0, duplicate: 0, error: 0, recovered: 0, writeFailed: 0 };
+    var last = sh.getLastRow();
+    if (last < 2) return out;
+    var rng = sh.getRange(2, 1, last - 1, INBOX.headers.length);
+    var vals = rng.getValues();
+    var formulas = rng.getFormulas();
+    for (var i = 0; i < vals.length && out.processed < INBOX.MAX_PER_RUN; i++) {
+      var row = vals[i];
+      var status = String(row[3]).trim();
+      if (status === 'PROCESSING') {
+        if (inboxAgeMin_(row[4], toDateTimeStr_(row[1])) < INBOX.STALE_MIN) continue;   // 최근 처리 중 → 건드리지 않음
+        out.recovered++;
+      } else if (status !== 'PENDING') {
+        continue;
+      }
+      var rowNum = i + 2;
+      out.processed++;
+      // 처리 시작 표시: PROCESSING 동안 processedAt 에는 '처리 시작 시각'이 들어간다
+      inboxWrite_(sh, rowNum, { status: 'PROCESSING', processedAt: nowKstStr_() });
+      var res = null;
+      try {
+        if (String(formulas[i][0] || '') !== '' || String(formulas[i][2] || '') !== '') {
+          fail_('requestId/payloadJson 셀이 수식입니다. 텍스트로 입력하세요.');
+        }
+        var raw = String(row[2] == null ? '' : row[2]).trim();
+        if (!raw) fail_('payloadJson 이 비어 있습니다.');
+        var payload;
+        try { payload = JSON.parse(raw); } catch (e) { fail_('payloadJson 이 올바른 JSON 이 아닙니다.'); }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) fail_('payloadJson 은 JSON 객체여야 합니다.');
+        var colId = String(row[0] == null ? '' : row[0]).trim();
+        var jsonId = payload.requestId == null ? '' : String(payload.requestId).trim();
+        if (colId && jsonId && colId !== jsonId) fail_('requestId 열과 payloadJson 의 requestId 가 다릅니다.');
+        payload.requestId = colId || jsonId;
+        res = saveRichPickInternal_(payload);   // 기존 저장 엔진(saveBet_/saveWdl_)에 위임 + requestId 멱등성
+      } catch (e) {
+        out.error++;
+        try { inboxWrite_(sh, rowNum, { status: 'ERROR', processedAt: nowKstStr_(), error: richErr_(e) }); } catch (e2) { out.writeFailed++; }
+        continue;
+      }
+      // 저장 성공(또는 이미 저장된 requestId). DONE 기록이 실패하면 PROCESSING 으로 남고, 10분 후 재처리 시 duplicate 로 복구된다.
+      try {
+        inboxWrite_(sh, rowNum, { status: 'DONE', processedAt: nowKstStr_(), resultId: res.id, resultType: res.type });
+        out.done++;
+        if (res.duplicate) out.duplicate++;
+      } catch (e3) { out.writeFailed++; }
+    }
+    return out;
+  });
+}
+
+/** 시간 트리거 핸들러 (트리거는 공개 함수만 호출 가능) */
+function processRichInbox() {
+  try {
+    var r = processRichInbox_();
+    if (r.processed) Logger.log('RICH_INBOX 처리: ' + JSON.stringify(r));
+    return r;
+  } catch (e) {
+    Logger.log('RICH_INBOX 처리 실패: ' + richErr_(e));
     return { ok: false, error: richErr_(e) };
   }
 }
@@ -928,7 +1111,26 @@ function diagnoseSetup() {
       });
     }
   }
-  var msg = problems.length ? '문제 ' + problems.length + '건:\n- ' + problems.join('\n- ') : '리치 베팅 장부 V1 환경 정상';
+  // Rich Bridge: 설치된 경우(시트 또는 트리거 존재)에만 검사. 미설치면 기존 문구를 유지하고 로그로만 안내한다.
+  var bridge = 'none';
+  if (ss) {
+    var inbox = ss.getSheetByName(INBOX.name);
+    var trg = [];
+    try { trg = inboxTriggers_(); } catch (e) { trg = []; }
+    if (inbox || trg.length) {
+      bridge = 'ok';
+      if (!inbox) { problems.push('시트 "' + INBOX.name + '"가 없습니다. (setupRichBridge 실행)'); bridge = 'bad'; }
+      else {
+        var hp = inboxHeaderProblems_(inbox);
+        if (hp.length) { hp.forEach(function (x) { problems.push(x); }); bridge = 'bad'; }
+      }
+      if (!trg.length) { problems.push('트리거 "' + INBOX.TRIGGER_FN + '"가 없습니다. (setupRichBridge 실행)'); bridge = 'bad'; }
+      if (trg.length > 1) { problems.push('트리거 "' + INBOX.TRIGGER_FN + '"가 ' + trg.length + '개 중복되어 있습니다. (setupRichBridge 실행 시 정리)'); bridge = 'bad'; }
+    }
+  }
+  var msg = problems.length ? '문제 ' + problems.length + '건:\n- ' + problems.join('\n- ')
+    : '리치 베팅 장부 V1 환경 정상' + (bridge === 'ok' ? ' / Rich Bridge 정상' : '');
   Logger.log(msg);
+  if (bridge === 'none') Logger.log('참고: Rich Bridge 미설치 (설치하려면 setupRichBridge 실행)');
   return msg;
 }

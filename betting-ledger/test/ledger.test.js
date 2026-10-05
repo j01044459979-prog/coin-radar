@@ -18,6 +18,7 @@ function makeSheet(name) {
     getLastColumn() { return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
+        getFormulas: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => { const v = grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j]; return (typeof v === 'string' && v[0] === '=') ? v : ''; })),
         getValue: () => (grid[r - 1] && grid[r - 1][c - 1] !== undefined) ? grid[r - 1][c - 1] : '',
         getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')),
         setValues(v) { v.forEach((row, i) => row.forEach((x, j) => { (grid[r - 1 + i] = grid[r - 1 + i] || [])[c - 1 + j] = x; })); return rng; },
@@ -26,6 +27,8 @@ function makeSheet(name) {
       return prx;
     },
     clear() { grid.length = 0; return sh; },
+    isSheetHidden() { return !!sh._hidden; },
+    hideSheet() { sh._hidden = true; return sh; },
   };
   return new Proxy(sh, { get: (t, k) => k in t ? t[k] : () => sh });
 }
@@ -33,24 +36,31 @@ function makeSheet(name) {
 function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   let now = now0;
   const sheets = [];
-  const props = {}; const cache = {};
+  const props = {}; const cache = {}; const triggers = [];
   let uuidN = 0;
   const ss = {
     getId: () => 'SS1',
     getSheetByName: n => sheets.find(s => s.name === n) || null,
     insertSheet: n => { const s = makeSheet(n); sheets.push(s); return s; },
     getSheets: () => sheets,
+    setActiveSheet: s => s,
     deleteSheet: s => sheets.splice(sheets.indexOf(s), 1),
   };
   const RealDate = Date;
   const ctx = {
     console, Date: class extends RealDate { constructor(...a) { a.length ? super(...a) : super(now.getTime()); } static now() { return now.getTime(); } },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss, newDataValidation: () => { const o = new Proxy({}, { get: (_, k) => k === 'build' ? () => ({ built: true }) : () => o }); return o; } },
+    ScriptApp: {
+      EventType: { CLOCK: 'CLOCK' },
+      getProjectTriggers: () => triggers.slice(),
+      deleteTrigger: tr => { const i = triggers.indexOf(tr); if (i >= 0) triggers.splice(i, 1); },
+      newTrigger: fn => ({ timeBased: () => ({ everyMinutes: n => ({ create: () => { const tr = { fn, every: n, getHandlerFunction: () => fn, getEventType: () => 'CLOCK' }; triggers.push(tr); return tr; } }) }) })
+    },
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = v; }, getProperties: () => Object.assign({}, props), deleteProperty: k => { delete props[k]; } }) },
     CacheService: { getScriptCache: () => ({ get: k => cache[k] || null, put: (k, v) => { cache[k] = v; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     Utilities: {
-      parseDate: (str) => new RealDate(str + 'T00:00:00+09:00'),
+      parseDate: (str) => new RealDate(/\d:\d/.test(str) ? str.replace(' ', 'T') + '+09:00' : str + 'T00:00:00+09:00'),
       getUuid: () => 'uuid-' + String(++uuidN).padStart(8, '0') + '-aaaa-bbbb-cccc-dddddddddddd',
       formatDate(d, tz, fmt) {
         const k = new RealDate(d.getTime() + 9 * 3600 * 1000); // Asia/Seoul
@@ -65,7 +75,7 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
   const get = n => vm.runInContext(n, ctx);
-  return { ctx, ss, sheets, get, props, sheet: n => ss.getSheetByName(n), setNow: d => { now = d; } };
+  return { ctx, ss, sheets, get, props, triggers, sheet: n => ss.getSheetByName(n), setNow: d => { now = d; } };
 }
 
 /* ---------- 도우미 ---------- */
@@ -719,6 +729,216 @@ test('49. 요청 검증: requestId 필수/형식, picks 비어있음/20건 초�
   assert.match(fb({ picks: [rp()] }).error, /requestId/);
   assert.deepStrictEqual([env.sheet('BET_LOG').getLastRow(), env.sheet('WDL_LOG').getLastRow()], [1, 1]);
   assert.strictEqual(fb({ requestId: 'rich-badtype-01', picks: [rp({ type: 'XX' })] }).failed[0].error, 'type 은 BET 또는 WDL 이어야 합니다.');
+});
+
+/* ---------- Rich Bridge: RICH_INBOX → processRichInbox_ ---------- */
+const INBOX_HEAD = ['requestId', 'createdAt', 'payloadJson', 'status', 'processedAt', 'resultId', 'resultType', 'error'];
+const bridgeEnv = () => { const env = setup(); env.setNow(kst('2026-10-05')); env.get('setupRichBridge')(); return env; };
+const ago = (env, min) => env.ctx.Utilities.formatDate(new Date(kst('2026-10-05').getTime() - min * 60000), 'Asia/Seoul', 'yyyy-MM-dd HH:mm:ss');
+const inboxAdd = (env, id, payload, status = 'PENDING', extra = {}) => {
+  const raw = typeof payload === 'string' ? payload : JSON.stringify(Object.assign({ requestId: id }, payload));
+  env.sheet('RICH_INBOX').grid.push([id, extra.createdAt || ago(env, 1), raw, status, extra.processedAt || '', '', '', '']);
+  return env.sheet('RICH_INBOX').grid.length - 1;
+};
+const betPayload = (o = {}) => { const x = rp(o); delete x.requestId; return x; };
+const wdlPayload = (o = {}) => { const x = rw(o); delete x.requestId; return x; };
+const inboxRow = (env, i) => env.sheet('RICH_INBOX').grid[i];
+const runInbox = env => env.get('processRichInbox_')();
+
+test('50. setupRichBridge: RICH_INBOX 생성(헤더/숨김/텍스트 서식/상태 검증), 기존 시트 구조 불변', () => {
+  const env = setup();
+  const before = JSON.stringify([env.sheet('BET_LOG').grid[0], env.sheet('WDL_LOG').grid[0], env.sheet('SETTINGS').grid]);
+  assert.ok(!env.sheet('RICH_INBOX'));
+  env.get('setupRichBridge')();
+  const sh = env.sheet('RICH_INBOX');
+  assert.ok(sh); assert.deepStrictEqual([...sh.grid[0]], INBOX_HEAD);
+  assert.strictEqual(sh._hidden, true);
+  assert.ok(sh.calls.some(c => c[0] === 'setNumberFormat' && c[2] === '@'));
+  assert.ok(sh.calls.some(c => c[0] === 'setDataValidation'));
+  assert.strictEqual(JSON.stringify([env.sheet('BET_LOG').grid[0], env.sheet('WDL_LOG').grid[0], env.sheet('SETTINGS').grid]), before);
+  assert.strictEqual(env.triggers.length, 1);
+  assert.deepStrictEqual([env.triggers[0].fn, env.triggers[0].every], ['processRichInbox', 1]);
+  // 헤더가 다른 기존 RICH_INBOX 는 덮어쓰지 않고 중단
+  const env2 = setup(); env2.get('setupRichBridge')(); env2.sheet('RICH_INBOX').grid[0][2] = 'payload';
+  assert.throws(() => env2.get('setupRichBridge')(), /헤더가 예상과 다릅니다/);
+});
+test('51. setupRichBridge 재실행: 트리거 중복 없음(중복 있으면 정리), removeRichBridgeTrigger', () => {
+  const env = setup();
+  for (let i = 0; i < 3; i++) env.get('setupRichBridge')();
+  assert.strictEqual(env.triggers.length, 1);
+  env.ctx.ScriptApp.newTrigger('processRichInbox').timeBased().everyMinutes(1).create();   // 수동으로 중복 생성된 상황
+  env.ctx.ScriptApp.newTrigger('otherFn').timeBased().everyMinutes(5).create();
+  assert.strictEqual(env.triggers.length, 3);
+  env.get('setupRichBridge')();
+  assert.strictEqual(env.triggers.filter(t => t.fn === 'processRichInbox').length, 1);
+  assert.strictEqual(env.triggers.filter(t => t.fn === 'otherFn').length, 1);           // 다른 트리거는 건드리지 않음
+  env.get('removeRichBridgeTrigger')();
+  assert.strictEqual(env.triggers.filter(t => t.fn === 'processRichInbox').length, 0);
+});
+test('52. 정상 BET PENDING 행 → DONE, BET_LOG 저장(미확인/대기)', () => {
+  const env = bridgeEnv();
+  const i = inboxAdd(env, 'rich-20261005-abcd1234', betPayload({ stake: 3000, name: '울산 vs 전북' }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.processed, out.done, out.error], [1, 1, 0]);
+  const bet = env.sheet('BET_LOG').grid[1], r = inboxRow(env, i);
+  assert.deepStrictEqual([r[3], r[6], r[7]], ['DONE', 'BET', '']);
+  assert.strictEqual(r[5], bet[0]); assert.match(r[4], /^2026-10-05 12:00:00$/);   // 한국시간 문자열
+  assert.deepStrictEqual([bet[8], bet[9], bet[10], bet[16], bet[17], bet[18]], [3000, '대기', '', '미확인', '', '']);
+  assert.strictEqual(env.get('apiGetUnconfirmed')().bets.length, 1);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+  assert.strictEqual(runInbox(env).processed, 0);                                   // DONE 은 다시 처리하지 않음
+});
+test('53. 정상 WDL PENDING 행 → DONE, WDL_LOG 저장', () => {
+  const env = bridgeEnv();
+  const i = inboxAdd(env, 'rich-wdl-pending-1', wdlPayload({ round: '77', combo: '보조1', stake: 3000 }));
+  runInbox(env);
+  const r = inboxRow(env, i), w = env.sheet('WDL_LOG').grid[1];
+  assert.deepStrictEqual([r[3], r[6], r[5] === w[0]], ['DONE', 'WDL', true]);
+  assert.deepStrictEqual([w[1], w[3], w[18], w[20], w[25], w[26], w[27]], ['77', '보조1', 3000, '대기', '미확인', '', '']);
+  assert.strictEqual(env.get('apiGetUnconfirmed')().wdl.length, 1);
+});
+test('54. 잘못된 JSON → ERROR, 다음 정상 행은 계속 처리', () => {
+  const env = bridgeEnv();
+  const bad = inboxAdd(env, 'rich-badjson-0001', '{"type":"BET", broken');
+  const ok = inboxAdd(env, 'rich-after-bad-001', betPayload());
+  const arr = inboxAdd(env, 'rich-array-json-01', '[1,2]');
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.error], [1, 2]);
+  assert.deepStrictEqual([inboxRow(env, bad)[3], inboxRow(env, ok)[3], inboxRow(env, arr)[3]], ['ERROR', 'DONE', 'ERROR']);
+  assert.match(inboxRow(env, bad)[7], /JSON/); assert.match(inboxRow(env, bad)[4], /^\d{4}-/);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+  const mism = inboxAdd(env, 'rich-mismatch-0001', JSON.stringify(Object.assign({ requestId: 'rich-other-id-0001' }, betPayload())));
+  runInbox(env); assert.match(inboxRow(env, mism)[7], /requestId/);
+});
+test('55. 검증 실패 payload → ERROR, BET_LOG/WDL_LOG 행 없음, 오류 문구 기록', () => {
+  const env = bridgeEnv();
+  const g = GAMES.slice(); g[6] = '';
+  const rows = [inboxAdd(env, 'rich-stake-zero-01', betPayload({ stake: 0 })), inboxAdd(env, 'rich-odds-low-0001', betPayload({ odds: 0.3 })),
+    inboxAdd(env, 'rich-wdl-missing-1', wdlPayload({ games: g })), inboxAdd(env, 'rich-type-bad-0001', { type: 'ETC' }),
+    inboxAdd(env, 'short', betPayload()), inboxAdd(env, 'rich-empty-payload1', '')];
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.error], [0, 6]);
+  assert.deepStrictEqual([env.sheet('BET_LOG').getLastRow(), env.sheet('WDL_LOG').getLastRow()], [1, 1]);
+  const errs = rows.map(i => inboxRow(env, i)[7]);
+  assert.match(errs[0], /0원보다/); assert.match(errs[1], /총배당/); assert.strictEqual(errs[2], '7경기의 승/무/패를 선택해주세요.');
+  assert.match(errs[3], /type/); assert.match(errs[4], /requestId/); assert.match(errs[5], /비어/);
+  assert.ok(rows.every(i => inboxRow(env, i)[3] === 'ERROR' && inboxRow(env, i)[5] === ''));
+});
+test('56. 같은 requestId 가 Inbox 에 두 번 → 장부 저장 1건, 둘 다 같은 ID 로 DONE(duplicate)', () => {
+  const env = bridgeEnv();
+  const a = inboxAdd(env, 'rich-same-req-0001', betPayload({ stake: 2000 }));
+  const b = inboxAdd(env, 'rich-same-req-0001', betPayload({ stake: 2000 }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.duplicate, out.error], [2, 1, 0]);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+  assert.deepStrictEqual([inboxRow(env, a)[3], inboxRow(env, b)[3]], ['DONE', 'DONE']);
+  assert.strictEqual(inboxRow(env, a)[5], inboxRow(env, b)[5]);
+  assert.strictEqual(inboxRow(env, b)[7], '');                                       // 중복은 ERROR 가 아님
+  const c = inboxAdd(env, 'rich-same-req-0001', betPayload({ stake: 2000 }));          // 나중에 다시 들어와도 동일
+  runInbox(env); assert.strictEqual(inboxRow(env, c)[3], 'DONE'); assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+});
+test('57. 저장 성공 후 DONE 기록 전 중단 → 다음 실행에서 중복 저장 없이 복구', () => {
+  const env = bridgeEnv();
+  const i = inboxAdd(env, 'rich-crash-after-1', betPayload({ stake: 4000 }));
+  // 결함 주입: Inbox 의 DONE 기록 시도에서만 예외 발생(저장은 이미 끝난 상태)
+  const sh = env.sheet('RICH_INBOX'); const origGetRange = sh.getRange;
+  sh.getRange = (r, c, nr, nc) => {
+    const rng = origGetRange(r, c, nr, nc);
+    return new Proxy(rng, { get: (t, k) => k === 'setValues' ? (v) => { if (v[0][0] === 'DONE') throw new Error('simulated crash'); return t.setValues(v); } : t[k] });
+  };
+  const first = runInbox(env);
+  assert.strictEqual(first.writeFailed, 1);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);                          // 장부에는 저장됨
+  assert.strictEqual(inboxRow(env, i)[3], 'PROCESSING');                             // Inbox 는 PROCESSING 으로 남음
+  const savedId = env.sheet('BET_LOG').grid[1][0];
+  sh.getRange = origGetRange;                                                        // 장애 해소
+  assert.strictEqual(runInbox(env).processed, 0);                                    // 10분 전에는 건드리지 않음
+  env.setNow(new Date(kst('2026-10-05').getTime() + 11 * 60000));                    // 11분 경과
+  const second = runInbox(env);
+  assert.deepStrictEqual([second.recovered, second.done, second.duplicate], [1, 1, 1]);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);                          // 중복 저장 없음
+  assert.deepStrictEqual([inboxRow(env, i)[3], inboxRow(env, i)[5], inboxRow(env, i)[6]], ['DONE', savedId, 'BET']);
+});
+test('58. 오래된 PROCESSING 행(10분 이상) 복구', () => {
+  const env = bridgeEnv();
+  const a = inboxAdd(env, 'rich-stale-proc-001', betPayload(), 'PROCESSING', { processedAt: ago(env, 11), createdAt: ago(env, 30) });
+  const b = inboxAdd(env, 'rich-stale-proc-002', betPayload(), 'PROCESSING', { createdAt: ago(env, 20) });   // 시작 시각이 비어 있으면 createdAt 기준
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.recovered, out.done], [2, 2]);
+  assert.deepStrictEqual([inboxRow(env, a)[3], inboxRow(env, b)[3]], ['DONE', 'DONE']);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);
+});
+test('59. 최근 PROCESSING 행은 건드리지 않음', () => {
+  const env = bridgeEnv();
+  const a = inboxAdd(env, 'rich-fresh-proc-001', betPayload(), 'PROCESSING', { processedAt: ago(env, 2), createdAt: ago(env, 30) });
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.processed, out.recovered], [0, 0]);
+  assert.strictEqual(inboxRow(env, a)[3], 'PROCESSING'); assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 1);
+});
+test('60. ERROR/DONE 행은 자동 재처리하지 않음', () => {
+  const env = bridgeEnv();
+  const e = inboxAdd(env, 'rich-err-noretry-01', betPayload(), 'ERROR', { processedAt: ago(env, 100) });
+  const d = inboxAdd(env, 'rich-done-noretry-1', betPayload(), 'DONE', { processedAt: ago(env, 100) });
+  const u = inboxAdd(env, 'rich-unknown-stat-1', betPayload(), 'pending');   // 정확히 PENDING 이 아니면 처리 안 함
+  const out = runInbox(env);
+  assert.strictEqual(out.processed, 0);
+  assert.deepStrictEqual([inboxRow(env, e)[3], inboxRow(env, d)[3], inboxRow(env, u)[3]], ['ERROR', 'DONE', 'pending']);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 1);
+});
+test('61. 한 실행 최대 20건 처리', () => {
+  const env = bridgeEnv();
+  const idx = []; for (let n = 1; n <= 25; n++) idx.push(inboxAdd(env, 'rich-max-run-' + String(n).padStart(4, '0'), betPayload({ stake: 1000, name: 'M' + n })));
+  const first = runInbox(env);
+  assert.deepStrictEqual([first.processed, first.done], [20, 20]);
+  assert.strictEqual(idx.filter(i => inboxRow(env, i)[3] === 'DONE').length, 20);
+  assert.strictEqual(idx.filter(i => inboxRow(env, i)[3] === 'PENDING').length, 5);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 21);
+  const second = runInbox(env);
+  assert.deepStrictEqual([second.processed, second.done], [5, 5]);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 26);
+});
+test('62. 수식 주입 방지: 장부 텍스트 이스케이프 + Inbox 는 텍스트 서식으로만 기록, 수식 셀은 거부', () => {
+  const env = bridgeEnv();
+  const a = inboxAdd(env, 'rich-inject-ok-0001', betPayload({ name: '=HYPERLINK("http://x")', pick: '@SUM(1)', memo: '+1+1' }));
+  const f = inboxAdd(env, 'rich-inject-formula1', '=1+1');                           // payloadJson 셀이 수식으로 입력된 경우
+  const j = inboxAdd(env, 'rich-inject-badjson1', '=cmd|bad');
+  env.sheet('RICH_INBOX').calls.length = 0;
+  runInbox(env);
+  const bet = env.sheet('BET_LOG').grid[1];
+  assert.deepStrictEqual([bet[4], bet[5], bet[14]], ["'=HYPERLINK(\"http://x\")", "'@SUM(1)", "'+1+1"]);
+  assert.strictEqual(inboxRow(env, a)[3], 'DONE');
+  assert.deepStrictEqual([inboxRow(env, f)[3], inboxRow(env, j)[3]], ['ERROR', 'ERROR']);
+  assert.match(inboxRow(env, f)[7], /수식/);
+  const calls = env.sheet('RICH_INBOX').calls;
+  assert.ok(calls.filter(c => c[0] === 'setNumberFormat' && c[2] === '@').length >= 6);   // 행마다 기록 전 텍스트 서식 지정
+  assert.ok(inboxRow(env, a).every(v => typeof v === 'string'));
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+});
+test('63. 회귀: Inbox 저장 픽도 구매일 기준 한도/구매 확인/결과 처리 규칙을 그대로 따름', () => {
+  const env = bridgeEnv();
+  inboxAdd(env, 'rich-regress-bet-01', betPayload({ date: '2026-10-01', stake: 3000, name: 'R1' }));
+  inboxAdd(env, 'rich-regress-bet-02', betPayload({ date: '2026-10-02', stake: 3000, name: 'R2' }));
+  runInbox(env);
+  const ids = [env.sheet('BET_LOG').grid[1][0], env.sheet('BET_LOG').grid[2][0]];
+  const p0 = env.get('apiGetPending')(); assert.deepStrictEqual([p0.bets.length, p0.wdl.length], [0, 0]);   // 미확인은 결과 처리 목록 제외
+  assert.match(env.get('apiResolveBet')({ id: ids[0], result: '적중', ret: 5000, reqId: 'g1' }).error, /먼저 구매 확인/);
+  assert.ok(buy(env, 'bet', ids[0]).ok);
+  const blocked = buy(env, 'bet', ids[1]);
+  assert.strictEqual(blocked.ok, false); assert.match(blocked.error, /일 최대 5,000원 초과: 해당일 구매 3,000원 \+ 신규 3,000원 = 6,000원/);
+  assert.ok(buy(env, 'bet', ids[1], false).ok);
+  const r = env.get('apiResolveBet')({ id: ids[0], result: '적중', ret: 6000, reqId: 'g2' });
+  assert.deepStrictEqual([r.ok, r.profit, r.roi], [true, 3000, 100]);
+  const s = env.get('apiGetMonthly')('2026-10').summary;
+  assert.deepStrictEqual([s.used, s.profit, s.roi], [3000, 3000, 100]);
+  // diagnoseSetup: 브리지 설치 후 정상 문구, 트리거 중복/누락 시 문제 보고, 미설치 시 기존 문구 유지
+  assert.strictEqual(env.get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상 / Rich Bridge 정상');
+  env.ctx.ScriptApp.newTrigger('processRichInbox').timeBased().everyMinutes(1).create();
+  assert.match(env.get('diagnoseSetup')(), /중복/);
+  env.get('removeRichBridgeTrigger')();
+  assert.match(env.get('diagnoseSetup')(), /트리거 "processRichInbox"가 없습니다/);
+  env.sheet('RICH_INBOX').grid[0][3] = 'state'; env.get('setupRichBridge') && env.ctx.ScriptApp.newTrigger('processRichInbox').timeBased().everyMinutes(1).create();
+  assert.match(env.get('diagnoseSetup')(), /RICH_INBOX 4열 헤더/);
+  assert.strictEqual(setup().get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상');
 });
 
 console.log(results.join('\n'));
