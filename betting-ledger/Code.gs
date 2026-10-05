@@ -206,7 +206,7 @@ function ensureSettings_(ss) {
 function setup() {
   var ss = getSS_();
   ensureTable_(ss, TABLES.BET);
-  ensureTable_(ss, TABLES.WDL);
+  ensureWdlComboValidation_(ensureTable_(ss, TABLES.WDL));
   if (!ss.getSheetByName(DASH_SHEET_NAME)) ss.insertSheet(DASH_SHEET_NAME);
   ensureSettings_(ss);
   ['Sheet1', '시트1'].forEach(function (n) {
@@ -220,8 +220,9 @@ function setup() {
 function setupWdlGroupColumns() {
   var ss = getSS_();
   if (!ss.getSheetByName(TABLES.WDL.name)) throw new Error('시트 "' + TABLES.WDL.name + '"가 없습니다. setup()을 실행하세요.');
-  ensureTable_(ss, TABLES.WDL);
-  var msg = 'WDL_LOG 묶음 열 확인 완료 (구매묶음ID, 조합순번)';
+  var sh = ensureTable_(ss, TABLES.WDL);
+  var widened = ensureWdlComboValidation_(sh);
+  var msg = 'WDL_LOG 묶음 열 확인 완료 (구매묶음ID, 조합순번)' + (widened ? ' · 조합구분 드롭다운에 조합1~' + WDL_MULTI_MAX + ' 추가' : '');
   Logger.log(msg);
   return msg;
 }
@@ -317,13 +318,40 @@ function formatRowCells_(sh, tbl, rowNum, count) {
   });
 }
 
-/** 여러 행을 한 번의 setValues 로 추가 */
+/**
+ * 여러 행을 '전부 또는 전무'로 추가한다.
+ *  1) 모든 행을 메모리에서 완성하고 열 개수를 검증  2) 단일 setValues  3) flush 로 쓰기 오류를 이 지점에서 확정
+ *  4) 다시 읽어 빠진 셀이 없는지 검증  5) 어느 단계든 실패하면 이번에 쓴 행 범위만 즉시 비우고(rollback) 예외를 던진다.
+ * 주의(운영 교훈): Sheets 쓰기는 지연 실행된다. 거절형 데이터 검증을 위반하면 그 셀 앞까지만 쓰이고 예외가 flush 시점에
+ * 늦게 터지며 뒤에 쌓인 쓰기(예: Inbox ERROR 기록)가 버려진다 → 여기서 즉시 flush 해 예외를 try/catch 안으로 가져온다.
+ */
 function appendRows_(tbl, recs) {
   if (!recs.length) return;
-  var sh = getSheet_(tbl.name);
-  var r = sh.getLastRow() + 1, width = tblWidth_(sh, tbl);
-  sh.getRange(r, 1, recs.length, width).setValues(recs.map(function (o) { return rowToArray_(tbl, o).slice(0, width); }));
-  formatRowCells_(sh, tbl, r, recs.length);
+  var sh = getSheet_(tbl.name), width = tblWidth_(sh, tbl);
+  var rows = recs.map(function (o) {
+    var a = rowToArray_(tbl, o);
+    if (a.length !== tbl.cols.length) fail_(tbl.name + ' 행 열 개수 불일치 (' + a.length + ' ≠ ' + tbl.cols.length + ') — 저장하지 않았습니다.');
+    return a.slice(0, width);
+  });
+  var start = sh.getLastRow() + 1;
+  try {
+    sh.getRange(start, 1, rows.length, width).setValues(rows);
+    SpreadsheetApp.flush();
+    var back = sh.getRange(start, 1, rows.length, width).getValues();
+    rows.forEach(function (row, i) {
+      row.forEach(function (v, j) {
+        if (v !== '' && (back[i][j] === '' || back[i][j] == null)) {
+          throw new Error('쓰기 검증 실패: ' + (start + i) + '행 ' + (j + 1) + '열(' + tbl.cols[j][1] + ')이 비어 있습니다.');
+        }
+      });
+    });
+    formatRowCells_(sh, tbl, start, rows.length);
+    SpreadsheetApp.flush();
+  } catch (e) {
+    try { sh.getRange(start, 1, rows.length, sh.getMaxColumns()).clearContent(); SpreadsheetApp.flush(); } catch (e2) { /* rollback 최선 */ }
+    memoClear_(true);
+    throw new Error('저장 중 오류가 나서 이번 요청의 ' + rows.length + '행 기록을 모두 되돌렸습니다: ' + (e && e.message ? e.message : e));
+  }
   memoClear_(true);
 }
 
@@ -336,6 +364,7 @@ function updateCells_(tbl, rowNum, keys, o) {
   var sh = getSheet_(tbl.name);
   sh.getRange(rowNum, idx[0] + 1, 1, keys.length)
     .setValues([keys.map(function (k) { return o[k] == null ? '' : o[k]; })]);
+  SpreadsheetApp.flush();
   formatRowCells_(sh, tbl, rowNum);
   memoClear_(true);
 }
@@ -354,6 +383,7 @@ function updateCellsBulk_(tbl, keys, items) {
   runs.forEach(function (run) {
     sh.getRange(run[0].row, idx[0] + 1, run.length, keys.length)
       .setValues(run.map(function (it) { return keys.map(function (k) { return it.o[k] == null ? '' : it.o[k]; }); }));
+    SpreadsheetApp.flush();
     formatRowCells_(sh, tbl, run[0].row, run.length);
   });
   memoClear_(true);
@@ -362,6 +392,7 @@ function updateCellsBulk_(tbl, keys, items) {
 function updateRow_(tbl, rowNum, o) {
   var sh = getSheet_(tbl.name), width = tblWidth_(sh, tbl);
   sh.getRange(rowNum, 1, 1, width).setValues([rowToArray_(tbl, o).slice(0, width)]);
+  SpreadsheetApp.flush();
   formatRowCells_(sh, tbl, rowNum);
   memoClear_(true);
 }
@@ -588,6 +619,38 @@ function expandSelections_(sets) {
   return out;
 }
 
+/** WDL_LOG 조합구분(D열) 드롭다운이 주력/보조1/보조2 만 허용하면 조합1~조합N 쓰기가 거절된다 → 규칙에 비파괴로 추가 */
+function wdlComboLabels_() {
+  var out = [];
+  for (var i = 1; i <= WDL_MULTI_MAX; i++) out.push('조합' + i);
+  return out;
+}
+
+function comboRule_(sh) {
+  var col = TABLES.WDL.cols.map(function (c) { return c[0]; }).indexOf('combo') + 1;
+  var rule = sh.getRange(2, col).getDataValidation();
+  if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) return null;
+  return { col: col, rule: rule, list: (rule.getCriteriaValues()[0] || []).slice() };
+}
+
+function ensureWdlComboValidation_(sh) {
+  var info = comboRule_(sh);
+  if (!info) return false;
+  var missing = wdlComboLabels_().filter(function (v) { return info.list.indexOf(v) < 0; });
+  if (!missing.length) return false;
+  sh.getRange(2, info.col, Math.max(sh.getMaxRows() - 1, 1), 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(info.list.concat(missing), true).setAllowInvalid(info.rule.getAllowInvalid()).build());
+  SpreadsheetApp.flush();
+  return true;
+}
+
+function requireComboDropdown_() {
+  var info = comboRule_(getSheet_(TABLES.WDL.name));
+  if (!info || info.rule.getAllowInvalid()) return;
+  var missing = wdlComboLabels_().filter(function (v) { return info.list.indexOf(v) < 0; });
+  if (missing.length) fail_('WDL_LOG 조합구분 드롭다운 규칙에 ' + missing[0] + ' 등이 없어 저장할 수 없습니다. setupWdlGroupColumns() 를 먼저 실행하세요.');
+}
+
 function requireGroupColumns_() {
   var sh = getSheet_(TABLES.WDL.name), n = TABLES.WDL.cols.length;
   var ok = sh.getMaxColumns() >= n && String(sh.getRange(1, n - 1, 1, 2).getValues()[0][0]).trim() === TABLES.WDL.cols[n - 2][1] &&
@@ -611,6 +674,7 @@ function newGroupId_(rows) {
  */
 function saveWdlMulti_(p) {
   requireGroupColumns_();
+  requireComboDropdown_();   // 쓰기 전에 검증 규칙 호환 확인(거절되면 아무것도 쓰지 않음)
   var sets = normalizeSelections_(p.selections);
   var combos = expandSelections_(sets);
   var wdl = readRows_(TABLES.WDL);
@@ -1037,13 +1101,19 @@ function richLookup_(key, type) {
   try { rec = JSON.parse(raw); } catch (e) { return null; }
   if (rec.t !== type) fail_('requestId "' + key + '" 는 다른 유형(' + rec.t + ')으로 이미 사용되었습니다.');
   var isGroup = type.indexOf('WDL_MULTI') === 0;
+  if (type === 'WDL_MULTI' && rec.n) {   // 완전 저장 여부 판별: 기록된 조합 수와 시트의 행 수가 같아야 '이미 처리됨'
+    var have = readRows_(TABLES.WDL).filter(function (r) { return r.groupId === rec.id; }).length;
+    if (have === 0) return null;
+    if (have !== rec.n) fail_('이전 요청의 저장 상태가 불완전합니다 (기록 ' + rec.n + '행 / 시트 ' + have + '행). 확인이 필요합니다.');
+    return rec;
+  }
   var exists = readRows_(richTable_(type)).some(function (r) { return isGroup ? r.groupId === rec.id : r.id === rec.id; });
   return exists ? rec : null;
 }
 
-function richRemember_(key, type, id) {
+function richRemember_(key, type, id, count) {
   var props = PropertiesService.getScriptProperties();
-  props.setProperty(RICH.REQ_PREFIX + key, JSON.stringify({ t: type, id: id, at: Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss') }));
+  props.setProperty(RICH.REQ_PREFIX + key, JSON.stringify({ t: type, id: id, n: count || 0, at: Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss') }));
   var all = props.getProperties();
   var keys = Object.keys(all).filter(function (k) { return k.indexOf(RICH.REQ_PREFIX) === 0; });
   if (keys.length > RICH.MAX_KEYS) {
@@ -1075,7 +1145,7 @@ function richSaveOne_(pick, key) {
     if (alias) { pick = Object.assign({}, pick); pick.sport = alias; }   // 예: 혼합 → 기타
   }
   var res = type === 'BET' ? saveBet_(pick) : type === 'WDL_MULTI' ? saveWdlMulti_(pick) : saveWdl_(pick);   // buyStatus='미확인' 으로 저장됨
-  richRemember_(key, type, res.id);
+  richRemember_(key, type, res.id, type === 'WDL_MULTI' ? res.comboCount : 0);   // 전체 저장이 끝난 뒤에만 성공 기록
   var out = { requestId: key, type: type, id: res.id, duplicate: false, message: res.message };
   if (type === 'WDL_MULTI') { out.groupId = res.groupId; out.comboCount = res.comboCount; out.total = res.total; }
   return out;
@@ -1337,6 +1407,7 @@ function inboxWrite_(sh, rowNum, c) {
   rng.setNumberFormat('@');
   rng.setValues([[String(c.status), String(c.processedAt || ''), String(c.resultId || ''), String(c.resultType || ''),
     String(c.error || '').slice(0, 500)]]);
+  SpreadsheetApp.flush();   // Inbox 상태 기록은 즉시 확정(앞선 쓰기 실패에 휩쓸려 버려지지 않게)
 }
 
 /** 처리 시작/생성 시각 기준 경과 분. 시각을 알 수 없으면 오래된 것으로 본다. */
@@ -1394,7 +1465,11 @@ function processRichInbox_() {
         else fail_('action 은 SAVE 또는 RESULT 여야 합니다.');
       } catch (e) {
         out.error++;
-        try { inboxWrite_(sh, rowNum, { status: 'ERROR', processedAt: nowKstStr_(), error: richErr_(e) }); } catch (e2) { out.writeFailed++; }
+        var errState = { status: 'ERROR', processedAt: nowKstStr_(), error: richErr_(e) };
+        try { inboxWrite_(sh, rowNum, errState); }
+        catch (e2) {   // 앞선 실패가 쓰기 큐를 망가뜨렸을 수 있으므로 한 번 더 시도 — PROCESSING 으로 방치하지 않는다
+          try { inboxWrite_(sh, rowNum, errState); } catch (e3) { out.writeFailed++; }
+        }
         continue;
       }
       // 저장 성공(또는 이미 저장된 requestId). DONE 기록이 실패하면 PROCESSING 으로 남고, 10분 후 재처리 시 duplicate 로 복구된다.
@@ -1409,9 +1484,90 @@ function processRichInbox_() {
 }
 
 /**
+ * 배포 직후 1회 실환경 셀프테스트(선택): 배포 스크립트가 `--selftest` 로 만든 Rev.gs 에 CODE_SELFTEST = true 가 있을 때만 동작.
+ * 실제 운영과 같은 경로(RICH_INBOX 행 추가 → processRichInbox_ → WDL_MULTI 저장)로 테스트 회차 `SELFTEST-<rev>` 를 8조합 저장하고
+ * 행 수/30열 완전 기록/groupId/조합순번/PROCESSING 정체 없음을 확인, 묶음 '안 샀다'까지 확인한 뒤
+ * 테스트 행(WDL_LOG, RICH_INBOX)과 멱등 기록을 전부 지운다. 결과는 한 줄 문자열로 돌려준다(점검 행에 기록).
+ */
+function selfTest_(rev) {
+  var props = PropertiesService.getScriptProperties();
+  var go = withLock_(function () {
+    if (props.getProperty('SELFTEST_REV') === rev) return false;
+    props.setProperty('SELFTEST_REV', rev);
+    return true;
+  });
+  if (!go) return '';
+  var tag = 'SELFTEST-' + rev, reqId = 'selftest-' + rev + '-wdl-multi', problems = [], info = {};
+  var inbox = getSS_().getSheetByName(INBOX.name);
+  if (!inbox) return 'SELFTEST 생략: RICH_INBOX 없음';
+  try {
+    var sel = [['승'], ['승', '무'], ['패'], ['승'], ['승'], ['승'], ['승'], ['무', '패'], ['승', '무'], ['패'], ['승'], ['패'], ['패'], ['승']];
+    withLock_(function () {
+      var r = inbox.getLastRow() + 1, now = nowKstStr_();
+      var rng = inbox.getRange(r, 1, 1, INBOX.headers.length);
+      rng.setNumberFormat('@');
+      rng.setValues([[reqId, now, JSON.stringify({ requestId: reqId, type: 'WDL_MULTI', round: tag, date: todayStr_(), selections: sel, stakePerCombo: 1000, memo: 'SELFTEST 자동 삭제' }),
+        'PENDING', '', '', '', '']]);
+      SpreadsheetApp.flush();
+    });
+    processRichInbox_();   // 실제 처리 경로(락 포함)
+    withLock_(function () {
+      memoClear_();
+      var vals = inbox.getLastRow() < 2 ? [] : inbox.getRange(2, 1, inbox.getLastRow() - 1, INBOX.headers.length).getValues();
+      var row = vals.filter(function (v) { return String(v[0]) === reqId; })[0];
+      if (!row) { problems.push('Inbox 행 없음'); return; }
+      if (String(row[3]) !== 'DONE' || String(row[6]) !== 'WDL_MULTI') problems.push('Inbox 상태=' + row[3] + '/' + row[6] + ' ' + String(row[7]).slice(0, 120));
+      var rows = readRows_(TABLES.WDL).filter(function (r) { return r.round === tag; });
+      info.rows = rows.length;
+      if (rows.length !== 8) problems.push('WDL 행 ' + rows.length + '개(기대 8)');
+      var gids = {}; rows.forEach(function (r) { gids[r.groupId] = true; });
+      if (Object.keys(gids).length !== 1 || String(row[5]) !== rows[0].groupId) problems.push('groupId 불일치');
+      var nos = rows.map(function (r) { return r.comboNo; }).join();
+      if (nos !== '1,2,3,4,5,6,7,8') problems.push('조합순번=' + nos);
+      var sh = getSheet_(TABLES.WDL.name), keys = TABLES.WDL.cols.map(function (c) { return c[0]; });
+      var raw = rows.length ? sh.getRange(rows[0]._row, 1, rows.length, TABLES.WDL.cols.length).getValues() : [];
+      var required = keys.filter(function (k) { return ['hits', 'prize', 'profit', 'buyStake', 'buyAt'].indexOf(k) < 0 && k !== 'memo'; });
+      raw.forEach(function (rv, i) {
+        if (rv.length !== 30) problems.push('열 개수 ' + rv.length);
+        required.forEach(function (k) { if (rv[keys.indexOf(k)] === '' || rv[keys.indexOf(k)] == null) problems.push((i + 1) + '번째 행 ' + k + ' 비어 있음'); });
+      });
+      if (rows.some(function (r) { return r.stake !== 1000 || r.buyStatus !== '미확인'; })) problems.push('stake/buyStatus 불일치');
+      var distinct = {}; rows.forEach(function (r) { var g = ''; for (var i = 1; i <= 14; i++) g += r['g' + i]; distinct[g] = true; });
+      if (Object.keys(distinct).length !== 8) problems.push('서로 다른 조합 ' + Object.keys(distinct).length + '개');
+      if (!problems.length) {   // 묶음 '안 샀다'(예산 영향 없음) — 대량 갱신 경로 확인
+        purchaseWdlGroup_({ id: rows[0].groupId, buy: false });
+        var after = readRows_(TABLES.WDL).filter(function (r) { return r.round === tag; });
+        if (after.some(function (r) { return r.buyStatus !== '미구매' || r.buyAt === ''; })) problems.push('묶음 미구매 처리 불일치');
+      }
+    });
+  } catch (e) {
+    problems.push('예외: ' + richErr_(e).slice(0, 160));
+  } finally {
+    try {
+      withLock_(function () {   // 정리: 테스트 행 전부 제거 + 멱등 기록 삭제
+        var sh = getSheet_(TABLES.WDL.name);
+        var last = sh.getLastRow();
+        if (last >= 2) {
+          var col = sh.getRange(2, 2, last - 1, 1).getValues();
+          col.forEach(function (v, i) { if (String(v[0]) === tag) sh.getRange(i + 2, 1, 1, sh.getMaxColumns()).clearContent(); });
+        }
+        var il = inbox.getLastRow();
+        if (il >= 2) {
+          inbox.getRange(2, 1, il - 1, 1).getValues().forEach(function (v, i) { if (String(v[0]) === reqId) inbox.getRange(i + 2, 1, 1, inbox.getMaxColumns()).clearContent(); });
+        }
+        SpreadsheetApp.flush();
+        props.deleteProperty(RICH.REQ_PREFIX + reqId);
+        memoClear_();
+      });
+    } catch (e2) { problems.push('정리 실패: ' + richErr_(e2).slice(0, 120)); }
+  }
+  return problems.length ? 'SELFTEST FAIL: ' + problems.join('; ').slice(0, 300) : 'SELFTEST OK (WDL_MULTI ' + info.rows + '행 저장·검증·미구매·정리 완료)';
+}
+
+/**
  * 배포 직후 1회 자동 점검(시간 트리거가 실행): 배포 스크립트가 만든 Rev.gs 의 CODE_REV 가 이전과 다를 때만 동작한다.
- *  1) WDL_LOG 묶음 열(구매묶음ID/조합순번)을 비파괴로 추가  2) diagnoseSetup() 실행
- *  3) 결과를 RICH_INBOX 감사 행 1줄로 남김(requestId=system-deploy-<rev>, resultType=POST_DEPLOY_CHECK, error 열=점검 메시지)
+ *  1) WDL_LOG 묶음 열(구매묶음ID/조합순번) + 조합구분 드롭다운(조합1~N)을 비파괴로 보강  2) (선택) 실환경 셀프테스트
+ *  3) diagnoseSetup() 실행  4) 결과를 RICH_INBOX 감사 행 1줄로 남김(requestId=system-deploy-<rev>, resultType=POST_DEPLOY_CHECK, error 열=점검 메시지)
  * CODE_REV 가 없으면(수동 붙여넣기 등) 아무것도 하지 않는다.
  */
 function postDeployCheck_() {
@@ -1419,20 +1575,25 @@ function postDeployCheck_() {
   if (!rev) return null;
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('MAINT_REV') === rev) return null;
+  var steps = [];
+  withLock_(function () {
+    try { steps.push(setupWdlGroupColumns()); } catch (e) { steps.push('setupWdlGroupColumns 실패: ' + richErr_(e)); }
+  });
+  var selftest = (typeof CODE_SELFTEST !== 'undefined' && CODE_SELFTEST) ? selfTest_(rev) : '';
   return withLock_(function () {
     if (props.getProperty('MAINT_REV') === rev) return null;
-    var steps = [];
-    try { steps.push(setupWdlGroupColumns()); } catch (e) { steps.push('setupWdlGroupColumns 실패: ' + richErr_(e)); }
     var diag = diagnoseSetup();
     var inbox = getSS_().getSheetByName(INBOX.name);
     if (inbox) {
       var now = nowKstStr_(), rng = inbox.getRange(inbox.getLastRow() + 1, 1, 1, INBOX.headers.length);
       rng.setNumberFormat('@');
-      rng.setValues([['system-deploy-' + rev, now, JSON.stringify({ system: 'post-deploy-check', rev: rev, steps: steps }), 'DONE', now, rev, 'POST_DEPLOY_CHECK', String(diag).slice(0, 500)]]);
+      rng.setValues([['system-deploy-' + rev, now, JSON.stringify({ system: 'post-deploy-check', rev: rev, steps: steps }), 'DONE', now, rev, 'POST_DEPLOY_CHECK',
+        String(selftest ? diag + ' | ' + selftest : diag).slice(0, 500)]]);
+      SpreadsheetApp.flush();
     }
     props.setProperty('MAINT_REV', rev);
     memoClear_();
-    return diag;
+    return selftest ? diag + ' | ' + selftest : diag;
   });
 }
 

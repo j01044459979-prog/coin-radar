@@ -8,24 +8,49 @@ const assert = require('assert');
 const CODE = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 
 /* ---------- Apps Script 목 ---------- */
+const colName = n => { let s = ''; while (n) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s; };
+// 실제 Google Sheets 처럼 쓰기는 큐에 쌓이고(읽기/flush/실행 종료 시 반영), 거절형 데이터 검증을 위반하는 셀에서
+// 그 앞 셀까지만 쓰고 예외를 던진 뒤 큐의 나머지 쓰기를 버린다(운영에서 WDL_MULTI 가 A:C 만 남기고 PROCESSING 으로 멈춘 현상 재현).
 function makeSheet(name) {
   const grid = []; // grid[r][c], 0-based
+  const q = [];
+  const rules = []; // {r0,r1,c0,c1,list,allowInvalid}
+  const ruleAt = (row, col) => rules.slice().reverse().find(x => row >= x.r0 && row <= x.r1 && col >= x.c0 && col <= x.c1);
+  const cell = (row, col, x) => {
+    const rule = ruleAt(row, col);
+    if (rule && !rule.allowInvalid && x !== '' && x != null && !rule.list.includes(x)) {
+      throw new Error(`The data that you entered in cell ${colName(col)}${row} violates the data validation rules set on this cell.`);
+    }
+    (grid[row - 1] = grid[row - 1] || [])[col - 1] = x;
+  };
+  const flushQ = () => { while (q.length) { const op = q.shift(); try { op(); } catch (e) { q.length = 0; throw e; } } };
   const sh = {
-    name, grid,
+    name, grid, _q: q, _rules: rules, flushQ,
     getName: () => name,
-    getLastRow() { let l = 0; grid.forEach((r, i) => { if (r && r.some(v => v !== '' && v !== undefined)) l = i + 1; }); return l; },
+    getLastRow() { flushQ(); let l = 0; grid.forEach((r, i) => { if (r && r.some(v => v !== '' && v !== undefined)) l = i + 1; }); return l; },
     getMaxRows: () => 1000,
     getMaxColumns() { return sh._maxCols || 60; },
     insertColumnsAfter(pos, n) { sh._maxCols = (sh._maxCols || 60) + n; return sh; },
-    getLastColumn() { return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
+    getLastColumn() { flushQ(); return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
-        getFormulas: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => { const v = grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j]; return (typeof v === 'string' && v[0] === '=') ? v : ''; })),
-        getValue: () => (grid[r - 1] && grid[r - 1][c - 1] !== undefined) ? grid[r - 1][c - 1] : '',
-        getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')),
-        setValues(v) { v.forEach((row, i) => row.forEach((x, j) => { (grid[r - 1 + i] = grid[r - 1 + i] || [])[c - 1 + j] = x; })); return rng; },
+        getFormulas: () => { flushQ(); return Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => { const v = grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j]; return (typeof v === 'string' && v[0] === '=') ? v : ''; })); },
+        getValue: () => { flushQ(); return (grid[r - 1] && grid[r - 1][c - 1] !== undefined) ? grid[r - 1][c - 1] : ''; },
+        getValues: () => { flushQ(); return Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')); },
+        setValues(v) { q.push(() => { v.forEach((row, i) => row.forEach((x, j) => cell(r + i, c + j, x))); }); return prx; },
+        clearContent() { q.push(() => { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) if (grid[r - 1 + i]) grid[r - 1 + i][c - 1 + j] = undefined; }); return prx; },
+        setDataValidation(rule) {
+          if (!rule || !rule.list) return prx;
+          for (let k = rules.length - 1; k >= 0; k--) if (rules[k].c0 >= c && rules[k].c1 <= c + nc - 1 && rules[k].r0 >= r && rules[k].r1 <= r + nr - 1) rules.splice(k, 1);
+          rules.push({ r0: r, r1: r + nr - 1, c0: c, c1: c + nc - 1, list: rule.list.slice(), allowInvalid: rule.allowInvalid });
+          return prx;
+        },
+        getDataValidation() {
+          flushQ(); const x = ruleAt(r, c); if (!x) return null;
+          return { getCriteriaType: () => 'VALUE_IN_LIST', getCriteriaValues: () => [x.list.slice(), true], getAllowInvalid: () => x.allowInvalid };
+        },
       };
-      rng.setValue = v => { (grid[r - 1] = grid[r - 1] || [])[c - 1] = v; return prx; };
+      rng.setValue = v => { q.push(() => cell(r, c, v)); return prx; };
       const prx = new Proxy(rng, { get: (t, k) => k in t ? t[k] : (...a) => { (sh.calls = sh.calls || []).push([String(k), c, a[0]]); return prx; } });
       return prx;
     },
@@ -52,7 +77,9 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   const RealDate = Date;
   const ctx = {
     console, Date: class extends RealDate { constructor(...a) { a.length ? super(...a) : super(now.getTime()); } static now() { return now.getTime(); } },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss, newDataValidation: () => { const o = new Proxy({}, { get: (_, k) => k === 'build' ? () => ({ built: true }) : () => o }); return o; } },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss, newDataValidation: () => { const st = { list: null, allowInvalid: true }; const o = { requireValueInList: (l) => { st.list = l.slice(); return o; }, setAllowInvalid: (b) => { st.allowInvalid = b; return o; }, build: () => Object.assign({ built: true }, st) }; return o; },
+      DataValidationCriteria: { VALUE_IN_LIST: 'VALUE_IN_LIST' },
+      flush: () => { sheets.forEach(s => s.flushQ()); } },
     ScriptApp: {
       EventType: { CLOCK: 'CLOCK' },
       getProjectTriggers: () => triggers.slice(),
@@ -77,7 +104,12 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
-  const get = n => vm.runInContext(n, ctx);
+  const flushAll = () => sheets.forEach(s => s.flushQ());
+  const get = n => {
+    const f = vm.runInContext(n, ctx);
+    if (typeof f !== 'function') return f;
+    return (...a) => { let r; try { r = f(...a); } catch (e) { try { flushAll(); } catch (e2) { /* 원래 예외 우선 */ } throw e; } flushAll(); return r; };
+  };
   return { ctx, ss, sheets, get, props, triggers, sheet: n => ss.getSheetByName(n), setNow: d => { now = d; } };
 }
 
@@ -99,7 +131,19 @@ function test(name, fn) {
   try { fn(); pass++; results.push('PASS  ' + name); }
   catch (e) { results.push('FAIL  ' + name + '\n      ' + e.message); }
 }
-const setup = () => { const env = makeContext(); env.get('setup')(); return env; };
+// 사용자의 실제 시트와 같은 '거절형' 드롭다운 검증을 설치한다(운영 버그: WDL_LOG 조합구분 D열은 주력/보조1/보조2 만 허용했다).
+const realValidations = env => {
+  const rule = (list) => env.ctx.SpreadsheetApp.newDataValidation().requireValueInList(list, true).setAllowInvalid(false).build();
+  const put = (name, col, rows, list) => env.sheet(name).getRange(2, col, rows, 1).setDataValidation(rule(list));
+  put('BET_LOG', 3, 999, ['축구', '야구', '농구', '배구', '기타']); put('BET_LOG', 10, 999, ['대기', '적중', '미적중', '적특', '취소']);
+  put('BET_LOG', 14, 999, ['메인', '대박', '기타']); put('BET_LOG', 17, 999, ['미확인', '구매', '미구매']);
+  put('WDL_LOG', 4, 998, ['주력', '보조1', '보조2']);
+  env.sheet('WDL_LOG').getRange(2, 5, 998, 14).setDataValidation(rule(['승', '무', '패']));
+  put('WDL_LOG', 21, 998, ['대기', '1등', '2등', '3등', '4등', '미당첨']); put('WDL_LOG', 26, 998, ['미확인', '구매', '미구매']);
+  return env;
+};
+const setupLegacyRules = () => { const env = makeContext(); env.get('setup')(); realValidations(env); return env; };   // 배포 전 사용자 시트(드롭다운이 주력/보조1/보조2 만 허용)
+const setup = () => { const env = setupLegacyRules(); env.get('setupWdlGroupColumns')(); return env; };                // 배포 후 점검(setupWdlGroupColumns)이 끝난 상태
 
 /* ---------- 구조 ---------- */
 test('setup: 시트 4개 + 헤더 + SETTINGS 기본값', () => {
@@ -757,7 +801,7 @@ test('50. setupRichBridge: RICH_INBOX 생성(헤더/숨김/텍스트 서식/상�
   assert.ok(sh); assert.deepStrictEqual([...sh.grid[0]], INBOX_HEAD);
   assert.strictEqual(sh._hidden, true);
   assert.ok(sh.calls.some(c => c[0] === 'setNumberFormat' && c[2] === '@'));
-  assert.ok(sh.calls.some(c => c[0] === 'setDataValidation'));
+  assert.ok(sh._rules.some(x => x.c0 === 4 && x.list.join() === 'PENDING,PROCESSING,DONE,ERROR' && x.allowInvalid === false));   // 상태 검증 규칙
   assert.strictEqual(JSON.stringify([env.sheet('BET_LOG').grid[0], env.sheet('WDL_LOG').grid[0], env.sheet('SETTINGS').grid]), before);
   assert.strictEqual(env.triggers.length, 1);
   assert.deepStrictEqual([env.triggers[0].fn, env.triggers[0].every], ['processRichInbox', 1]);
@@ -1395,6 +1439,110 @@ test('103. 배포 후 자동 점검: CODE_REV 가 바뀐 첫 트리거 실행에
   env.sheet('SETTINGS').grid[1][0] = '월예산'; env.ctx.CODE_REV = 'bad0001'; env.get('processRichInbox')();
   assert.match(env.sheet('RICH_INBOX').grid.find(r => r[0] === 'system-deploy-bad0001')[7], /문제 1건/);
   assert.ok(n0 > 1);
+});
+
+/* ---------- 실환경 사고 재현: WDL_MULTI 가 거절형 드롭다운에 막혀 A:C 만 쓰고 PROCESSING 으로 멈춤 ---------- */
+const cnt = (env, name, method) => { const sh = env.sheet(name), g = sh.getRange; const c = { n: 0, rows: [] }; sh.getRange = (r, cc, nr, nc) => { const rg = g(r, cc, nr, nc); return new Proxy(rg, { get: (tt, k) => k === method ? (...a) => { c.n++; c.rows.push(nr); return tt[k](...a); } : tt[k] }); }; c.restore = () => { sh.getRange = g; }; return c; };
+test('104. 사고 재현: 드롭다운이 조합N 을 거절하는 시트 → 쓰기 전에 차단(부분행 0), Inbox 는 ERROR(PROCESSING 정체 없음), setupWdlGroupColumns 후 정상', () => {
+  const env = setupLegacyRules(); env.get('setupRichBridge')(); env.setNow(kst('2026-10-05'));
+  assert.deepStrictEqual([...env.sheet('WDL_LOG')._rules.find(x => x.c0 === 4).list], ['주력', '보조1', '보조2']);
+  const i = inboxAdd(env, 'rich-wdl-20261005-58-main', mp({ requestId: 'rich-wdl-20261005-58-main' }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.error, out.done], [1, 0]);
+  const r = inboxRow(env, i);
+  assert.deepStrictEqual([r[3], r[5]], ['ERROR', '']); assert.match(r[7], /드롭다운 규칙에 조합1/);
+  assert.strictEqual(env.sheet('WDL_LOG').getLastRow(), 1);                                           // 부분 생성 행 없음
+  assert.ok(env.sheet('RICH_INBOX').grid.every(x => x[3] !== 'PROCESSING'));
+  assert.strictEqual(env.props['RICHREQ_rich-wdl-20261005-58-main'], undefined);                      // 실패는 멱등 기록을 남기지 않음
+  const msg = env.get('setupWdlGroupColumns')();
+  assert.match(msg, /드롭다운에 조합1~10 추가/);
+  const rule = env.sheet('WDL_LOG')._rules.find(x => x.c0 === 4);
+  assert.deepStrictEqual([...rule.list], ['주력', '보조1', '보조2', ...Array.from({ length: 10 }, (_, k) => '조합' + (k + 1))]);   // 기존 값 유지 + 추가
+  assert.strictEqual(rule.allowInvalid, false);
+  assert.doesNotMatch(env.get('setupWdlGroupColumns')(), /추가/);                                      // 재실행은 변경 없음
+  const j = inboxAdd(env, 'rich-wdl-20261005-58-v2', mp({ requestId: 'rich-wdl-20261005-58-v2' }));
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, j)[3], inboxRow(env, j)[6], wdlRows(env).length], ['DONE', 'WDL_MULTI', 8]);
+  assert.strictEqual(inboxRow(env, i)[3], 'ERROR');                                                    // 이전 ERROR 감사 행은 그대로
+});
+test('105. 쓰기 도중 거절(검증 위반)돼도 이번 요청의 행은 모두 rollback, Inbox ERROR, 같은 requestId 는 원인 해소 후 재처리 가능', () => {
+  const env = bridgeEnv(); env.setNow(kst('2026-10-05'));
+  env.sheet('WDL_LOG').getRange(2, 24, 998, 1).setDataValidation(env.ctx.SpreadsheetApp.newDataValidation().requireValueInList(['허용메모'], true).setAllowInvalid(false).build());   // 메모(X열) 위반 유도
+  const i = inboxAdd(env, 'rich-wdl-rollback-0001', mp({ requestId: 'rich-wdl-rollback-0001' }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.error, out.done], [1, 0]);
+  const r = inboxRow(env, i);
+  assert.strictEqual(r[3], 'ERROR'); assert.match(r[7], /8행 기록을 모두 되돌렸습니다/); assert.match(r[7], /X2/);
+  assert.strictEqual(wdlRows(env).filter(x => x.some(v => v !== '' && v != null)).length, 0);              // A:W 까지 써졌던 첫 행도 정리됨
+  assert.strictEqual(env.sheet('WDL_LOG').getLastRow(), 1);
+  assert.ok(env.sheet('RICH_INBOX').grid.every(x => x[3] !== 'PROCESSING'));
+  assert.strictEqual(env.props['RICHREQ_rich-wdl-rollback-0001'], undefined);
+  // 장부의 다른 데이터는 그대로: 기존 행이 있는 상태에서도 그 행은 건드리지 않음
+  const single = env.get('apiSaveRichPick')(rw({ round: '57', memo: '허용메모' })); assert.ok(single.ok, single.error);
+  const filled = () => wdlRows(env).filter(x => x.some(v => v !== '' && v != null));
+  const before = JSON.stringify(filled());
+  const k = inboxAdd(env, 'rich-wdl-rollback-0002', mp({ requestId: 'rich-wdl-rollback-0002' })); runInbox(env);
+  assert.strictEqual(inboxRow(env, k)[3], 'ERROR'); assert.strictEqual(JSON.stringify(filled()), before);
+  // 원인 해소 후 같은 requestId 로 재시도 → 정상 8행
+  env.sheet('WDL_LOG')._rules.pop();
+  const again = inboxAdd(env, 'rich-wdl-rollback-0002', mp({ requestId: 'rich-wdl-rollback-0002' })); runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, again)[3], filled().length], ['DONE', 9]);
+});
+test('106. 열 개수 방어: 30열이 아닌 행은 쓰기 전에 차단', () => {
+  const env = bridgeEnv(); const orig = env.ctx.rowToArray_;
+  env.ctx.rowToArray_ = (tbl, o) => { const a = orig(tbl, o); return tbl.name === 'WDL_LOG' ? a.slice(0, 29) : a; };
+  const r = env.get('apiSaveRichPick')(mp());
+  env.ctx.rowToArray_ = orig;
+  assert.strictEqual(r.ok, false); assert.match(r.error, /열 개수 불일치 \(29 ≠ 30\)/);
+  assert.strictEqual(env.sheet('WDL_LOG').getLastRow(), 1);
+  assert.ok(env.get('apiSaveRichPick')(mp()).ok);
+  assert.ok(wdlRows(env).every(x => x.length === 30));
+});
+test('107. ID 는 쓰기 전에 순수 생성(시트 무변경), 8행을 단일 setValues 한 번으로 기록, 서식/검증 호출 수 최소', () => {
+  const env = bridgeEnv(); const sh = env.sheet('WDL_LOG');
+  const snap = JSON.stringify(sh.grid); const callsBefore = (sh.calls || []).length;
+  const acc = []; const ids = [1, 2, 3].map(() => { const id = env.get('newId_')(env.ctx.TABLES.WDL, acc); acc.push({ id }); return id; });
+  assert.strictEqual(JSON.stringify(sh.grid), snap); assert.strictEqual((sh.calls || []).length, callsBefore);   // newId_ 는 부작용 없음
+  assert.strictEqual(new Set(ids).size, 3);
+  const sv = cnt(env, 'WDL_LOG', 'setValues'), gv = cnt(env, 'WDL_LOG', 'getValues');
+  const r = env.get('apiSaveRichPick')(mp()); sv.restore(); gv.restore();
+  assert.ok(r.ok, r.error);
+  assert.strictEqual(sv.n, 1); assert.deepStrictEqual(sv.rows, [8]);                                       // setValues 1회, 8행 × 30열
+  assert.strictEqual(wdlRows(env).length, 8); assert.ok(wdlRows(env).every(x => x.length === 30 && x.slice(0, 4).every(v => v !== '')));
+  assert.strictEqual(new Set(wdlRows(env).map(x => x[0])).size, 8);
+});
+test('108. 멱등 기록은 8행 전체 저장 후에만: 행 수가 어긋난 이전 요청은 조용히 성공 처리하지 않고 오류', () => {
+  const env = bridgeEnv(); const r = env.get('apiSaveRichPick')(mp({ requestId: 'rich-wdl-partial-0001' })); assert.ok(r.ok, r.error);
+  const rec = JSON.parse(env.props['RICHREQ_rich-wdl-partial-0001']); assert.deepStrictEqual([rec.t, rec.n, rec.id], ['WDL_MULTI', 8, r.groupId]);
+  env.sheet('WDL_LOG').grid.splice(6, 3);                                                                  // 사고로 3행이 사라진 상황
+  const again = env.get('apiSaveRichPick')(mp({ requestId: 'rich-wdl-partial-0001' }));
+  assert.strictEqual(again.ok, false); assert.match(again.error, /불완전합니다 \(기록 8행 \/ 시트 5행\)/);
+  env.sheet('WDL_LOG').grid.splice(1, 5);                                                                  // 전부 정리하면 새 요청으로 취급
+  assert.ok(env.get('apiSaveRichPick')(mp({ requestId: 'rich-wdl-partial-0001' })).ok);
+  assert.strictEqual(wdlRows(env).length, 8);
+});
+test('109. 배포 후 셀프테스트: 8행 저장·검증·미구매·정리 후 흔적 없음(WDL 0행, Inbox 테스트 행/속성 삭제), 점검 행에 SELFTEST OK', () => {
+  const env = bridgeEnv(); env.ctx.CODE_REV = 'st00001'; env.ctx.CODE_SELFTEST = true;
+  const wdl0 = env.sheet('WDL_LOG').getLastRow();
+  env.get('processRichInbox')();
+  const rows = env.sheet('RICH_INBOX').grid;
+  const sys = rows.find(r => r[0] === 'system-deploy-st00001'); assert.ok(sys);
+  assert.match(sys[7], /환경 정상 \/ Rich Bridge 정상 \| SELFTEST OK \(WDL_MULTI 8행/);
+  assert.strictEqual(rows.filter(r => String(r[0]).startsWith('selftest-')).filter(r => r[0] !== '').length, 0);
+  assert.ok(!rows.some(r => r[3] === 'PROCESSING'));
+  assert.strictEqual(wdlRows(env).filter(r => r[0] !== undefined && r[0] !== '').length, 0); void wdl0;
+  assert.ok(!Object.keys(env.props).some(k => k.startsWith('RICHREQ_selftest-')));
+  env.get('processRichInbox')();                                                     // 같은 리비전은 반복 안 함
+  assert.strictEqual(env.sheet('RICH_INBOX').grid.filter(r => r[0] === 'system-deploy-st00001').length, 1);
+});
+test('110. 셀프테스트 실패(구형 드롭다운 + 보강 불가): FAIL 기록, 부분행·PROCESSING 없음, 테스트 데이터 정리', () => {
+  const env = setupLegacyRules(); env.setNow(kst('2026-10-05')); env.get('setupRichBridge')();
+  env.ctx.setupWdlGroupColumns = () => '보강 생략'; env.ctx.CODE_REV = 'st00002'; env.ctx.CODE_SELFTEST = true;
+  env.get('processRichInbox')();
+  const rows = env.sheet('RICH_INBOX').grid, sys = rows.find(r => r[0] === 'system-deploy-st00002');
+  assert.match(sys[7], /SELFTEST FAIL/); assert.ok(!rows.some(r => r[3] === 'PROCESSING'));
+  assert.strictEqual(wdlRows(env).filter(r => r[0] !== undefined && r[0] !== '').length, 0);
+  assert.ok(!rows.some(r => String(r[0]).startsWith('selftest-') ));
 });
 
 console.log(results.join('\n'));
