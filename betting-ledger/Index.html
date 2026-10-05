@@ -72,8 +72,6 @@
 
 <div class="nav">
   <button data-tab="buy" class="on wide" id="navBuy">구매 확인</button>
-  <button data-tab="bet">일반 토토 입력</button>
-  <button data-tab="wdl">승무패 입력</button>
   <button data-tab="res">결과 처리</button>
   <button data-tab="mon">월간 성적</button>
 </div>
@@ -82,46 +80,6 @@
 <section id="tab-buy">
   <div class="card"><h2 style="margin-top:0">리치 추천픽 (구매 미확인)</h2><div id="uBody" class="sub">불러오는 중…</div></div>
   <div class="msg" id="uMsg"></div>
-</section>
-
-<!-- 일반 토토 -->
-<section id="tab-bet" class="card hidden">
-  <div class="two">
-    <div><label>베팅일</label><input type="date" id="bDate"></div>
-    <div><label>종목</label><select id="bSport"></select></div>
-  </div>
-  <label>리그</label><input id="bLeague" placeholder="예: K리그1" autocomplete="off">
-  <label>경기/조합명</label><input id="bName" autocomplete="off">
-  <label>픽 내용</label><input id="bPick" autocomplete="off">
-  <div class="two">
-    <div><label>폴더수</label><input id="bFolders" type="number" inputmode="numeric" min="1" value="1"></div>
-    <div><label>총배당</label><input id="bOdds" type="number" inputmode="decimal" step="0.01" min="1"></div>
-  </div>
-  <div class="two">
-    <div><label>베팅금액(원)</label><input id="bStake" type="number" inputmode="numeric" min="1"></div>
-    <div><label>리치등급</label><select id="bGrade"></select></div>
-  </div>
-  <div class="sub" id="bHint" style="margin-top:6px"></div>
-  <label>메모</label><input id="bMemo" autocomplete="off">
-  <button class="big" id="bSave">저장</button>
-  <div class="msg" id="bMsg"></div>
-</section>
-
-<!-- 승무패 -->
-<section id="tab-wdl" class="card hidden">
-  <div class="two">
-    <div><label>회차</label><input id="wRound" inputmode="numeric" autocomplete="off"></div>
-    <div><label>구매일</label><input type="date" id="wDate"></div>
-  </div>
-  <label>조합구분</label><select id="wCombo"></select>
-  <div class="games" id="wGames"></div>
-  <div class="two">
-    <div><label>베팅금액(원)</label><input id="wStake" type="number" inputmode="numeric" min="1"></div>
-    <div><label>메모</label><input id="wMemo" autocomplete="off"></div>
-  </div>
-  <div class="sub" id="wHint" style="margin-top:6px"></div>
-  <button class="big" id="wSave">저장</button>
-  <div class="msg" id="wMsg"></div>
 </section>
 
 <!-- 결과 처리 -->
@@ -138,7 +96,7 @@
 </section>
 
 <script>
-var S = { today:'', month:'', settings:null, enums:null, busy:{}, games:[] };
+var S = { today:'', month:'', settings:null, busy:{} };
 var $ = function (id) { return document.getElementById(id); };
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -174,7 +132,6 @@ function guarded(btn, key, msgId, fn, payload, onOk) {
 
 function applySummary(res) {
   if (res.summary) renderHead(res.summary);
-  if (res.todayBetUsed !== undefined) { S.todayBetUsed = res.todayBetUsed; renderHints(); }
 }
 
 function renderHead(s) {
@@ -190,56 +147,14 @@ function renderHead(s) {
   $('hPend').textContent = '미확정 ' + won(s.pendingStake) + ' · 확정 베팅액 ' + won(s.settledStake);
 }
 
-function renderHints() {
-  if (!S.settings) return;
-  $('bHint').textContent = '추천 저장 후 구매 확인에서 처리 · 오늘 실구매 ' + won(S.todayBetUsed || 0) + ' / ' + won(S.settings.daily);
-  $('wHint').textContent = '추천 저장 후 구매 확인에서 처리 · 회차당 실구매 최대 ' + won(S.settings.wdlRound);
-}
-
-function fillSelect(el, list) { el.innerHTML = list.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join(''); }
-
 /* ---------- 탭 ---------- */
 document.querySelectorAll('.nav button').forEach(function (b) {
   b.addEventListener('click', function () {
     document.querySelectorAll('.nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
-    ['buy', 'bet', 'wdl', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
+    ['buy', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
     if (b.dataset.tab === 'buy') loadUnconfirmed();
     if (b.dataset.tab === 'res') loadPending();
     if (b.dataset.tab === 'mon') loadMonthly();
-  });
-});
-
-/* ---------- 일반 토토 ---------- */
-$('bSave').addEventListener('click', function () {
-  var p = { date:$('bDate').value, sport:$('bSport').value, league:$('bLeague').value, name:$('bName').value, pick:$('bPick').value,
-    folders:$('bFolders').value, odds:$('bOdds').value, stake:$('bStake').value, grade:$('bGrade').value, memo:$('bMemo').value };
-  guarded($('bSave'), 'bet', 'bMsg', 'apiSaveBet', p, function () {
-    ['bName', 'bPick', 'bOdds', 'bStake', 'bMemo'].forEach(function (id) { $(id).value = ''; });
-  });
-});
-
-/* ---------- 승무패 ---------- */
-function buildGames() {
-  var h = '';
-  for (var i = 0; i < 14; i++) {
-    h += '<div class="g" data-i="' + i + '"><span>' + (i + 1) + '경기</span>' +
-      ['승', '무', '패'].map(function (v) { return '<button type="button" data-v="' + v + '">' + v + '</button>'; }).join('') + '</div>';
-  }
-  $('wGames').innerHTML = h;
-  S.games = new Array(14).fill('');
-  $('wGames').addEventListener('click', function (e) {
-    var b = e.target.closest('button'); if (!b) return;
-    var i = +b.parentNode.dataset.i;
-    S.games[i] = b.dataset.v;
-    Array.prototype.forEach.call(b.parentNode.querySelectorAll('button'), function (x) { x.classList.toggle('on', x === b); });
-  });
-}
-$('wSave').addEventListener('click', function () {
-  var p = { round:$('wRound').value, date:$('wDate').value, combo:$('wCombo').value, games:S.games.slice(),
-    stake:$('wStake').value, memo:$('wMemo').value };
-  guarded($('wSave'), 'wdl', 'wMsg', 'apiSaveWdl', p, function () {
-    $('wStake').value = ''; $('wMemo').value = '';
-    buildGames();
   });
 });
 
@@ -356,13 +271,11 @@ function loadMonthly() {
 
 /* ---------- 시작 ---------- */
 function init() {
-  buildGames();
   call('apiBootstrap').then(function (res) {
     if (!res.ok) { $('hMonth').textContent = '오류: ' + res.error; return; }
-    S.today = res.today; S.month = res.month; S.settings = res.settings; S.enums = res.enums; S.todayBetUsed = res.todayBetUsed;
-    fillSelect($('bSport'), res.enums.SPORT); fillSelect($('bGrade'), res.enums.GRADE); fillSelect($('wCombo'), res.enums.COMBO);
-    $('bDate').value = res.today; $('wDate').value = res.today; $('mMonth').value = res.month;
-    renderHead(res.summary); renderHints();
+    S.today = res.today; S.month = res.month; S.settings = res.settings;
+    $('mMonth').value = res.month;
+    renderHead(res.summary);
     loadUnconfirmed();
   });
 }

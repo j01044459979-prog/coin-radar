@@ -757,6 +757,128 @@ function apiGetMonthly(month) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 리치 자동저장 진입점 (내부 API 계층)                                */
+/*  - 최종 저장은 기존 saveBet_ / saveWdl_ 에 위임 (검증·미확인 상태 규칙 동일) */
+/*  - 중복 방지: requestId → 저장된 행 ID 를 Script Properties 에 영구 기록   */
+/*  - 인증: Script Property 'RICH_API_TOKEN' 이 설정돼 있으면 payload.token 필수 */
+/*    (값은 코드에 없음. doGet/doPost 로 공개하지 않음 — google.script.run 전용)  */
+/* ------------------------------------------------------------------ */
+
+var RICH = {
+  TOKEN_PROP: 'RICH_API_TOKEN',
+  REQ_PREFIX: 'RICHREQ_',
+  MAX_BATCH: 20,
+  MAX_KEYS: 1000,
+  PRUNE_COUNT: 200
+};
+
+function richAuth_(payload) {
+  var token = PropertiesService.getScriptProperties().getProperty(RICH.TOKEN_PROP);
+  if (token && (!payload || String(payload.token || '') !== token)) fail_('인증에 실패했습니다.');
+}
+
+function richRequestId_(v, label) {
+  var s = String(v == null ? '' : v).trim();
+  if (!/^[A-Za-z0-9._:#-]{8,80}$/.test(s)) fail_(label + ': 8~80자의 영문/숫자/._:#- 만 사용할 수 있습니다.');
+  return s;
+}
+
+function richTable_(type) {
+  if (type === 'BET') return TABLES.BET;
+  if (type === 'WDL') return TABLES.WDL;
+  fail_('type 은 BET 또는 WDL 이어야 합니다.');
+}
+
+/** 이미 처리된 requestId 면 기존 행 ID 반환. 행이 삭제됐다면 처리되지 않은 것으로 본다. */
+function richLookup_(key, type) {
+  var raw = PropertiesService.getScriptProperties().getProperty(RICH.REQ_PREFIX + key);
+  if (!raw) return null;
+  var rec;
+  try { rec = JSON.parse(raw); } catch (e) { return null; }
+  if (rec.t !== type) fail_('requestId "' + key + '" 는 다른 유형(' + rec.t + ')으로 이미 사용되었습니다.');
+  var exists = readRows_(richTable_(type)).some(function (r) { return r.id === rec.id; });
+  return exists ? rec : null;
+}
+
+function richRemember_(key, type, id) {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty(RICH.REQ_PREFIX + key, JSON.stringify({ t: type, id: id, at: Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm:ss') }));
+  var all = props.getProperties();
+  var keys = Object.keys(all).filter(function (k) { return k.indexOf(RICH.REQ_PREFIX) === 0; });
+  if (keys.length > RICH.MAX_KEYS) {
+    keys.sort(function (a, b) {
+      var x = '', y = '';
+      try { x = JSON.parse(all[a]).at; } catch (e) { x = ''; }
+      try { y = JSON.parse(all[b]).at; } catch (e) { y = ''; }
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+    keys.slice(0, RICH.PRUNE_COUNT).forEach(function (k) { props.deleteProperty(k); });
+  }
+}
+
+/** 한 건 저장(락 안에서 호출). 기존 저장 함수에 위임하고 requestId 를 기록한다. */
+function richSaveOne_(pick, key) {
+  var type = String(pick && pick.type != null ? pick.type : '').trim().toUpperCase();
+  richTable_(type);
+  var prior = richLookup_(key, type);
+  if (prior) {
+    return { requestId: key, type: type, id: prior.id, duplicate: true, message: '이미 저장된 요청입니다.' };
+  }
+  var res = type === 'BET' ? saveBet_(pick) : saveWdl_(pick);   // buyStatus='미확인' 으로 저장됨
+  richRemember_(key, type, res.id);
+  return { requestId: key, type: type, id: res.id, duplicate: false, message: res.message };
+}
+
+function richErr_(e) { return String(e && e.message ? e.message : e); }
+
+/** 단건: { requestId, type:'BET'|'WDL', token?, ...saveBet_/saveWdl_ 필드 } */
+function apiSaveRichPick(payload) {
+  try {
+    richAuth_(payload);
+    var key = richRequestId_(payload && payload.requestId, 'requestId');
+    return withLock_(function () {
+      var r = richSaveOne_(payload, key);
+      r.ok = true;
+      return r;
+    });
+  } catch (e) {
+    return { ok: false, error: richErr_(e) };
+  }
+}
+
+/** 여러 건: { requestId, token?, picks:[{type, ...}] } — 건별 성공/실패 반환 */
+function apiSaveRichPicks(payload) {
+  try {
+    richAuth_(payload);
+    var batchId = richRequestId_(payload && payload.requestId, 'requestId');
+    var picks = payload && payload.picks;
+    if (!Array.isArray(picks) || !picks.length) fail_('picks 는 1건 이상의 배열이어야 합니다.');
+    if (picks.length > RICH.MAX_BATCH) fail_('한 번에 최대 ' + RICH.MAX_BATCH + '건까지 저장할 수 있습니다.');
+    return withLock_(function () {
+      var saved = [], failed = [];
+      picks.forEach(function (pick, i) {
+        var key = null;
+        try {
+          key = richRequestId_(pick && pick.requestId != null ? pick.requestId : batchId + '#' + (i + 1), 'requestId');
+          var r = richSaveOne_(pick, key);
+          r.index = i + 1;
+          saved.push(r);
+        } catch (e) {
+          failed.push({ index: i + 1, requestId: key, type: String(pick && pick.type != null ? pick.type : ''), error: richErr_(e) });
+        }
+      });
+      var res = { requestId: batchId, saved: saved, failed: failed,
+        savedCount: saved.length, failedCount: failed.length };
+      res.ok = failed.length === 0 || saved.length > 0;   // 전부 실패한 경우에만 false
+      if (!res.ok) res.error = '저장된 픽이 없습니다.';
+      return res;
+    });
+  } catch (e) {
+    return { ok: false, error: richErr_(e) };
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 진단 (읽기 전용: 시트/데이터/속성을 생성·수정·삭제하지 않음)        */
 /* ------------------------------------------------------------------ */
 

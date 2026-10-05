@@ -46,7 +46,7 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   const ctx = {
     console, Date: class extends RealDate { constructor(...a) { a.length ? super(...a) : super(now.getTime()); } static now() { return now.getTime(); } },
     SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => ss },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = v; } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] || null, setProperty: (k, v) => { props[k] = v; }, getProperties: () => Object.assign({}, props), deleteProperty: k => { delete props[k]; } }) },
     CacheService: { getScriptCache: () => ({ get: k => cache[k] || null, put: (k, v) => { cache[k] = v; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     Utilities: {
@@ -65,7 +65,7 @@ function makeContext(now0 = new Date('2026-10-03T03:00:00Z')) {
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
   const get = n => vm.runInContext(n, ctx);
-  return { ctx, ss, sheets, get, sheet: n => ss.getSheetByName(n), setNow: d => { now = d; } };
+  return { ctx, ss, sheets, get, props, sheet: n => ss.getSheetByName(n), setNow: d => { now = d; } };
 }
 
 /* ---------- 도우미 ---------- */
@@ -598,6 +598,127 @@ test('40. 구매 추천 결과 처리 정상 (실구매 손익/ROI 반영)', () 
   const s = dash(env).summary;
   assert.deepStrictEqual([s.used, s.settledStake, s.totalReturn, s.profit, s.roi], [10000, 10000, 20000, 10000, 100]);
   const after = env.get('apiGetPending')(); assert.deepStrictEqual([after.bets.length, after.wdl.length], [0, 0]);
+});
+
+/* ---------- UI 정리(입력 메뉴 제거) / 리치 자동저장 진입점 ---------- */
+const INDEX_HTML = fs.readFileSync(path.join(__dirname, '..', 'Index.html'), 'utf8');
+const rp = (o = {}) => Object.assign({ requestId: 'rich-' + (++seq) + '-abcdef', type: 'BET', date: '2026-10-05', sport: '축구', league: 'K리그', name: '리치픽' + seq, pick: '홈승', folders: 1, odds: 1.9, stake: 3000, grade: '메인', memo: '' }, o);
+const rw = (o = {}) => Object.assign({ requestId: 'rich-' + (++seq) + '-wdl1234', type: 'WDL', round: 'R' + seq, date: '2026-10-05', combo: '주력', games: GAMES, stake: 5000, memo: '' }, o);
+test('41. UI: 일반 토토 입력/승무패 입력 메뉴 없음, 구매 확인/결과 처리/월간 성적만 노출', () => {
+  const labels = [...INDEX_HTML.matchAll(/<button data-tab="(\w+)"[^>]*>([^<]+)<\/button>/g)].map(m => m[1] + ':' + m[2]);
+  assert.deepStrictEqual(labels, ['buy:구매 확인', 'res:결과 처리', 'mon:월간 성적']);
+  assert.ok(!/일반 토토 입력|승무패 입력|id="tab-bet"|id="tab-wdl"/.test(INDEX_HTML));
+  // 서버 저장 엔진/API 는 그대로 존재
+  assert.ok(/function apiSaveBet\(/.test(CODE) && /function apiSaveWdl\(/.test(CODE) && /function saveBet_\(/.test(CODE) && /function saveWdl_\(/.test(CODE));
+});
+test('42. 리치 BET 단건 저장: 기존 saveBet_ 규칙대로 미확인/대기로 저장', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  const r = env.get('apiSaveRichPick')(rp({ requestId: 'rich-single-0001', stake: 4000 }));
+  assert.ok(r.ok, r.error); assert.strictEqual(r.duplicate, false); assert.strictEqual(r.type, 'BET'); assert.match(r.id, /^B-/);
+  const row = env.sheet('BET_LOG').grid[1];
+  assert.deepStrictEqual([row[0], row[8], row[9], row[10], row[11], row[12], row[16], row[17], row[18]], [r.id, 4000, '대기', '', '', '', '미확인', '', '']);
+  assert.ok(isDate(row[15]) && isDate(row[1]));
+  const s = dash(env).summary; assert.deepStrictEqual([s.used, s.remain], [0, 200000]);   // 구매 전에는 예산 미사용
+});
+test('43. 리치 저장도 saveBet_/saveWdl_ 검증을 그대로 적용 (행 생성 없음)', () => {
+  const env = setup(); const f = env.get('apiSaveRichPick');
+  assert.match(f(rp({ stake: 0 })).error, /0원보다/);
+  assert.match(f(rp({ odds: 0.5 })).error, /총배당/);
+  assert.match(f(rp({ sport: '골프' })).error, /종목/);
+  assert.match(f(rp({ name: '' })).error, /경기\/조합명/);
+  const g = GAMES.slice(); g[6] = '';
+  assert.strictEqual(f(rw({ games: g })).error, '7경기의 승/무/패를 선택해주세요.');
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 1); assert.strictEqual(env.sheet('WDL_LOG').getLastRow(), 1);
+  const nm = f(rp({ name: '=HYPERLINK("x")' })); assert.ok(nm.ok);
+  assert.strictEqual(env.sheet('BET_LOG').grid[1][4], "'=HYPERLINK(\"x\")");   // 수식 주입 방지 유지
+  assert.ok(f(rw({ requestId: 'rich-wdl-ok-0001' })).ok);
+  assert.deepStrictEqual(env.sheet('WDL_LOG').grid[1].slice(25, 28), ['미확인', '', '']);
+});
+test('44. 동일 requestId 재요청은 중복 행 없음, 다른 requestId 는 신규 저장', () => {
+  const env = setup(); const f = env.get('apiSaveRichPick');
+  const p = rp({ requestId: 'rich-dup-000001' });
+  const a = f(p), b = f(p), c = f(Object.assign({}, p, { stake: 1000 }));   // 같은 requestId, 내용이 달라도 기존 결과 반환
+  assert.ok(a.ok && b.ok && c.ok);
+  assert.deepStrictEqual([a.duplicate, b.duplicate, c.duplicate], [false, true, true]);
+  assert.ok(a.id === b.id && b.id === c.id);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+  assert.strictEqual(env.sheet('BET_LOG').grid[1][8], 3000);                 // 최초 저장값 유지
+  const d = f(rp({ requestId: 'rich-dup-000002' }));
+  assert.ok(d.ok && !d.duplicate && d.id !== a.id); assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);
+  // 같은 requestId 를 다른 유형에 쓰면 거절
+  assert.match(f(rw({ requestId: 'rich-dup-000001' })).error, /다른 유형/);
+  // 해당 행을 지웠다면(정리) 같은 requestId 로 다시 저장 가능
+  env.sheet('BET_LOG').grid.splice(1, 1);
+  const e = f(p); assert.ok(e.ok && !e.duplicate);
+});
+test('45. 배치 저장: 일부 오류여도 정상 건 저장, failed 반환, 재전송 시 중복 없음', () => {
+  const env = setup(); const f = env.get('apiSaveRichPicks');
+  const picks = [rp({ requestId: undefined, name: 'P1' }), rp({ requestId: undefined, name: 'P2', stake: 0 }), rp({ requestId: undefined, name: 'P3' })].map(x => { delete x.requestId; return x; });
+  const r = f({ requestId: 'rich-batch-0001', picks });
+  assert.ok(r.ok, r.error);
+  assert.deepStrictEqual([r.savedCount, r.failedCount], [2, 1]);
+  assert.deepStrictEqual([...r.saved.map(x => x.index)], [1, 3]);
+  assert.deepStrictEqual([r.failed[0].index, r.failed[0].type], [2, 'BET']); assert.match(r.failed[0].error, /0원보다/);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);
+  const again = f({ requestId: 'rich-batch-0001', picks });                       // 전체 재전송
+  assert.deepStrictEqual([again.savedCount, again.failedCount], [2, 1]);
+  assert.ok(again.saved.every(x => x.duplicate));
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 3);                       // 중복 행 없음
+  picks[1].stake = 2000;                                                          // 오류 건만 고쳐 같은 batch 로 재전송
+  const fixed = f({ requestId: 'rich-batch-0001', picks });
+  assert.deepStrictEqual([fixed.savedCount, fixed.failedCount], [3, 0]);
+  assert.deepStrictEqual([...fixed.saved.map(x => x.duplicate)], [true, false, true]);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 4);
+  // 전부 실패하면 ok:false
+  const none = f({ requestId: 'rich-batch-0002', picks: [rp({ stake: 0 })] });
+  assert.strictEqual(none.ok, false); assert.strictEqual(none.failedCount, 1);
+});
+test('46. 배치에 BET/WDL 혼합 + 개별 requestId 사용', () => {
+  const env = setup(); const f = env.get('apiSaveRichPicks');
+  const g = GAMES.slice(); g[0] = '';
+  const r = f({ requestId: 'rich-mix-000001', picks: [rp({ requestId: 'rich-own-bet-01' }), rw({ requestId: 'rich-own-wdl-01' }), rw({ games: g, requestId: 'rich-own-wdl-02', round: 'R9' })] });
+  assert.ok(r.ok); assert.deepStrictEqual([...r.saved.map(x => x.type)], ['BET', 'WDL']); assert.strictEqual(r.failed[0].error, '1경기의 승/무/패를 선택해주세요.');
+  assert.deepStrictEqual([env.sheet('BET_LOG').getLastRow(), env.sheet('WDL_LOG').getLastRow()], [2, 2]);
+  const again = f({ requestId: 'rich-mix-other-1', picks: [rp({ requestId: 'rich-own-bet-01' })] });   // 개별 requestId 가 같으면 다른 batch 에서도 중복 방지
+  assert.ok(again.saved[0].duplicate); assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+});
+test('47. 자동저장 픽: 구매 확인 목록에 노출, 결과 처리 목록엔 미노출, 구매일 기준 한도 그대로', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  const r = env.get('apiSaveRichPicks')({ requestId: 'rich-flow-00001', picks: [rp({ requestId: 'rich-flow-bet-01', date: '2026-10-01', stake: 3000, name: 'F1' }), rp({ requestId: 'rich-flow-bet-02', date: '2026-10-02', stake: 3000, name: 'F2' }), rw({ requestId: 'rich-flow-wdl-01', stake: 4000 })] });
+  assert.strictEqual(r.savedCount, 3);
+  const u = env.get('apiGetUnconfirmed')(); assert.deepStrictEqual([u.bets.length, u.wdl.length], [2, 1]);
+  const p = env.get('apiGetPending')(); assert.deepStrictEqual([p.bets.length, p.wdl.length], [0, 0]);
+  const [a, b] = r.saved;
+  assert.match(env.get('apiResolveBet')({ id: a.id, result: '적중', ret: 5000, reqId: 'z1' }).error, /먼저 구매 확인/);
+  assert.ok(buy(env, 'bet', a.id).ok);
+  const blocked = buy(env, 'bet', b.id);                                           // 추천일이 달라도 구매일(10/5) 합계 6,000 → 차단
+  assert.strictEqual(blocked.ok, false); assert.match(blocked.error, /일 최대 5,000원 초과: 해당일 구매 3,000원 \+ 신규 3,000원 = 6,000원/);
+  assert.ok(buy(env, 'bet', b.id, false).ok);
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 3000);
+  const p2 = env.get('apiGetPending')(); assert.deepStrictEqual([p2.bets.length, p2.wdl.length], [2, 0]);   // 구매/미구매 처리 후에만 결과 처리 목록에 노출
+});
+test('48. 토큰: Script Property RICH_API_TOKEN 설정 시 일치해야 저장 (미설정이면 기존 동작)', () => {
+  const env = setup(); const f = env.get('apiSaveRichPick'), fb = env.get('apiSaveRichPicks');
+  assert.ok(f(rp()).ok);                                                           // 토큰 미설정: 허용(웹앱 자체가 본인 전용)
+  env.props['RICH_API_TOKEN'] = 'secret-test-token';
+  const n0 = env.sheet('BET_LOG').getLastRow();
+  assert.deepStrictEqual([f(rp()).error, f(rp({ token: 'wrong' })).error, fb({ requestId: 'rich-tok-000001', picks: [rp()] }).error], ['인증에 실패했습니다.', '인증에 실패했습니다.', '인증에 실패했습니다.']);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), n0);
+  assert.ok(f(rp({ token: 'secret-test-token' })).ok);
+  assert.strictEqual(fb({ requestId: 'rich-tok-000002', token: 'secret-test-token', picks: [rp()] }).savedCount, 1);
+  assert.ok(!/secret-test-token/.test(JSON.stringify(env.sheet('BET_LOG').grid)));  // 토큰은 시트에 기록되지 않음
+});
+test('49. 요청 검증: requestId 필수/형식, picks 비어있음/20건 초과, type 오류', () => {
+  const env = setup(); const f = env.get('apiSaveRichPick'), fb = env.get('apiSaveRichPicks');
+  assert.match(f(rp({ requestId: '' })).error, /requestId/);
+  assert.match(f(rp({ requestId: 'short' })).error, /requestId/);
+  assert.match(f(rp({ requestId: 'has space 12345' })).error, /requestId/);
+  assert.match(f(rp({ type: 'ETC' })).error, /type/);
+  assert.match(fb({ requestId: 'rich-empty-0001', picks: [] }).error, /1건 이상/);
+  assert.match(fb({ requestId: 'rich-big-00001', picks: Array(21).fill(0).map(() => rp()) }).error, /최대 20건/);
+  assert.match(fb({ picks: [rp()] }).error, /requestId/);
+  assert.deepStrictEqual([env.sheet('BET_LOG').getLastRow(), env.sheet('WDL_LOG').getLastRow()], [1, 1]);
+  assert.strictEqual(fb({ requestId: 'rich-badtype-01', picks: [rp({ type: 'XX' })] }).failed[0].error, 'type 은 BET 또는 WDL 이어야 합니다.');
 });
 
 console.log(results.join('\n'));

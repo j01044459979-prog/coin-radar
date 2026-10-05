@@ -23,38 +23,34 @@ await page.addInitScript(() => {
 await page.goto('file://' + path.join(here, '..', 'Index.html'));
 await page.waitForFunction(() => document.getElementById('hUsed').textContent !== '-');
 const tab = n => page.click(`[data-tab=${n}]`);
-console.log('첫 화면:', (await page.textContent('#uBody')).trim());
-await tab('bet');
-await page.fill('#bName', 'UI테스트'); await page.fill('#bOdds', '2.2'); await page.fill('#bStake', '5000');
-await page.click('#bSave'); await page.waitForSelector('#bMsg.ok');
-console.log('추천 저장:', await page.textContent('#bMsg'), '| 헤더 사용(미구매라 0):', await page.textContent('#hUsed'));
-await page.fill('#bName', '추가추천'); await page.fill('#bOdds', '2'); await page.fill('#bStake', '1000');
-await page.click('#bSave'); await page.waitForSelector('#bMsg.ok');
-await tab('buy'); await page.waitForSelector('.buybtns');
-console.log('구매 확인 항목 수:', await page.locator('#tab-buy .pend').count(), '| 버튼 텍스트:', await page.locator('#tab-buy .pend').first().innerText());
-// 연타: 같은 항목의 샀다 두 번 연속 클릭 → 한 번만 처리
-const first = page.locator('#tab-buy .pend').first();
-await first.locator('.yes').dblclick();
+const navs = await page.$$eval('.nav button', bs => bs.map(b => b.textContent.replace(/\s*\(\d+\)$/, '')));
+console.log('메뉴:', navs.join(' | '), '| 입력 메뉴 없음:', !navs.some(x => /입력/.test(x)) && !(await page.$('#tab-bet, #tab-wdl, #bSave, #wSave')));
+// 리치 자동저장 진입점으로 추천 3건(일반 2 + 승무패 1) 저장 → 화면 새로고침
+const today = await page.evaluate(() => S.today);
+const save = JSON.parse(await page.evaluate(([d]) => window.__srv('apiSaveRichPicks', { requestId: 'smoke-batch-0001', picks: [
+  { type: 'BET', date: d, sport: '축구', league: 'K리그1', name: '울산 vs 전북 아주 긴 경기명 줄바꿈 확인 확인 확인 확인 확인 확인', pick: '핸디캡 홈 -1.5 / 언더 2.5 / 긴 픽 내용 줄바꿈 확인용 문장', folders: 2, odds: 2.2, stake: 5000, grade: '메인' },
+  { type: 'BET', date: d, sport: '야구', league: 'KBO', name: 'B경기', pick: '홈승', folders: 1, odds: 1.8, stake: 1000, grade: '대박' },
+  { type: 'WDL', round: '100', date: d, combo: '주력', games: Array(14).fill('승'), stake: 5000 }] }), [today]));
+console.log('자동저장:', save.savedCount, '건 저장 /', save.failedCount, '건 실패');
+await page.click('[data-tab=mon]'); await tab('buy'); await page.waitForSelector('#tab-buy .pend');
+console.log('구매 확인 카드 수:', await page.locator('#tab-buy .pend').count(), '| 버튼:', await page.locator('#tab-buy .pend').first().locator('button').allTextContents());
+const first = page.locator('#tab-buy .pend', { hasText: '울산' });
+await first.locator('.yes').dblclick();                                   // 연타 → 한 번만 처리
 await page.waitForFunction(() => document.getElementById('hUsed').textContent !== '0원');
-console.log('샀다 후:', await page.textContent('#uMsg'), '| 헤더 사용:', await page.textContent('#hUsed'));
-// 한도: 남은 추천 1,000원 구매는 5,000 + 1,000 > 5,000 이므로 차단
-await page.locator('#tab-buy .pend').first().locator('.yes').click(); await page.waitForSelector('#uMsg.err');
+console.log('샀다 후:', await page.textContent('#uMsg'), '| 실제 사용액:', await page.textContent('#hUsed'));
+await page.locator('#tab-buy .pend', { hasText: 'B경기' }).locator('.yes').click(); await page.waitForSelector('#uMsg.err');
 console.log('한도 차단:', await page.textContent('#uMsg'));
-await page.locator('#tab-buy .pend').first().locator('.no').click();
-await page.waitForFunction(() => document.getElementById('uBody').textContent.includes('없습니다'));
-console.log('안 샀다 후 목록:', (await page.textContent('#uBody')).trim());
+await page.locator('#tab-buy .pend', { hasText: 'B경기' }).locator('.no').click();
+await page.waitForFunction(() => !document.getElementById('uBody').textContent.includes('B경기'));
 await tab('res'); await page.waitForSelector('.rBetSave');
+console.log('결과 처리 대기 목록(미확인 승무패 제외):', await page.locator('#pBets .pend').count(), '/', await page.locator('#pWdl .pend').count());
 const bought = page.locator('#pBets .pend', { has: page.locator('b', { hasText: /^구매$/ }) });
-await bought.locator('.rRet').fill('2000'); await bought.locator('.rBetSave').click();   // 실구매 1,000원 → 2,000원 반환
-await page.waitForFunction(() => document.getElementById('hProfit').textContent.includes('+1,000'));
+await bought.locator('.rRet').fill('11000'); await bought.locator('.rBetSave').click();
+await page.waitForFunction(() => document.getElementById('hProfit').textContent.includes('+6,000'));
 console.log('손익/ROI 헤더:', await page.textContent('#hProfit'), await page.textContent('#hRoi'));
-await tab('wdl'); await page.fill('#wRound', '100'); await page.fill('#wStake', '5000');
-await page.click('#wSave'); await page.waitForSelector('#wMsg.err'); console.log('승무패 미입력:', await page.textContent('#wMsg'));
-for (let i = 0; i < 14; i++) await page.click(`.g[data-i="${i}"] button[data-v="승"]`);
-await page.click('#wSave'); await page.waitForSelector('#wMsg.ok'); console.log('승무패:', await page.textContent('#wMsg'));
-await tab('buy'); await page.waitForSelector('#tab-buy .pend');
-console.log('승무패 구매 확인 카드:', (await page.locator('#tab-buy .pend').first().innerText()).replace(/\n/g, ' | '));
 await tab('mon'); await page.waitForSelector('#mBody table');
 console.log('월간 표 개수:', await page.locator('#mBody table').count(), '| 가로 넘침:', await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), '| 페이지 에러:', errs.length ? errs : '없음');
+await tab('buy'); await page.waitForSelector('#tab-buy .pend');
+console.log('구매 확인 재진입 후 가로 넘침:', await page.evaluate(() => document.documentElement.scrollWidth > innerWidth));
 await page.screenshot({ path: path.join(process.env.SHOT_DIR || '.', 'ui.png'), fullPage: true });
 await browser.close();
