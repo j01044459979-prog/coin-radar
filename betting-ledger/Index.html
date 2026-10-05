@@ -55,6 +55,9 @@
   .pend { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
   .pend:first-child { border-top:0; margin-top:0; padding-top:0; }
   .hidden { display:none; }
+  .grp { border-top:1px solid var(--line); margin-top:10px; padding-top:10px; }
+  .grp:first-child { border-top:0; margin-top:0; padding-top:0; }
+  .grp .pend { border-top:1px dashed var(--line); }
   .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .refresh { padding:6px 10px; font-size:13px; font-weight:700; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; }
   .refresh:disabled { opacity:.5; }
@@ -238,8 +241,8 @@ function loadUnconfirmed() {
     if (!res.ok) { $('uBody').textContent = '불러오기 실패: ' + res.error; return; }
     applyMeta(res.meta);
     $('mMonth').value = $('mMonth').value || S.month;
-    function item(kind, id, top, pick, line) {
-      return '<div class="pend" data-kind="' + kind + '" data-id="' + esc(id) + '" data-top="' + esc(top) + '" data-pick="' + esc(pick) + '" data-line="' + esc(plainText(line.replace(/<br>/g, ' · '))) + '">' +
+    function item(kind, id, top, pick, line, count) {
+      return '<div class="pend" data-kind="' + kind + '" data-id="' + esc(id) + '" data-count="' + (count || '') + '" data-top=""' + esc(top) + '" data-pick="' + esc(pick) + '" data-line="' + esc(plainText(line.replace(/<br>/g, ' · '))) + '">' +
         '<div><b>' + esc(top) + '</b></div><div>' + esc(pick) + '</div><div class="sub">' + line + '</div>' +
         '<div class="buybtns"><button class="yes" data-buy="1">샀다</button><button class="no" data-buy="0">안 샀다</button></div></div>';
     }
@@ -247,6 +250,11 @@ function loadUnconfirmed() {
       return item('bet', r.id, r.name, r.pick || '-',
         esc(r.date) + ' · ' + esc(r.sport) + (r.league ? '/' + esc(r.league) : '') + '<br>총배당 ' + r.odds + ' · 추천금액 ' + won(r.stake) + ' · ' + esc(r.grade));
     }).concat(res.wdl.map(function (r) {
+      if (r.kind === 'wdl_group') {   // 복수마킹 묶음: 여러 행이어도 카드는 한 장
+        var multi = r.multi.map(function (m) { return m.game + '번 ' + m.picks.join('/'); }).join(' · ');
+        return item('wdl_group', r.groupId, '승무패 ' + r.round + '회차', r.comboCount + '조합 · 총 추천금액 ' + won(r.stake),
+          '복수마킹: ' + esc(multi || '없음') + '<br>' + esc(r.date) + ' · 조합당 ' + won(r.stakePerCombo), r.comboCount);
+      }
       var picks = r.picks.split('').map(function (c, i) { return (i + 1) + c; }).join(' ');
       return item('wdl', r.id, r.round + '회차 · ' + r.combo, picks, esc(r.date) + ' · 추천금액 ' + won(r.stake));
     })).join('');
@@ -262,7 +270,8 @@ $('tab-buy').addEventListener('click', function (e) {
   var buy = btn.dataset.buy === '1';
   openConfirm({
     title: buy ? '구매 처리 확인' : '미구매 처리 확인',
-    lines: [box.dataset.top, box.dataset.pick, box.dataset.line, buy ? '실제로 구매하셨나요?' : '구매하지 않은 것으로 기록할까요?'],
+    lines: [box.dataset.top, box.dataset.pick, box.dataset.line].concat(box.dataset.count ? ['※ ' + box.dataset.count + '조합 전체가 한 번에 처리됩니다.'] : [],
+      [buy ? '실제로 구매하셨나요?' : '구매하지 않은 것으로 기록할까요?']),
     okLabel: buy ? '샀다 확정' : '안 샀다 확정',
     run: function (rid) { return call('apiPurchase', { kind: box.dataset.kind, id: box.dataset.id, buy: buy, reqId: rid }); },
     onSuccess: function (res) {
@@ -291,14 +300,20 @@ function loadPending() {
         '<input class="rRet" type="number" inputmode="numeric" min="0" placeholder="반환금(원금 포함)" data-stake="' + r.stake + '"></div>' +
         '<button class="mini rBetSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
     }).join('') : '대기 중인 기록이 없습니다.';
-    $('pWdl').innerHTML = res.wdl.length ? res.wdl.map(function (r) {
-      return '<div class="pend" data-kind="wdl" data-id="' + esc(r.id) + '" data-top="' + esc(r.round + '회차 · ' + r.combo) + '">' +
-        '<div><b>' + esc(r.round) + '회차 · ' + esc(r.combo) + '</b></div>' +
-        '<div class="sub">' + esc(r.date) + ' · ' + won(r.stake) + ' · <b>' + esc(r.buy) + '</b></div>' +
+    function wdlForm(id, top, label, sub) {   // 조합 하나의 결과 입력 폼 (단일/묶음 공용)
+      return '<div class="pend" data-kind="wdl" data-id="' + esc(id) + '" data-top="' + esc(top) + '">' +
+        '<div><b>' + esc(label) + '</b></div><div class="sub">' + sub + '</div>' +
         '<div class="two"><select class="wHits">' + Array.apply(null, Array(15)).map(function (_, i) { return '<option value="' + i + '">' + i + '개 적중</option>'; }).join('') + '</select>' +
         '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option></select></div>' +
         '<input class="wPrize" type="number" inputmode="numeric" min="0" placeholder="당첨금(원)" style="margin-top:8px">' +
         '<button class="mini rWdlSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
+    }
+    $('pWdl').innerHTML = res.wdl.length ? res.wdl.map(function (r) {
+      if (r.kind === 'wdl_group') {   // 묶음: 조합마다 독립된 결과 입력 (결과를 합치지 않음)
+        return '<div class="grp"><div class="sub"><b>' + esc(r.round) + '회차 · ' + r.comboCount + '조합 대기 · ' + esc(r.buy) + '</b> · ' + esc(r.date) + ' · 합계 ' + won(r.stake) + '</div>' +
+          r.combos.map(function (c) { return wdlForm(c.id, r.round + '회차 · ' + c.label, c.label, won(c.stake)); }).join('') + '</div>';
+      }
+      return wdlForm(r.id, r.round + '회차 · ' + r.combo, r.round + '회차 · ' + r.combo, esc(r.date) + ' · ' + won(r.stake) + ' · <b>' + esc(r.buy) + '</b>');
     }).join('') : '대기 중인 기록이 없습니다.';
     S.cache.res = { at: Date.now() };
   });
@@ -306,8 +321,9 @@ function loadPending() {
 $('tab-res').addEventListener('click', function (e) {
   var btn = e.target.closest('button'); if (!btn) return;
   var box = btn.closest('.pend'); if (!box) return;
-  var id = box.dataset.id, done = function (res) {
+  var id = box.dataset.id, grp = box.closest('.grp'), done = function (res) {
     if (box.parentNode) box.parentNode.removeChild(box);
+    if (grp && !grp.querySelector('.pend') && grp.parentNode) grp.parentNode.removeChild(grp);   // 묶음의 마지막 조합까지 끝나면 묶음 헤더도 제거
     updatePendEmpty(); markStale('mon');
     toast('✔ 손익 ' + signed(res.profit) + (res.roi !== undefined ? ' / ROI ' + spct(res.roi) : ''));
   };
@@ -366,6 +382,8 @@ function loadMonthly() {
         return [esc(g.label), g.count, pct(g.hitRate), pc(g.profit, signed), pc(g.roi, spct)]; })) +
       tbl('승무패', ['회차수', '투입금', '당첨금', '순손익', '최고적중', '최고등수'], [[w.rounds, won(w.stake), won(w.prize),
         pc(w.profit, signed), w.bestHits === null ? '-' : w.bestHits + '개', w.bestRank || '-']]) +
+      tbl('승무패 묶음', ['회차', '조합수', '투입금', '최고적중', '당첨조합', '총당첨금'], res.wdlGroups.map(function (g) {
+        return [esc(g.round), g.comboCount, won(g.stake), g.bestHits === null ? '-' : g.bestHits + '/14', g.settled ? g.winners + '/' + g.comboCount : '-', g.settled ? won(g.prize) : '-']; })) +
       tbl('최근 기록 10개', ['날짜', '구분', '내용', '금액', '상태', '손익'], res.recent.map(function (r) {
         return [esc(r.date.slice(5)), esc(r.kind), esc(r.title), won(r.stake), esc(r.status), r.profit === null ? '-' : pc(r.profit, signed)]; }));
     S.cache.mon = { at: Date.now() };

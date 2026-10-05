@@ -15,6 +15,8 @@ function makeSheet(name) {
     getName: () => name,
     getLastRow() { let l = 0; grid.forEach((r, i) => { if (r && r.some(v => v !== '' && v !== undefined)) l = i + 1; }); return l; },
     getMaxRows: () => 1000,
+    getMaxColumns() { return sh._maxCols || 60; },
+    insertColumnsAfter(pos, n) { sh._maxCols = (sh._maxCols || 60) + n; return sh; },
     getLastColumn() { return grid.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); },
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
@@ -23,6 +25,7 @@ function makeSheet(name) {
         getValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')),
         setValues(v) { v.forEach((row, i) => row.forEach((x, j) => { (grid[r - 1 + i] = grid[r - 1 + i] || [])[c - 1 + j] = x; })); return rng; },
       };
+      rng.setValue = v => { (grid[r - 1] = grid[r - 1] || [])[c - 1] = v; return prx; };
       const prx = new Proxy(rng, { get: (t, k) => k in t ? t[k] : (...a) => { (sh.calls = sh.calls || []).push([String(k), c, a[0]]); return prx; } });
       return prx;
     },
@@ -103,7 +106,7 @@ test('setup: 시트 4개 + 헤더 + SETTINGS 기본값', () => {
   const env = setup();
   assert.deepStrictEqual(env.sheets.map(s => s.name).sort(), ['BET_LOG', 'DASHBOARD', 'SETTINGS', 'WDL_LOG']);
   assert.strictEqual(env.sheet('BET_LOG').grid[0].join('|'), 'ID|베팅일|종목|리그|경기/조합명|픽 내용|폴더수|총배당|베팅금액|결과|반환금|손익|ROI|리치등급|메모|등록일시|구매여부|실제베팅금액|구매일시');
-  assert.strictEqual(env.sheet('WDL_LOG').grid[0].join('|'), 'ID|회차|구매일|조합구분|' + Array.from({ length: 14 }, (_, i) => (i + 1) + '경기').join('|') + '|베팅금액|적중개수|등수|당첨금|손익|메모|등록일시|구매여부|실제베팅금액|구매일시');
+  assert.strictEqual(env.sheet('WDL_LOG').grid[0].join('|'), 'ID|회차|구매일|조합구분|' + Array.from({ length: 14 }, (_, i) => (i + 1) + '경기').join('|') + '|베팅금액|적중개수|등수|당첨금|손익|메모|등록일시|구매여부|실제베팅금액|구매일시|구매묶음ID|조합순번');
   const st = env.sheet('SETTINGS').grid.slice(1).map(r => r.slice(0, 2).join('='));
   assert.deepStrictEqual(st, ['월 예산=200000', '일반토토 일 최대=5000', '승무패 회차 최대=10000']);
   env.get('setup')(); // 재실행해도 중복/덮어쓰기 없음
@@ -399,7 +402,7 @@ test('27. 기존 시트: 날짜/금액/ROI 서식·헤더 스타일을 건드리
   const bc = env.sheet('BET_LOG').calls.map(c => c[0] + ':' + c[1]);
   assert.deepStrictEqual(bc, ['setNumberFormat:1']);   // A(ID) 뿐
   const wc = env.sheet('WDL_LOG').calls.map(c => c[0] + ':' + c[1]);
-  assert.deepStrictEqual(wc, ['setNumberFormat:1', 'setNumberFormat:2']);
+  assert.deepStrictEqual(wc, ['setNumberFormat:1', 'setNumberFormat:2', 'setNumberFormat:29']);   // + 구매묶음ID(텍스트)
   assert.ok(!env.sheet('BET_LOG').calls.some(c => ['setFontWeight', 'setBackground', 'setFrozenRows'].includes(c[0])));
 });
 
@@ -728,7 +731,7 @@ test('49. 요청 검증: requestId 필수/형식, picks 비어있음/20건 초�
   assert.match(fb({ requestId: 'rich-big-00001', picks: Array(21).fill(0).map(() => rp()) }).error, /최대 20건/);
   assert.match(fb({ picks: [rp()] }).error, /requestId/);
   assert.deepStrictEqual([env.sheet('BET_LOG').getLastRow(), env.sheet('WDL_LOG').getLastRow()], [1, 1]);
-  assert.strictEqual(fb({ requestId: 'rich-badtype-01', picks: [rp({ type: 'XX' })] }).failed[0].error, 'type 은 BET 또는 WDL 이어야 합니다.');
+  assert.strictEqual(fb({ requestId: 'rich-badtype-01', picks: [rp({ type: 'XX' })] }).failed[0].error, 'type 은 BET, WDL 또는 WDL_MULTI 이어야 합니다.');
 });
 
 /* ---------- Rich Bridge: RICH_INBOX → processRichInbox_ ---------- */
@@ -1159,6 +1162,212 @@ test('86. 읽기 최적화: API 1회에서 같은 시트/설정을 반복해서 
   // 메모가 쓰기 후 낡은 데이터를 돌려주지 않음
   assert.strictEqual(env.get('apiGetUnconfirmed')().bets.length, 0);
   assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 1000);
+});
+
+/* ---------- 승무패 복수마킹 묶음(WDL_MULTI) ---------- */
+const SEL58 = [['승'], ['승', '무'], ['패'], ['승'], ['승'], ['승'], ['승'], ['무', '패'], ['승', '무'], ['패'], ['승'], ['패'], ['패'], ['승']];
+const mp = (o = {}) => Object.assign({ requestId: 'rich-wdl-20261005-' + (++seq) + '-58', type: 'WDL_MULTI', round: '58', date: '2026-10-05',
+  selections: SEL58, stakePerCombo: 1000, memo: '승무패 58회차 리치 추천' }, o);
+const cartesian = sets => sets.reduce((acc, set) => acc.flatMap(pre => set.map(v => pre.concat([v]))), [[]]);
+const wdlRows = (env, gid) => env.sheet('WDL_LOG').grid.slice(1).filter(r => !gid || r[28] === gid);
+const gamesOf = row => row.slice(4, 18);
+const saveMulti = (env, o) => { const r = env.get('apiSaveRichPick')(mp(o)); assert.ok(r.ok, r.error); return r; };
+const buyGroup = (env, gid, yes = true, extra = {}) => env.get('apiPurchase')(Object.assign({ kind: 'wdl_group', id: gid, buy: yes, reqId: 'g' + (++seq) }, extra));
+
+test('90. WDL_MULTI 2×2×2 → 정확히 8조합(14경기, 중복 없음, 조합당 1,000원, 총 8,000원, 같은 groupId, 조합순번 1~8)', () => {
+  const env = bridgeEnv();
+  const r = saveMulti(env);
+  assert.deepStrictEqual([r.type, r.duplicate, r.comboCount, r.total], ['WDL_MULTI', false, 8, 8000]);
+  const rows = wdlRows(env);
+  assert.strictEqual(rows.length, 8);
+  const games = rows.map(gamesOf);
+  assert.ok(games.every(g => g.length === 14 && g.every(v => ['승', '무', '패'].includes(v))));
+  assert.strictEqual(new Set(games.map(g => g.join(''))).size, 8);                                // 중복 조합 없음
+  assert.deepStrictEqual(games.map(g => g.join('')), cartesian(SEL58).map(g => g.join('')));      // 데카르트 곱(첫 경기가 가장 천천히)
+  assert.strictEqual(games[0].join(''), '승승패승승승승무승패승패패승'); assert.strictEqual(games[7].join(''), '승무패승승승승패무패승패패승');
+  assert.ok(rows.every(x => x[18] === 1000)); assert.strictEqual(rows.reduce((n, x) => n + x[18], 0), 8000);
+  assert.strictEqual(new Set(rows.map(x => x[28])).size, 1); assert.strictEqual(rows[0][28], r.groupId); assert.match(r.groupId, /^WDLG-20261005-/);
+  assert.deepStrictEqual(rows.map(x => x[29]), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepStrictEqual(rows.map(x => x[3]), ['조합1', '조합2', '조합3', '조합4', '조합5', '조합6', '조합7', '조합8']);
+  assert.ok(rows.every(x => x[1] === '58' && x[20] === '대기' && x[25] === '미확인' && x[26] === '' && x[27] === ''));   // 구매 전: 미확인, 예산 미사용
+  assert.strictEqual(new Set(rows.map(x => x[0])).size, 8);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 1);
+  const s = dash(env).summary; assert.deepStrictEqual([s.used, s.remain], [0, 200000]);
+});
+test('91. WDL_MULTI 검증: 조합 수 10 초과/형식 오류는 저장 없이 거절', () => {
+  const env = bridgeEnv(); const f = env.get('apiSaveRichPick');
+  const sel = (n2, n3) => SEL58.map((x, i) => i < n3 ? ['승', '무', '패'] : i < n3 + n2 ? ['승', '무'] : ['승']);
+  assert.strictEqual(f(mp({ selections: sel(4, 0) })).error, '조합 수는 최대 10개입니다 (현재 16개).');
+  assert.strictEqual(f(mp({ selections: sel(2, 2) })).error, '조합 수는 최대 10개입니다 (현재 36개).');
+  assert.match(f(mp({ selections: SEL58.slice(0, 13) })).error, /14경기 배열/);
+  const e = SEL58.map(x => x.slice()); e[4] = [];
+  assert.strictEqual(f(mp({ selections: e })).error, '5경기의 승/무/패를 선택해주세요.');
+  const bad = SEL58.map(x => x.slice()); bad[6] = ['승', '이김'];
+  assert.strictEqual(f(mp({ selections: bad })).error, '7경기: 승/무/패만 선택할 수 있습니다.');
+  assert.match(f(mp({ stakePerCombo: 0 })).error, /0원보다/); assert.match(f(mp({ round: '' })).error, /회차/);
+  assert.deepStrictEqual([wdlRows(env).length], [0]);
+  // 3×3=9조합은 허용, 문자열 표기("승/무")와 중복 마킹도 정규화
+  const nine = SEL58.map((x, i) => i === 0 || i === 1 ? ['승', '무', '패'] : ['승']);
+  const ok = f(mp({ selections: nine })); assert.ok(ok.ok, ok.error); assert.strictEqual(ok.comboCount, 9);
+  const mixed = SEL58.map((x, i) => i === 1 ? '무/승/승' : x);
+  const ok2 = f(mp({ selections: mixed, round: '59' })); assert.ok(ok2.ok, ok2.error); assert.strictEqual(ok2.comboCount, 8);
+});
+test('92. WDL_MULTI 멱등성: 같은 requestId 재요청/Inbox 중복에도 8행만, 다른 requestId 는 별도 묶음', () => {
+  const env = bridgeEnv();
+  const a = inboxAdd(env, 'rich-wdl-20261005-58', mp({ requestId: 'rich-wdl-20261005-58' }));
+  const b = inboxAdd(env, 'rich-wdl-20261005-58', mp({ requestId: 'rich-wdl-20261005-58' }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.duplicate, out.error], [2, 1, 0]);
+  const ra = inboxRow(env, a), rb = inboxRow(env, b);
+  assert.deepStrictEqual([ra[3], ra[6], rb[3], rb[5] === ra[5], rb[7]], ['DONE', 'WDL_MULTI', 'DONE', true, '']);
+  assert.strictEqual(wdlRows(env).length, 8); assert.ok(wdlRows(env).every(x => x[28] === ra[5]));
+  const again = env.get('apiSaveRichPick')(mp({ requestId: 'rich-wdl-20261005-58' }));
+  assert.deepStrictEqual([again.ok, again.duplicate, again.comboCount, again.groupId], [true, true, 8, ra[5]]);
+  assert.strictEqual(wdlRows(env).length, 8);
+  const other = saveMulti(env, { requestId: 'rich-wdl-20261005-58-b' });                       // 새 requestId → 새 묶음(조합1~8 이름 재사용 가능)
+  assert.notStrictEqual(other.groupId, ra[5]); assert.strictEqual(wdlRows(env).length, 16);
+  assert.match(env.get('apiSaveRichPick')(rp({ requestId: 'rich-wdl-20261005-58' })).error, /다른 유형/);
+});
+test('93. 기존 28열 시트 호환: 단일 WDL 정상, 묶음은 안내 후 거절, setupWdlGroupColumns 로 비파괴 확장', () => {
+  const env = bridgeEnv(); const sh = env.sheet('WDL_LOG');
+  sh.grid[0].length = 28; sh._maxCols = 28;                                                   // 사용자의 현재 시트 모양(AB까지)
+  const single = env.get('apiSaveRichPick')(rw({ round: '57', combo: '주력', stake: 5000 })); assert.ok(single.ok, single.error);
+  assert.strictEqual(sh.grid[1].length, 28);                                                   // 28열까지만 기록
+  assert.strictEqual(env.get('apiGetUnconfirmed')().wdl.length, 1);
+  const m = env.get('apiSaveRichPick')(mp()); assert.strictEqual(m.ok, false); assert.match(m.error, /setupWdlGroupColumns/);
+  assert.strictEqual(wdlRows(env).length, 1);
+  assert.match(env.get('diagnoseSetup')(), /WDL_LOG 29열 헤더[^\n]*setupWdlGroupColumns/);
+  const before = JSON.stringify(sh.grid[1]);
+  env.get('setupWdlGroupColumns')();
+  assert.ok(sh._maxCols >= 30); assert.deepStrictEqual([sh.grid[0][28], sh.grid[0][29]], ['구매묶음ID', '조합순번']);
+  assert.strictEqual(JSON.stringify(sh.grid[1].slice(0, 28)), JSON.stringify(JSON.parse(before).slice(0, 28)));   // 기존 데이터 불변
+  env.get('setupWdlGroupColumns')();                                                           // 재실행해도 안전
+  assert.strictEqual(env.get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상 / Rich Bridge 정상');
+  assert.ok(env.get('apiSaveRichPick')(mp()).ok); assert.strictEqual(wdlRows(env).length, 9);
+  const legacy = wdlRows(env)[0]; assert.deepStrictEqual([legacy[3], legacy[28] || '', legacy[29] || ''], ['주력', '', '']);
+  // 같은 회차에서 기존 주력은 중복 금지 유지, 묶음의 '조합1' 과는 충돌하지 않음
+  assert.match(env.get('apiSaveRichPick')(rw({ round: '57', combo: '주력' })).error, /이미 있습니다/);
+});
+test('94. 구매 확인 목록: 묶음은 카드 1장(8조합/8,000원/복수마킹), 기존 주력/보조 행은 그대로', () => {
+  const env = bridgeEnv();
+  const g = saveMulti(env); env.get('apiSaveRichPick')(rw({ round: '57', combo: '주력', stake: 5000 })); env.get('apiSaveRichPick')(rw({ round: '57', combo: '보조1', stake: 3000 }));
+  const u = env.get('apiGetUnconfirmed')();
+  assert.strictEqual(u.wdl.length, 3);                                                          // 묶음 1 + 단일 2 (8행이 8장이 되지 않음)
+  const card = u.wdl.find(x => x.kind === 'wdl_group');
+  assert.deepStrictEqual([card.groupId, card.round, card.comboCount, card.stake, card.stakePerCombo], [g.groupId, '58', 8, 8000, 1000]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(card.multi)), [{ game: 2, picks: ['승', '무'] }, { game: 8, picks: ['무', '패'] }, { game: 9, picks: ['승', '무'] }]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(card.selections)), SEL58);
+  assert.deepStrictEqual([...u.wdl.filter(x => !x.kind).map(x => x.combo).sort()], ['보조1', '주력']);
+  assert.strictEqual(env.get('apiGetPending')().wdl.length, 0);
+});
+test('95. 그룹 "샀다": 8행 모두 구매(1,000원/같은 구매시각), 사용액 8,000원, 월간 집계 반영', () => {
+  const env = bridgeEnv(); const g = saveMulti(env);
+  const r = buyGroup(env, g.groupId);
+  assert.ok(r.ok, r.error); assert.deepStrictEqual([r.buyStatus, r.comboCount, r.total], ['구매', 8, 8000]);
+  const rows = wdlRows(env, g.groupId);
+  assert.ok(rows.every(x => x[25] === '구매' && x[26] === 1000 && isDate(x[27])));
+  assert.strictEqual(new Set(rows.map(x => +x[27])).size, 1);                                    // 모든 행 같은 구매시각
+  const s = env.get('apiGetMonthly')('2026-10');
+  assert.deepStrictEqual([s.summary.used, s.summary.remain, s.summary.wdlUsed, s.wdl.stake, s.wdl.rounds], [8000, 192000, 8000, 8000, 1]);
+  assert.strictEqual(env.get('apiGetUnconfirmed')().wdl.length, 0);
+  const p = env.get('apiGetPending')().wdl; assert.deepStrictEqual([p.length, p[0].kind, p[0].comboCount, p[0].combos.length, p[0].buy], [1, 'wdl_group', 8, 8, '구매']);
+  assert.match(buyGroup(env, g.groupId).error, /이미 처리된 기록입니다 \(구매\)/);               // 뒤집기/재처리 금지
+  assert.match(buyGroup(env, g.groupId, false).error, /이미 처리된 기록입니다/);
+});
+test('96. 그룹 "안 샀다": 8행 모두 미구매(금액 빈값), 사용액 0, 기록 보존', () => {
+  const env = bridgeEnv(); const g = saveMulti(env);
+  const r = buyGroup(env, g.groupId, false); assert.ok(r.ok, r.error);
+  const rows = wdlRows(env, g.groupId);
+  assert.strictEqual(rows.length, 8); assert.ok(rows.every(x => x[25] === '미구매' && x[26] === '' && isDate(x[27]) && x[18] === 1000));
+  assert.strictEqual(new Set(rows.map(x => +x[27])).size, 1);
+  assert.deepStrictEqual([env.get('apiGetMonthly')('2026-10').summary.used, env.get('apiGetUnconfirmed')().wdl.length], [0, 0]);
+  assert.strictEqual(buyGroup(env, g.groupId).ok, false);
+  assert.strictEqual(buyGroup(env, 'WDLG-NOPE', true).error, '기록을 찾을 수 없습니다.');
+});
+test('97. 그룹 구매 한도: 회차 10,000원/월 예산을 그룹 전체 금액으로 사전검증 (거절 시 어떤 행도 변경 없음)', () => {
+  const env = bridgeEnv(); env.setNow(kst('2026-10-05'));
+  const g = saveMulti(env);
+  const single = env.get('apiSaveRichPick')(rw({ round: '58', combo: '주력', stake: 3000 })).id; assert.ok(buy(env, 'wdl', single).ok);   // 58회차 기존 구매 3,000
+  const snap = JSON.stringify(wdlRows(env, g.groupId));
+  const r = buyGroup(env, g.groupId);
+  assert.strictEqual(r.ok, false); assert.strictEqual(r.error, '회차 최대 10,000원 초과: 58회차 구매 3,000원 + 신규 8,000원 = 11,000원');
+  assert.strictEqual(JSON.stringify(wdlRows(env, g.groupId)), snap);                           // 부분 구매 없음
+  assert.ok(wdlRows(env, g.groupId).every(x => x[25] === '미확인' && x[26] === '' && x[27] === ''));
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 3000);
+  // 안 샀다 는 한도와 무관, 다른 회차 8,000원은 정상 구매
+  const other = saveMulti(env, { round: '59' }); assert.ok(buyGroup(env, other.groupId).ok);
+  assert.ok(buyGroup(env, g.groupId, false).ok);
+  // 정확히 10,000원(8,000 + 2,000)은 허용
+  const env2 = bridgeEnv(); const g2 = saveMulti(env2); const s2 = env2.get('apiSaveRichPick')(rw({ round: '58', combo: '주력', stake: 2000 })).id;
+  assert.ok(buy(env2, 'wdl', s2).ok); assert.ok(buyGroup(env2, g2.groupId).ok);
+  // 월 예산: 9월 198,000원 구매 상태에서 8,000원 그룹 → 월 한도로 전체 거절
+  const env3 = setup(); env3.get('setupRichBridge')(); fill198k(env3); env3.setNow(kst('2026-09-30'));
+  const g3 = env3.get('apiSaveRichPick')(mp({ date: '2026-09-30', round: '70' })); assert.ok(g3.ok, g3.error);
+  const m = buyGroup(env3, g3.groupId); assert.strictEqual(m.ok, false); assert.match(m.error, /월 예산 200,000원 초과: 2026-09 구매 198,000원 \+ 신규 8,000원 = 206,000원/);
+  assert.ok(wdlRows(env3, g3.groupId).every(x => x[25] === '미확인'));
+});
+test('98. 그룹 구매는 원자적: 쓰기 중 오류가 나도 일부 행만 구매 처리되지 않음', () => {
+  const env = bridgeEnv(); const g = saveMulti(env);
+  const sh = env.sheet('WDL_LOG'), orig = sh.getRange;
+  sh.getRange = (r, c, nr, nc) => { const rg = orig(r, c, nr, nc); return new Proxy(rg, { get: (tt, k) => k === 'setValues' ? () => { throw new Error('simulated write failure'); } : tt[k] }); };
+  const r = buyGroup(env, g.groupId);
+  sh.getRange = orig;
+  assert.strictEqual(r.ok, false);
+  assert.ok(wdlRows(env, g.groupId).every(x => x[25] === '미확인' && x[26] === '' && x[27] === ''));
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 0);
+  assert.ok(buyGroup(env, g.groupId).ok);                                                      // 장애 해소 후 정상 구매
+  // 같은 reqId 재전송은 캐시된 성공 응답(중복 집계 없음)
+  const g2 = saveMulti(env, { round: '60' }); const a = buyGroup(env, g2.groupId, true, { reqId: 'grp-click-1' }), b = buyGroup(env, g2.groupId, true, { reqId: 'grp-click-1' });
+  assert.ok(a.ok && b.ok && b.duplicate); assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 16000);
+});
+test('99. 그룹 결과: 조합별 독립 결과(WDL 기존 로직 재사용) + 묶음 요약, 충돌/누락/미구매는 전체 거절', () => {
+  const env = bridgeEnv(); const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  const ids = wdlRows(env, g.groupId).map(x => x[0]);
+  const results = [{ comboNo: 1, hits: 13, rank: '4등', prize: 5000 }].concat([2, 3, 4, 5, 6, 7, 8].map(n => ({ comboNo: n, hits: 8 + (n % 4), rank: '미당첨' })));
+  // 한 조합 값이 잘못되면 아무것도 기록되지 않음 (원자적 사전검증)
+  const bad = inboxJson(env, 'rich-grp-result-bad-1', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: results.map(c => c.comboNo === 5 ? Object.assign({}, c, { rank: '5등' }) : c) });
+  const miss = inboxJson(env, 'rich-grp-result-miss1', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: results.slice(0, 7) });
+  const ok = inboxJson(env, 'rich-grp-result-ok-01', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: results, checkedAt: '2026-10-06 05:10:00', source: [{ name: 'toto', url: 'https://example.com/58' }] });
+  const out = runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, bad)[3], inboxRow(env, miss)[3], inboxRow(env, ok)[3]], ['ERROR', 'ERROR', 'DONE']);
+  assert.match(inboxRow(env, miss)[7], /누락된 조합순번: 8/);
+  assert.deepStrictEqual([inboxRow(env, ok)[5], inboxRow(env, ok)[6]], [g.groupId, 'WDL_MULTI_RESULT']);
+  const rows = wdlRows(env, g.groupId);
+  assert.deepStrictEqual([rows[0][19], rows[0][20], rows[0][21], rows[0][22]], [13, '4등', 5000, 4000]);   // 조합1: 당첨, 손익 +4,000
+  assert.deepStrictEqual([rows[1][20], rows[1][21], rows[1][22]], ['미당첨', 0, -1000]);               // 나머지: 각각 독립 결과
+  assert.ok(rows.every(x => x[20] !== '대기'));
+  const m = env.get('apiGetMonthly')('2026-10');
+  assert.deepStrictEqual([m.summary.profit, m.summary.totalReturn, m.wdl.prize, m.wdl.bestHits, m.wdl.bestRank], [-3000, 5000, 5000, 13, '4등']);
+  const grp = JSON.parse(JSON.stringify(m.wdlGroups[0]));
+  assert.deepStrictEqual([grp.groupId, grp.comboCount, grp.stake, grp.bestHits, grp.winners, grp.prize], [g.groupId, 8, 8000, 13, 1, 5000]);
+  // 같은 결과 재전송은 멱등 DONE, 상충 결과는 ERROR (덮어쓰기 없음)
+  const again = inboxJson(env, 'rich-grp-result-ok-02', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: results });
+  const clash = inboxJson(env, 'rich-grp-result-bad-2', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: results.map(c => c.comboNo === 2 ? { comboNo: 2, hits: 14, rank: '1등', prize: 900000 } : c) });
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, again)[3], inboxRow(env, clash)[3]], ['DONE', 'ERROR']);
+  assert.match(inboxRow(env, clash)[7], /조합2: 이미 다른 결과/);
+  assert.deepStrictEqual([wdlRows(env, g.groupId)[1][20], env.get('apiGetMonthly')('2026-10').summary.profit], ['미당첨', -3000]);
+  // 단일 행 RESULT(targetType WDL)도 그룹 행에 그대로 동작
+  const g2 = saveMulti(env, { round: '61' }); buyGroup(env, g2.groupId);
+  const one = inboxJson(env, 'rich-grp-result-one-1', { action: 'RESULT', targetType: 'WDL', targetId: wdlRows(env, g2.groupId)[2][0], hits: 12, rank: '미당첨' });
+  runInbox(env); assert.strictEqual(inboxRow(env, one)[3], 'DONE'); assert.deepStrictEqual([wdlRows(env, g2.groupId)[2][20], wdlRows(env, g2.groupId)[3][20]], ['미당첨', '대기']);
+  // 미구매 묶음은 거절
+  const g3 = saveMulti(env, { round: '62' }); buyGroup(env, g3.groupId, false);
+  const no = inboxJson(env, 'rich-grp-result-no-01', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g3.groupId, combos: results });
+  runInbox(env); assert.strictEqual(inboxRow(env, no)[7], '구매하지 않은 베팅은 결과 처리할 수 없습니다.'); void ids; void out;
+});
+test('100. 회귀: 기존 주력/보조1/보조2 WDL(5,000+3,000+2,000 허용, 3,000 추가 차단)은 묶음 도입 후에도 동일', () => {
+  const env = bridgeEnv(); env.setNow(kst('2026-10-05'));
+  const a = env.get('apiSaveRichPick')(rw({ round: '70', combo: '주력', stake: 5000 })).id, b = env.get('apiSaveRichPick')(rw({ round: '70', combo: '보조1', stake: 3000 })).id;
+  const c = env.get('apiSaveRichPick')(rw({ round: '70', combo: '보조2', stake: 3000 })).id;
+  assert.ok(buy(env, 'wdl', a).ok && buy(env, 'wdl', b).ok);
+  assert.match(buy(env, 'wdl', c).error, /회차 최대 10,000원 초과: 70회차 구매 8,000원 \+ 신규 3,000원 = 11,000원/);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(env.get('apiGetPending')().wdl.map(x => x.kind || 'single'))), ['single', 'single']);
+  assert.ok(wdlRows(env).every(x => (x[28] || '') === '' && (x[29] || '') === ''));            // 묶음 열은 기존 행에서 비어 있음
+  const r = env.get('apiResolveWdl')({ id: a, hits: 12, rank: '4등', prize: 9000, reqId: 'old-wdl-1' });
+  assert.deepStrictEqual([r.ok, r.profit], [true, 4000]);
+  const m = env.get('apiGetMonthly')('2026-10');
+  assert.deepStrictEqual([m.wdlGroups.length, m.wdlGroups[0].comboCount, m.wdl.rounds, m.wdl.stake], [2, 1, 1, 8000]);   // 기존 행은 행 하나 = 한 묶음
 });
 
 console.log(results.join('\n'));

@@ -162,6 +162,59 @@ await test('89. 390px: 가로 overflow 없음, 콘솔 에러 없음 (긴 이름/
   } finally { await app.close(); }
 });
 
+const SEL58 = [['승'], ['승', '무'], ['패'], ['승'], ['승'], ['승'], ['승'], ['무', '패'], ['승', '무'], ['패'], ['승'], ['패'], ['패'], ['승']];
+const seedGroup = (env) => { env.setNow(NOW); const r = env.get('apiSaveRichPick')({ requestId: 'ui-wdl-multi-' + (++SEQ) + '-58', type: 'WDL_MULTI', round: '58', date: '2026-10-05', selections: SEL58, stakePerCombo: 1000 }); if (!r.ok) throw new Error(r.error); return r; };
+await test('101. 승무패 묶음: 구매확인 카드는 1장(8조합/8,000원/복수마킹), 확인창 → 그룹 전체 1회 호출로 8행 구매', async () => {
+  const env = makeEnv(); const g = seedGroup(env);
+  const app = await openApp({ env }); try {
+    assert.strictEqual(await app.page.locator('#tab-buy .pend').count(), 1);                    // 8행이어도 카드 1장
+    const card1 = app.page.locator('#tab-buy .pend');
+    const txt = await card1.textContent();
+    assert.ok(txt.includes('승무패 58회차') && txt.includes('8조합') && txt.includes('8,000원') && txt.includes('2번 승/무') && txt.includes('8번 무/패') && txt.includes('9번 승/무'), txt);
+    assert.strictEqual((await app.page.textContent('#navBuy')).trim(), '구매 확인 (1)');
+    const n = app.calls.length;
+    await card1.locator('.yes').click(); await flush(app.page);
+    assert.strictEqual(app.calls.length, n);                                                      // 첫 터치: 서버 호출 없음
+    const m = await app.page.textContent('#cfm'); assert.ok(m.includes('8조합 전체가 한 번에 처리') && m.includes('8,000원') && m.includes('샀다 확정'), m);
+    await app.page.click('#cfmBack'); await flush(app.page);
+    assert.ok(env.sheet('WDL_LOG').grid.slice(1).every(r => r[25] === '미확인'));              // 돌아가기: 어떤 행도 변경 없음
+    assert.strictEqual(app.calls.length, n);
+    await card1.locator('.yes').click(); await app.page.evaluate(() => { for (let i = 0; i < 4; i++) document.getElementById('cfmOk').click(); });
+    await app.page.waitForFunction(() => document.getElementById('hUsed').textContent === '8,000원');
+    assert.deepStrictEqual(app.calls.slice(n), ['apiPurchase']);                                  // 그룹 전체 = 서버 호출 1회
+    const rows = env.sheet('WDL_LOG').grid.slice(1);
+    assert.ok(rows.length === 8 && rows.every(r => r[25] === '구매' && r[26] === 1000));
+    assert.strictEqual(await app.page.locator('#tab-buy .pend').count(), 0);
+    assert.strictEqual(app.errs.length, 0, app.errs.join('|'));
+    void g;
+  } finally { await app.close(); }
+});
+await test('102. 승무패 묶음: 결과 처리는 조합별 독립 입력, 월간에는 묶음 요약 표시', async () => {
+  const env = makeEnv(); const g = seedGroup(env);
+  env.get('apiPurchase')({ kind: 'wdl_group', id: g.groupId, buy: true, reqId: 'ui-grp-buy' });
+  const app = await openApp({ env }); try {
+    await app.page.click('[data-tab=res]'); await app.page.waitForSelector('#pWdl .grp');
+    assert.strictEqual(await app.page.locator('#pWdl .grp').count(), 1);
+    assert.strictEqual(await app.page.locator('#pWdl .grp .pend').count(), 8);
+    const c1 = app.page.locator('#pWdl .grp .pend').first();
+    await c1.locator('.wHits').selectOption('13'); await c1.locator('.wRank').selectOption('4등'); await c1.locator('.wPrize').fill('5000');
+    const n = app.calls.length;
+    await c1.locator('.rWdlSave').click(); await flush(app.page);
+    assert.strictEqual(app.calls.length, n);
+    assert.ok((await app.page.textContent('#cfm')).includes('13개 적중 / 4등') && (await app.page.textContent('#cfm')).includes('조합1'));
+    await app.page.click('#cfmOk'); await flush(app.page);
+    assert.deepStrictEqual(app.calls.slice(n), ['apiResolveWdl']);
+    assert.strictEqual(await app.page.locator('#pWdl .grp .pend').count(), 7);
+    const done = env.sheet('WDL_LOG').grid.slice(1);
+    assert.deepStrictEqual([done[0][20], done[0][22], done[1][20]], ['4등', 4000, '대기']);       // 조합1만 결과, 나머지는 대기
+    await app.page.click('[data-tab=mon]'); await app.page.waitForSelector('#mBody table');
+    const mon = await app.page.textContent('#mBody');
+    assert.ok(mon.includes('승무패 묶음') && mon.includes('13/14') && mon.includes('1/8') && mon.includes('5,000원'), mon.slice(0, 400));
+    assert.ok(!(await app.page.evaluate(() => document.documentElement.scrollWidth > innerWidth)));
+    assert.strictEqual(app.errs.length, 0, app.errs.join('|'));
+  } finally { await app.close(); }
+});
+
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} UI tests passed`);
 process.exit(pass === results.length ? 0 : 1);

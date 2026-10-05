@@ -29,3 +29,9 @@
 - [안 샀다] → 미구매 / 실제베팅금액 빈값 / 구매일시=현재. 기록은 삭제하지 않음
 - 이미 처리된 기록은 다시 처리할 수 없음(중복 클릭 방어). 월 귀속은 구매일시 기준(DASHBOARD 수식과 동일)
 - DASHBOARD 시트는 코드가 쓰지 않음
+
+## 승무패 복수마킹 묶음 (WDL_MULTI)
+- WDL_LOG 끝에 `구매묶음ID`(AC), `조합순번`(AD) 열 추가. 기존 행은 비어 있어도 정상 동작(행 하나 = 한 묶음). `setupWdlGroupColumns()` 가 비파괴로 헤더/열을 추가한다.
+- RICH_INBOX payload: `{"requestId":..., "type":"WDL_MULTI", "round":"58", "date":"2026-10-05", "selections":[14경기×[승/무/패...]], "stakePerCombo":1000, "memo":""}` → 서버가 데카르트 곱으로 확장해 조합1~조합N(최대 10) 행을 한 번에 저장
+- 구매 확인은 묶음 단위(`apiPurchase` kind=`wdl_group`): 전체 금액으로 회차/월 한도 사전검증 후 모든 행을 한 번에 기록(부분 구매 없음)
+- 결과: 조합마다 독립(`RESULT` targetType=`WDL`, 또는 묶음 일괄 targetType=`WDL_MULTI` + `combos:[{comboNo,hits,rank,prize}]`)
