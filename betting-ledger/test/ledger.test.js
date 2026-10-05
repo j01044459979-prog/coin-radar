@@ -941,6 +941,226 @@ test('63. 회귀: Inbox 저장 픽도 구매일 기준 한도/구매 확인/결�
   assert.strictEqual(setup().get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상');
 });
 
+/* ---------- 혼합 종목 정규화 / 구매일 한도 회귀 / RESULT Bridge / 읽기 최적화 ---------- */
+const inboxJson = (env, id, obj, status = 'PENDING') => inboxAdd(env, id, Object.assign({ requestId: id }, obj), status);
+const resultPayload = (id, o = {}) => Object.assign({ action: 'RESULT', targetType: 'BET', targetId: id, checkedAt: '2026-10-06 05:10:00',
+  source: [{ name: '공식 경기결과', url: 'https://example.com/result?id=1' }] }, o);
+// 구매 완료된 BET / WDL 만들기 (Rich 저장 → 샀다)
+const boughtBet = (env, o = {}, day = '2026-10-05') => { env.setNow(kst(day)); const r = env.get('apiSaveRichPick')(rp(o)); assert.ok(r.ok, r.error); assert.ok(buy(env, 'bet', r.id).ok); return r.id; };
+const boughtWdl = (env, o = {}, day = '2026-10-05') => { env.setNow(kst(day)); const r = env.get('apiSaveRichPick')(rw(o)); assert.ok(r.ok, r.error); assert.ok(buy(env, 'wdl', r.id).ok); return r.id; };
+const betRow = (env, id) => env.sheet('BET_LOG').grid.slice(1).find(r => r[0] === id);
+const wdlRow = (env, id) => env.sheet('WDL_LOG').grid.slice(1).find(r => r[0] === id);
+
+test('64. 실제 사례: sport="혼합" → "기타"로 정규화되어 정상 저장 (Rich API / Inbox)', () => {
+  const env = bridgeEnv();
+  const r = env.get('apiSaveRichPick')(rp({ requestId: 'rich-mixed-sport-01', sport: '혼합', name: '6486 패 + 6580 승', stake: 3000 }));
+  assert.ok(r.ok, r.error);
+  assert.deepStrictEqual([betRow(env, r.id)[2], betRow(env, r.id)[16]], ['기타', '미확인']);
+  const i = inboxAdd(env, 'rich-20261005-proto118-6486-6580', { requestId: 'rich-20261005-proto118-6486-6580', type: 'BET', date: '2026-10-05', sport: '혼합',
+    league: '프로토 승부식 118회차', name: '6486 패 + 6580 승', pick: '6486 패 + 6580 승', folders: 2, odds: 3.1, stake: 3000, grade: '메인', memo: '' });
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, i)[3], inboxRow(env, i)[7]], ['DONE', '']);
+  assert.strictEqual(betRow(env, inboxRow(env, i)[5])[2], '기타');
+  // saveBet_ 최종 검증 자체는 그대로: Rich 경로 밖의 직접 저장은 '혼합'을 허용하지 않음
+  assert.match(env.get('apiSaveBet')({ date: '2026-10-05', sport: '혼합', league: '', name: 'x', pick: '', folders: 1, odds: 2, stake: 1000, grade: '메인', reqId: 'direct-mixed-1' }).error, /종목/);
+  // 앞뒤 공백이 있어도 alias 처리, WDL 에는 영향 없음
+  assert.ok(env.get('apiSaveRichPick')(rp({ sport: ' 혼합 ' })).ok);
+});
+test('65. 임의의 잘못된 sport 는 여전히 ERROR (허용값 안내 포함)', () => {
+  const env = bridgeEnv();
+  const msg = '종목: 허용되지 않은 값입니다. 허용값: 축구, 야구, 농구, 배구, 기타';
+  assert.strictEqual(env.get('apiSaveRichPick')(rp({ sport: '골프' })).error, msg);
+  assert.strictEqual(env.get('apiSaveRichPick')(rp({ sport: '혼합경기' })).error, msg);       // 부분 일치는 alias 아님
+  assert.strictEqual(env.get('apiSaveRichPick')(rp({ sport: '' })).error, msg);
+  const i = inboxJson(env, 'rich-bad-sport-0001', betPayload({ sport: 'e스포츠' }));
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, i)[3], inboxRow(env, i)[7]], ['ERROR', msg]);
+  assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 1);
+});
+test('66. 일 구매 2,000 → 3,000: 둘 다 성공 (추천 합계/미구매/미확인은 한도에 불포함)', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  recBet(env, { stake: 4000, name: '미확인대기' });                                    // 미확인 4,000 (구매 전)
+  const skipped = recBet(env, { stake: 5000, name: '안샀음' }).id; assert.ok(buy(env, 'bet', skipped, false).ok);   // 미구매 5,000
+  const a = recBet(env, { stake: 2000, name: 'A' }).id, b = recBet(env, { stake: 3000, name: 'B' }).id;
+  assert.ok(buy(env, 'bet', a).ok);
+  const r = buy(env, 'bet', b); assert.ok(r.ok, r.error);                              // 합계 정확히 5,000 → 허용
+  assert.strictEqual(env.get('betUsedOn_')('2026-10-05'), 5000);
+  assert.strictEqual(buy(env, 'bet', recBet(env, { stake: 1, name: 'C' }).id).ok, false);   // 5,001 부터 차단
+});
+test('67. 일 구매 3,000 → 2,000: 둘 다 성공', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  const a = recBet(env, { stake: 3000, name: 'A' }).id, b = recBet(env, { stake: 2000, name: 'B' }).id;
+  assert.ok(buy(env, 'bet', a).ok); assert.ok(buy(env, 'bet', b).ok);
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 5000);
+});
+test('68. 일 구매 2,000 → 3,001: 두 번째 차단 (구매일 buyAt 기준, 추천일 무관)', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  const a = recBet(env, { stake: 2000, date: '2026-10-01', name: 'A' }).id, b = recBet(env, { stake: 3001, date: '2026-10-09', name: 'B' }).id;
+  assert.ok(buy(env, 'bet', a).ok);
+  const r = buy(env, 'bet', b);
+  assert.strictEqual(r.ok, false); assert.match(r.error, /일 최대 5,000원 초과: 해당일 구매 2,000원 \+ 신규 3,001원 = 5,001원/);
+  assert.deepStrictEqual([...betRow(env, b).slice(16, 19)], ['미확인', '', '']);
+});
+test('76. RESULT: 구매한 BET 적중 처리 (기존 resolveBet_ 로 손익/ROI 계산)', () => {
+  const env = bridgeEnv(); const id = boughtBet(env, { stake: 5000 });
+  const i = inboxJson(env, 'rich-result-20261006-0001', resultPayload(id, { result: '적중', ret: 11000 }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.error], [1, 0]);
+  const r = inboxRow(env, i);
+  assert.deepStrictEqual([r[3], r[5], r[6], r[7]], ['DONE', id, 'BET_RESULT', '']);
+  const row = betRow(env, id);
+  assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['적중', 11000, 6000, 1.2]);
+  const s = dash(env).summary; assert.deepStrictEqual([s.profit, s.roi, s.hitRate], [6000, 120, 100]);
+  // 적중인데 반환금이 없으면 기존 규칙대로 거절
+  const id2 = boughtBet(env, { stake: 1000, date: '2026-10-05', name: 'Z' }, '2026-10-06');
+  const j = inboxJson(env, 'rich-result-20261006-0002', resultPayload(id2, { result: '적중' })); runInbox(env);
+  assert.match(inboxRow(env, j)[7], /적중은\(는\) 실제 반환금\(원금 포함\)/); assert.strictEqual(betRow(env, id2)[9], '대기');
+});
+test('77. RESULT: 구매한 BET 미적중 처리 (반환금 0, 손익 -베팅금액)', () => {
+  const env = bridgeEnv(); const id = boughtBet(env, { stake: 5000 });
+  const i = inboxJson(env, 'rich-result-miss-00001', resultPayload(id, { result: '미적중' }));
+  runInbox(env);
+  assert.strictEqual(inboxRow(env, i)[3], 'DONE');
+  const row = betRow(env, id); assert.deepStrictEqual([row[9], row[10], row[11], row[12]], ['미적중', 0, -5000, -1]);
+  const c = boughtBet(env, { stake: 2000, name: 'C' }, '2026-10-06'); inboxJson(env, 'rich-result-cancel-001', resultPayload(c, { result: '취소' })); runInbox(env);
+  assert.deepStrictEqual([betRow(env, c)[9], betRow(env, c)[10], betRow(env, c)[11]], ['취소', 2000, 0]);   // 취소 기본 반환금 = 실제 베팅금액
+});
+test('78. RESULT: 미구매/미확인/없는 대상은 거절 (장부 불변)', () => {
+  const env = bridgeEnv();
+  const skipped = env.get('apiSaveRichPick')(rp({ name: '안샀음' })).id; assert.ok(buy(env, 'bet', skipped, false).ok);
+  const pending = env.get('apiSaveRichPick')(rp({ name: '미확인' })).id;
+  const a = inboxJson(env, 'rich-result-skipped-01', resultPayload(skipped, { result: '적중', ret: 9000 }));
+  const b = inboxJson(env, 'rich-result-pending-01', resultPayload(pending, { result: '미적중' }));
+  const c = inboxJson(env, 'rich-result-missing-01', resultPayload('B-20260101-NOTEXIST', { result: '미적중' }));
+  const d = inboxJson(env, 'rich-result-badtype-01', resultPayload(skipped, { targetType: 'ETC', result: '미적중' }));
+  const e = inboxJson(env, 'rich-result-noaction-1', { action: 'DELETE' });
+  runInbox(env);
+  assert.strictEqual(inboxRow(env, a)[7], '구매하지 않은 베팅은 결과 처리할 수 없습니다.');
+  assert.strictEqual(inboxRow(env, b)[7], '구매하지 않은 베팅은 결과 처리할 수 없습니다.');
+  assert.strictEqual(inboxRow(env, c)[7], '대상 ID를 찾을 수 없습니다.');
+  assert.match(inboxRow(env, d)[7], /targetType/); assert.match(inboxRow(env, e)[7], /action/);
+  assert.ok([a, b, c, d, e].every(i => inboxRow(env, i)[3] === 'ERROR' && inboxRow(env, i)[5] === ''));
+  assert.deepStrictEqual([betRow(env, skipped)[9], betRow(env, pending)[9]], ['대기', '대기']);
+});
+test('79. 같은 RESULT requestId 재처리 → 중복 손익 처리 없음', () => {
+  const env = bridgeEnv(); const id = boughtBet(env, { stake: 5000 });
+  const a = inboxJson(env, 'rich-result-same-req-1', resultPayload(id, { result: '적중', ret: 11000 }));
+  const b = inboxJson(env, 'rich-result-same-req-1', resultPayload(id, { result: '적중', ret: 11000 }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.done, out.duplicate, out.error], [2, 1, 0]);
+  assert.deepStrictEqual([inboxRow(env, a)[3], inboxRow(env, b)[3], inboxRow(env, b)[7]], ['DONE', 'DONE', '']);
+  const s = dash(env).summary; assert.deepStrictEqual([s.totalReturn, s.profit, s.settledStake], [11000, 6000, 5000]);
+  // 다른 결과 내용으로 같은 requestId 가 다시 와도 기존 처리 결과를 그대로 DONE (덮어쓰기 없음)
+  const c = inboxJson(env, 'rich-result-same-req-1', resultPayload(id, { result: '미적중' })); runInbox(env);
+  assert.strictEqual(inboxRow(env, c)[3], 'DONE'); assert.strictEqual(betRow(env, id)[9], '적중');
+});
+test('80. 같은 targetId / 같은 result 를 새 requestId 로 재전송 → 멱등 성공 (값 불변)', () => {
+  const env = bridgeEnv(); const id = boughtBet(env, { stake: 5000 });
+  inboxJson(env, 'rich-result-first-0001', resultPayload(id, { result: '적중', ret: 11000 })); runInbox(env);
+  const snap = JSON.stringify(betRow(env, id));
+  const again = inboxJson(env, 'rich-result-again-001', resultPayload(id, { result: '적중', ret: 11000 }));
+  const noRet = inboxJson(env, 'rich-result-again-002', resultPayload(id, { result: '적중' }));     // 반환금 생략도 같은 결과로 인정
+  const badRet = inboxJson(env, 'rich-result-again-003', resultPayload(id, { result: '적중', ret: 12000 }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, again)[3], inboxRow(env, noRet)[3], inboxRow(env, badRet)[3]], ['DONE', 'DONE', 'ERROR']);
+  assert.match(inboxRow(env, badRet)[7], /반환금 값이 다릅니다/);
+  assert.strictEqual(out.duplicate, 2); assert.strictEqual(JSON.stringify(betRow(env, id)), snap);
+});
+test('81. 같은 targetId 에 상충 result → conflict ERROR, 자동 덮어쓰기 없음', () => {
+  const env = bridgeEnv(); const id = boughtBet(env, { stake: 5000 });
+  inboxJson(env, 'rich-result-win-000001', resultPayload(id, { result: '적중', ret: 11000 })); runInbox(env);
+  const snap = JSON.stringify(betRow(env, id));
+  const x = inboxJson(env, 'rich-result-lose-00001', resultPayload(id, { result: '미적중' }));
+  const y = inboxJson(env, 'rich-result-cncl-00001', resultPayload(id, { result: '취소' }));
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, x)[3], inboxRow(env, y)[3]], ['ERROR', 'ERROR']);
+  assert.strictEqual(inboxRow(env, x)[7], '이미 다른 결과로 처리된 베팅입니다.');
+  assert.strictEqual(JSON.stringify(betRow(env, id)), snap);
+  const s = dash(env).summary; assert.deepStrictEqual([s.profit, s.totalReturn], [6000, 11000]);
+});
+test('82. source/checkedAt 은 Inbox payloadJson 에만 보존, 장부 계산/메모/구조 불변', () => {
+  const env = bridgeEnv();
+  const a = boughtBet(env, { stake: 5000, memo: '기존 메모' }), b = boughtBet(env, { stake: 5000, name: 'B', memo: '기존 메모' }, '2026-10-06');
+  const colsBefore = env.sheet('BET_LOG').grid[0].length;
+  const i = inboxJson(env, 'rich-result-source-001', resultPayload(a, { result: '적중', ret: 11000 }));
+  const j = inboxJson(env, 'rich-result-source-002', { action: 'RESULT', targetType: 'BET', targetId: b, result: '적중', ret: 11000 });   // source/checkedAt 없음
+  runInbox(env);
+  const saved = JSON.parse(inboxRow(env, i)[2]);
+  assert.deepStrictEqual([saved.source[0].url, saved.checkedAt], ['https://example.com/result?id=1', '2026-10-06 05:10:00']);   // 감사 기록 보존
+  assert.deepStrictEqual([...betRow(env, a).slice(9, 13)], [...betRow(env, b).slice(9, 13)]);                                    // 계산 동일
+  assert.deepStrictEqual([betRow(env, a)[14], betRow(env, b)[14]], ['기존 메모', '기존 메모']);                                   // 메모 불변
+  assert.ok(!JSON.stringify(env.sheet('BET_LOG').grid).includes('example.com'));
+  assert.strictEqual(env.sheet('BET_LOG').grid[0].length, colsBefore); assert.deepStrictEqual([...env.sheet('RICH_INBOX').grid[0]], INBOX_HEAD);
+  assert.strictEqual(inboxRow(env, j)[3], 'DONE');
+});
+test('83. WDL RESULT: 기존 resolveWdl_ 와 동일 결과, 멱등/충돌/미구매 거절', () => {
+  const env = bridgeEnv();
+  const w = boughtWdl(env, { stake: 5000, round: 'R-A', combo: '주력' }), ref = boughtWdl(env, { stake: 5000, round: 'R-B', combo: '주력' });
+  env.get('apiResolveWdl')({ id: ref, hits: 12, rank: '4등', prize: 9000, reqId: 'manual-ref-1' });      // 웹앱 수동 처리(기준)
+  const i = inboxJson(env, 'rich-result-wdl-00001', { action: 'RESULT', targetType: 'WDL', targetId: w, hits: 12, rank: '4등', prize: 9000, checkedAt: '2026-10-06 05:10:00', source: [{ name: 'toto', url: 'https://example.com/wdl' }] });
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, i)[3], inboxRow(env, i)[5], inboxRow(env, i)[6]], ['DONE', w, 'WDL_RESULT']);
+  assert.deepStrictEqual([...wdlRow(env, w).slice(19, 23)], [...wdlRow(env, ref).slice(19, 23)]);        // hits/rank/prize/profit 동일
+  assert.deepStrictEqual([wdlRow(env, w)[19], wdlRow(env, w)[20], wdlRow(env, w)[21], wdlRow(env, w)[22]], [12, '4등', 9000, 4000]);
+  const same = inboxJson(env, 'rich-result-wdl-00002', { action: 'RESULT', targetType: 'WDL', targetId: w, hits: 12, rank: '4등', prize: 9000 });
+  const conflict = inboxJson(env, 'rich-result-wdl-00003', { action: 'RESULT', targetType: 'WDL', targetId: w, hits: 13, rank: '3등', prize: 30000 });
+  const skipped = env.get('apiSaveRichPick')(rw({ round: 'R-C' })).id; env.get('apiPurchase')({ kind: 'wdl', id: skipped, buy: false, reqId: 'skip-wdl-1' });
+  const nope = inboxJson(env, 'rich-result-wdl-00004', { action: 'RESULT', targetType: 'WDL', targetId: skipped, hits: 5, rank: '미당첨', prize: 0 });
+  const lose = boughtWdl(env, { stake: 3000, round: 'R-D', combo: '보조1' });
+  const miss = inboxJson(env, 'rich-result-wdl-00005', { action: 'RESULT', targetType: 'WDL', targetId: lose, hits: 8, rank: '미당첨' });
+  runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, same)[3], inboxRow(env, conflict)[3], inboxRow(env, nope)[3], inboxRow(env, miss)[3]], ['DONE', 'ERROR', 'ERROR', 'DONE']);
+  assert.strictEqual(inboxRow(env, conflict)[7], '이미 다른 결과로 처리된 베팅입니다.');
+  assert.strictEqual(inboxRow(env, nope)[7], '구매하지 않은 베팅은 결과 처리할 수 없습니다.');
+  assert.deepStrictEqual([wdlRow(env, lose)[20], wdlRow(env, lose)[21], wdlRow(env, lose)[22]], ['미당첨', 0, -3000]);
+  assert.strictEqual(wdlRow(env, skipped)[20], '대기');
+});
+test('84. 회귀: 수동 결과 처리(웹앱 API)와 RESULT 가 공존, 월간 성적/미확인 차단 유지', () => {
+  const env = bridgeEnv();
+  const a = boughtBet(env, { stake: 1000, name: 'A' }), b = boughtBet(env, { stake: 1000, name: 'B' });   // 합계 2,000 ≤ 5,000
+  const un = env.get('apiSaveRichPick')(rp({ name: 'U' })).id;
+  inboxJson(env, 'rich-result-regress-01', resultPayload(a, { result: '적중', ret: 3000 })); runInbox(env);
+  const m = env.get('apiResolveBet')({ id: b, result: '적중', ret: 3000, reqId: 'manual-b' });          // 수동 처리 경로 불변
+  assert.deepStrictEqual([m.ok, m.profit, m.roi], [true, 2000, 200]);
+  assert.deepStrictEqual([...betRow(env, a).slice(9, 13)], [...betRow(env, b).slice(9, 13)]);            // 자동/수동 결과 동일
+  assert.match(env.get('apiResolveBet')({ id: un, result: '미적중', reqId: 'manual-un' }).error, /먼저 구매 확인/);
+  const skip = env.get('apiSaveRichPick')(rp({ name: 'S' })).id; buy(env, 'bet', skip, false);
+  assert.ok(env.get('apiResolveBet')({ id: skip, result: '적중', ret: 2000, reqId: 'manual-skip' }).ok);   // 수동 경로는 미구매 추천 결과 입력 허용(기존 동작)
+  const s = env.get('apiGetMonthly')('2026-10').summary; assert.deepStrictEqual([s.used, s.profit, s.settledStake], [2000, 4000, 2000]);
+  const p = env.get('apiGetPending')(); assert.strictEqual(p.bets.length, 0);
+  assert.strictEqual(env.get('diagnoseSetup')(), '리치 베팅 장부 V1 환경 정상 / Rich Bridge 정상');
+});
+test('85. 원래 실패한 ERROR 감사 행은 보존되고, 새 requestId 수정본만 정상 저장', () => {
+  const env = bridgeEnv();
+  const orig = inboxAdd(env, 'rich-20261005-proto118-6486-6580', betPayload({ sport: '혼합', stake: 3000 }), 'ERROR', { processedAt: ago(env, 120) });
+  env.sheet('RICH_INBOX').grid[orig][7] = '종목: 허용되지 않은 값입니다.';
+  const origSnap = JSON.stringify(inboxRow(env, orig));
+  const fix = inboxAdd(env, 'rich-20261005-proto118-6486-6580-fix', betPayload({ sport: '기타', stake: 3000 }));
+  const out = runInbox(env);
+  assert.deepStrictEqual([out.processed, out.done], [1, 1]);
+  assert.strictEqual(JSON.stringify(inboxRow(env, orig)), origSnap);                                   // ERROR 이력 그대로(재처리/수정/삭제 없음)
+  assert.strictEqual(inboxRow(env, fix)[3], 'DONE'); assert.strictEqual(env.sheet('BET_LOG').getLastRow(), 2);
+});
+test('86. 읽기 최적화: API 1회에서 같은 시트/설정을 반복해서 읽지 않음', () => {
+  const env = setup(); env.setNow(kst('2026-10-05'));
+  const cnt = {};
+  for (const n of ['BET_LOG', 'WDL_LOG', 'SETTINGS']) {
+    const sh = env.sheet(n), g = sh.getRange;
+    sh.getRange = (r, ...a) => { const rg = g(r, ...a); if (r < 2) return rg; return new Proxy(rg, { get: (tt, k) => k === 'getValues' ? () => { cnt[n] = (cnt[n] || 0) + 1; return tt.getValues(); } : tt[k] }); };
+  }
+  const a = recBet(env, { stake: 1000 }).id; recWdl(env, { stake: 1000 });
+  const reads = fn => { for (const k in cnt) delete cnt[k]; const r = fn(); return Object.assign({ ok: r.ok }, cnt); };
+  assert.deepStrictEqual(reads(() => env.get('apiBootstrap')()), { ok: true, BET_LOG: 1, WDL_LOG: 1, SETTINGS: 1 });
+  assert.deepStrictEqual(reads(() => env.get('apiGetUnconfirmed')()), { ok: true, BET_LOG: 1, WDL_LOG: 1, SETTINGS: 1 });
+  assert.deepStrictEqual(reads(() => env.get('apiGetPending')()), { ok: true, BET_LOG: 1, WDL_LOG: 1, SETTINGS: 1 });
+  assert.deepStrictEqual(reads(() => env.get('apiGetMonthly')('2026-10')), { ok: true, BET_LOG: 1, WDL_LOG: 1, SETTINGS: 1 });
+  const p = reads(() => env.get('apiPurchase')({ kind: 'bet', id: a, buy: true, reqId: 'perf-1' }));   // 쓰기 후 요약 재계산 1회까지만
+  assert.ok(p.BET_LOG <= 2 && p.WDL_LOG <= 2 && p.SETTINGS === 1, JSON.stringify(p));
+  // 메모가 쓰기 후 낡은 데이터를 돌려주지 않음
+  assert.strictEqual(env.get('apiGetUnconfirmed')().bets.length, 0);
+  assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.used, 1000);
+});
+
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} passed`);
 process.exit(pass === results.length ? 0 : 1);

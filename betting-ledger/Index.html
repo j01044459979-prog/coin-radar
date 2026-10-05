@@ -55,13 +55,26 @@
   .pend { border-top:1px solid var(--line); padding-top:10px; margin-top:10px; }
   .pend:first-child { border-top:0; margin-top:0; padding-top:0; }
   .hidden { display:none; }
+  .top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .refresh { padding:6px 10px; font-size:13px; font-weight:700; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; }
+  .refresh:disabled { opacity:.5; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-end; justify-content:center; z-index:50; }
+  .modal.hidden { display:none; }
+  .sheet { background:var(--card); color:var(--ink); width:100%; max-width:640px; border-radius:16px 16px 0 0; padding:16px 16px calc(16px + env(safe-area-inset-bottom)); overflow-wrap:anywhere; }
+  .sheet h3 { margin:0 0 8px; font-size:17px; }
+  .sheet .ln { margin:4px 0; }
+  .sheet .actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+  .sheet .actions button { padding:15px 0; font-size:17px; font-weight:800; border:0; border-radius:10px; }
+  .sheet .back { background:var(--line); color:var(--ink); } .sheet .ok { background:var(--pri); color:#fff; }
+  .sheet .actions button:disabled { opacity:.5; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#14532d; color:#fff; padding:10px 16px; border-radius:20px; font-size:15px; z-index:60; max-width:90%; display:none; }
 </style>
 </head>
 <body>
 <h1>리치 베팅 장부</h1>
 
 <div class="card" id="head">
-  <div class="sub" id="hMonth">불러오는 중…</div>
+  <div class="top"><div class="sub" id="hMonth">불러오는 중…</div><button class="refresh" id="btnRefresh" type="button">↻ 새로고침</button></div>
   <div class="row"><span>실제 사용액</span><span class="num"><span id="hUsed">-</span> / <span id="hBudget">-</span></span></div>
   <div class="bar" id="hBar"><i style="width:0"></i></div>
   <div class="row"><span>남은 예산</span><span class="num" id="hRemain">-</span></div>
@@ -79,14 +92,12 @@
 <!-- 구매 확인 -->
 <section id="tab-buy">
   <div class="card"><h2 style="margin-top:0">리치 추천픽 (구매 미확인)</h2><div id="uBody" class="sub">불러오는 중…</div></div>
-  <div class="msg" id="uMsg"></div>
 </section>
 
 <!-- 결과 처리 -->
 <section id="tab-res" class="hidden">
   <div class="card"><h2 style="margin-top:0">일반 토토 (대기)</h2><div id="pBets" class="sub">불러오는 중…</div></div>
   <div class="card"><h2 style="margin-top:0">승무패 (대기)</h2><div id="pWdl" class="sub">불러오는 중…</div></div>
-  <div class="msg" id="rMsg"></div>
 </section>
 
 <!-- 월간 성적 -->
@@ -95,8 +106,19 @@
   <div id="mBody" class="sub">불러오는 중…</div>
 </section>
 
+<div id="cfm" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cfmTitle">
+  <div class="sheet">
+    <h3 id="cfmTitle"></h3>
+    <div id="cfmText"></div>
+    <div id="cfmErr" class="msg err"></div>
+    <div class="actions"><button type="button" class="back" id="cfmBack">돌아가기</button><button type="button" class="ok" id="cfmOk"></button></div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status"></div>
+
 <script>
-var S = { today:'', month:'', settings:null, busy:{} };
+var S = { month:'', summary:null, tab:'buy', busy:{}, cache:{}, inflight:{}, modal:null };
+var TTL = 60000;                 // 같은 탭 재방문 시 이 시간 안이면 서버 재호출 없음
 var $ = function (id) { return document.getElementById(id); };
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -104,6 +126,7 @@ function won(n) { return Math.round(n).toLocaleString('ko-KR') + '원'; }
 function signed(n) { return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(Math.round(n)).toLocaleString('ko-KR') + '원'; }
 function pct(n) { return n === null || n === undefined ? '-' : n.toFixed(1) + '%'; }
 function spct(n) { return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n).toFixed(1) + '%'; }
+function plainText(html) { var d = document.createElement('div'); d.innerHTML = html; return d.textContent; }
 function cls(n) { return n > 0 ? 'plus' : n < 0 ? 'minus' : ''; }
 function reqId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
 
@@ -116,25 +139,24 @@ function call(fn, arg) {
   });
 }
 
-function show(id, ok, text) { var m = $(id); m.className = 'msg ' + (ok ? 'ok' : 'err'); m.textContent = text; }
-
-/* 저장 버튼: 응답이 올 때까지 잠금, 같은 reqId 로 서버도 중복 차단 */
-function guarded(btn, key, msgId, fn, payload, onOk) {
-  if (S.busy[key]) return;
-  S.busy[key] = true; btn.disabled = true;
-  var old = btn.textContent; btn.textContent = '저장 중…';
-  payload.reqId = payload.reqId || reqId();
-  call(fn, payload).then(function (res) {
-    if (res.ok) { show(msgId, true, '✔ ' + res.message + (res.duplicate ? ' (이미 저장된 요청)' : '')); applySummary(res); onOk && onOk(res); }
-    else show(msgId, false, '✖ ' + res.error);
-  }).then(function () { S.busy[key] = false; btn.disabled = false; btn.textContent = old; });
+/* 같은 요청이 진행 중이면 새로 호출하지 않고 같은 Promise 를 돌려준다 */
+function fetchOnce(key, fn, arg) {
+  if (S.inflight[key]) return S.inflight[key];
+  var p = call(fn, arg).then(function (r) { delete S.inflight[key]; return r; });
+  S.inflight[key] = p;
+  return p;
 }
+function isFresh(tab) { var c = S.cache[tab]; return !!c && Date.now() - c.at < TTL; }
+function markStale() { for (var i = 0; i < arguments.length; i++) delete S.cache[arguments[i]]; }
 
-function applySummary(res) {
-  if (res.summary) renderHead(res.summary);
+var toastTimer = null;
+function toast(msg) {
+  var t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.style.display = 'none'; }, 2500);
 }
 
 function renderHead(s) {
+  S.summary = s;
   $('hMonth').textContent = '이번달 ' + S.month;
   $('hUsed').textContent = won(s.used);
   $('hBudget').textContent = won(s.budget);
@@ -146,27 +168,79 @@ function renderHead(s) {
   $('hRoi').textContent = spct(s.roi); $('hRoi').className = 'num ' + cls(s.roi);
   $('hPend').textContent = '미확정 ' + won(s.pendingStake) + ' · 확정 베팅액 ' + won(s.settledStake);
 }
+function applyMeta(meta) { if (meta) { S.month = meta.month; renderHead(meta.summary); } }
 
-/* ---------- 탭 ---------- */
-document.querySelectorAll('.nav button').forEach(function (b) {
-  b.addEventListener('click', function () {
-    document.querySelectorAll('.nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
-    ['buy', 'res', 'mon'].forEach(function (t) { $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab); });
-    if (b.dataset.tab === 'buy') loadUnconfirmed();
-    if (b.dataset.tab === 'res') loadPending();
-    if (b.dataset.tab === 'mon') loadMonthly();
+/* ---------- 확인창 (상태 변경은 항상 2단계) ---------- */
+function openConfirm(o) {   // o: { title, lines[], okLabel, run(reqId) -> Promise<res>, onSuccess(res) }
+  if (S.modal) return;
+  S.modal = { o: o, reqId: reqId(), busy: false };
+  $('cfmTitle').textContent = o.title;
+  $('cfmText').innerHTML = o.lines.map(function (l) { return '<div class="ln">' + esc(l) + '</div>'; }).join('');
+  $('cfmErr').className = 'msg err'; $('cfmErr').textContent = '';
+  $('cfmOk').textContent = o.okLabel; $('cfmOk').disabled = false; $('cfmBack').disabled = false;
+  $('cfm').classList.remove('hidden');
+  $('cfmBack').focus();
+}
+function closeConfirm() { if (S.modal && S.modal.busy) return; S.modal = null; $('cfm').classList.add('hidden'); }
+$('cfmBack').addEventListener('click', closeConfirm);
+$('cfm').addEventListener('click', function (e) { if (e.target === $('cfm')) closeConfirm(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeConfirm(); });
+$('cfmOk').addEventListener('click', function () {
+  var m = S.modal;
+  if (!m || m.busy) return;                       // 처리 중 연타 차단 (동기 플래그)
+  m.busy = true; $('cfmOk').disabled = true; $('cfmBack').disabled = true; $('cfmOk').textContent = '처리 중…';
+  m.o.run(m.reqId).then(function (res) {
+    m.busy = false;
+    if (res.ok) {
+      S.modal = null; $('cfm').classList.add('hidden');
+      if (res.summary) renderHead(res.summary);
+      m.o.onSuccess(res);
+    } else {
+      $('cfmErr').className = 'msg err'; $('cfmErr').textContent = '✖ ' + res.error;
+      $('cfmOk').disabled = false; $('cfmBack').disabled = false; $('cfmOk').textContent = m.o.okLabel;
+    }
   });
 });
 
+/* ---------- 탭 ---------- */
+function showTab(t) {
+  S.tab = t;
+  document.querySelectorAll('.nav button').forEach(function (x) { x.classList.toggle('on', x.dataset.tab === t); });
+  ['buy', 'res', 'mon'].forEach(function (k) { $('tab-' + k).classList.toggle('hidden', k !== t); });
+  return loadTab(t, false);
+}
+function loadTab(t, force) {
+  if (!force && isFresh(t)) return Promise.resolve();
+  if (t === 'buy') return loadUnconfirmed();
+  if (t === 'res') return loadPending();
+  return loadMonthly();
+}
+document.querySelectorAll('.nav button').forEach(function (b) {
+  b.addEventListener('click', function () { showTab(b.dataset.tab); });
+});
+$('btnRefresh').addEventListener('click', function () {
+  var b = $('btnRefresh'); b.disabled = true;
+  loadTab(S.tab, true).then(function () { b.disabled = false; });
+});
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && !S.modal && !isFresh(S.tab)) loadTab(S.tab, false);
+});
+
 /* ---------- 구매 확인 ---------- */
+function buyCount() { return document.querySelectorAll('#uBody .pend').length; }
+function updateBuyBadge() {
+  var n = buyCount();
+  $('navBuy').textContent = '구매 확인' + (n ? ' (' + n + ')' : '');
+  if (!n) $('uBody').textContent = '구매 확인할 추천픽이 없습니다.';
+}
 function loadUnconfirmed() {
-  call('apiGetUnconfirmed').then(function (res) {
-    if (!res.ok) { show('uMsg', false, res.error); return; }
-    var n = res.bets.length + res.wdl.length;
-    $('navBuy').textContent = '구매 확인' + (n ? ' (' + n + ')' : '');
+  return fetchOnce('buy', 'apiGetUnconfirmed').then(function (res) {
+    if (!res.ok) { $('uBody').textContent = '불러오기 실패: ' + res.error; return; }
+    applyMeta(res.meta);
+    $('mMonth').value = $('mMonth').value || S.month;
     function item(kind, id, top, pick, line) {
-      return '<div class="pend" data-kind="' + kind + '" data-id="' + esc(id) + '"><div><b>' + esc(top) + '</b></div>' +
-        '<div>' + esc(pick) + '</div><div class="sub">' + line + '</div>' +
+      return '<div class="pend" data-kind="' + kind + '" data-id="' + esc(id) + '" data-top="' + esc(top) + '" data-pick="' + esc(pick) + '" data-line="' + esc(plainText(line.replace(/<br>/g, ' · '))) + '">' +
+        '<div><b>' + esc(top) + '</b></div><div>' + esc(pick) + '</div><div class="sub">' + line + '</div>' +
         '<div class="buybtns"><button class="yes" data-buy="1">샀다</button><button class="no" data-buy="0">안 샀다</button></div></div>';
     }
     var html = res.bets.map(function (r) {
@@ -176,71 +250,99 @@ function loadUnconfirmed() {
       var picks = r.picks.split('').map(function (c, i) { return (i + 1) + c; }).join(' ');
       return item('wdl', r.id, r.round + '회차 · ' + r.combo, picks, esc(r.date) + ' · 추천금액 ' + won(r.stake));
     })).join('');
-    $('uBody').innerHTML = html || '구매 확인할 추천픽이 없습니다.';
+    $('uBody').innerHTML = html;
+    S.cache.buy = { at: Date.now() };
+    updateBuyBadge();
   });
 }
-/* 처리 중에는 같은 항목의 두 버튼을 모두 잠그고, 서버도 구매여부=미확인일 때만 처리 */
+/* 첫 터치는 확인창만 연다. 서버 호출은 확인창의 '확정' 버튼에서만. */
 $('tab-buy').addEventListener('click', function (e) {
   var btn = e.target.closest('button[data-buy]'); if (!btn) return;
-  var box = btn.closest('.pend');
-  var all = box.querySelectorAll('button');
-  var key = 'u' + box.dataset.id;
-  if (S.busy[key]) return;
-  S.busy[key] = true; Array.prototype.forEach.call(all, function (b) { b.disabled = true; });
-  call('apiPurchase', { kind:box.dataset.kind, id:box.dataset.id, buy:btn.dataset.buy === '1', reqId:reqId() }).then(function (res) {
-    if (res.ok) { show('uMsg', true, '✔ ' + res.message); applySummary(res); loadUnconfirmed(); }
-    else { show('uMsg', false, '✖ ' + res.error); Array.prototype.forEach.call(all, function (b) { b.disabled = false; }); }
-  }).then(function () { S.busy[key] = false; });
+  var box = btn.closest('.pend'); if (!box) return;
+  var buy = btn.dataset.buy === '1';
+  openConfirm({
+    title: buy ? '구매 처리 확인' : '미구매 처리 확인',
+    lines: [box.dataset.top, box.dataset.pick, box.dataset.line, buy ? '실제로 구매하셨나요?' : '구매하지 않은 것으로 기록할까요?'],
+    okLabel: buy ? '샀다 확정' : '안 샀다 확정',
+    run: function (rid) { return call('apiPurchase', { kind: box.dataset.kind, id: box.dataset.id, buy: buy, reqId: rid }); },
+    onSuccess: function (res) {
+      if (box.parentNode) box.parentNode.removeChild(box);      // 해당 카드만 갱신 (전체 재렌더/재호출 없음)
+      updateBuyBadge();
+      markStale('res', 'mon');
+      toast('✔ ' + res.message);
+    }
+  });
 });
 
-/* ---------- 결과 처리 ---------- */
+/* ---------- 결과 처리 (수동 fallback — 자동 처리와 같은 서버 로직 사용) ---------- */
+function updatePendEmpty() {
+  if (!$('pBets').querySelector('.pend')) $('pBets').textContent = '대기 중인 기록이 없습니다.';
+  if (!$('pWdl').querySelector('.pend')) $('pWdl').textContent = '대기 중인 기록이 없습니다.';
+}
 function loadPending() {
-  call('apiGetPending').then(function (res) {
-    if (!res.ok) { show('rMsg', false, res.error); return; }
+  return fetchOnce('res', 'apiGetPending').then(function (res) {
+    if (!res.ok) { $('pBets').textContent = '불러오기 실패: ' + res.error; return; }
+    applyMeta(res.meta);
     $('pBets').innerHTML = res.bets.length ? res.bets.map(function (r) {
-      return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.name) + '</b></div>' +
+      return '<div class="pend" data-kind="bet" data-id="' + esc(r.id) + '" data-top="' + esc(r.name) + '">' +
+        '<div><b>' + esc(r.name) + '</b></div>' +
         '<div class="sub">' + esc(r.date) + ' · ' + esc(r.sport) + ' · ' + esc(r.pick) + ' · ' + r.odds + '배 · ' + won(r.stake) + ' · ' + esc(r.grade) + ' · <b>' + esc(r.buy) + '</b></div>' +
         '<div class="two"><select class="rRes"><option>적중</option><option>미적중</option><option>적특</option><option>취소</option></select>' +
         '<input class="rRet" type="number" inputmode="numeric" min="0" placeholder="반환금(원금 포함)" data-stake="' + r.stake + '"></div>' +
         '<button class="mini rBetSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
     }).join('') : '대기 중인 기록이 없습니다.';
     $('pWdl').innerHTML = res.wdl.length ? res.wdl.map(function (r) {
-      return '<div class="pend" data-id="' + esc(r.id) + '"><div><b>' + esc(r.round) + '회차 · ' + esc(r.combo) + '</b></div>' +
+      return '<div class="pend" data-kind="wdl" data-id="' + esc(r.id) + '" data-top="' + esc(r.round + '회차 · ' + r.combo) + '">' +
+        '<div><b>' + esc(r.round) + '회차 · ' + esc(r.combo) + '</b></div>' +
         '<div class="sub">' + esc(r.date) + ' · ' + won(r.stake) + ' · <b>' + esc(r.buy) + '</b></div>' +
         '<div class="two"><select class="wHits">' + Array.apply(null, Array(15)).map(function (_, i) { return '<option value="' + i + '">' + i + '개 적중</option>'; }).join('') + '</select>' +
         '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option></select></div>' +
         '<input class="wPrize" type="number" inputmode="numeric" min="0" placeholder="당첨금(원)" style="margin-top:8px">' +
         '<button class="mini rWdlSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
     }).join('') : '대기 중인 기록이 없습니다.';
+    S.cache.res = { at: Date.now() };
   });
 }
 $('tab-res').addEventListener('click', function (e) {
   var btn = e.target.closest('button'); if (!btn) return;
   var box = btn.closest('.pend'); if (!box) return;
-  var id = box.dataset.id;
+  var id = box.dataset.id, done = function (res) {
+    if (box.parentNode) box.parentNode.removeChild(box);
+    updatePendEmpty(); markStale('mon');
+    toast('✔ 손익 ' + signed(res.profit) + (res.roi !== undefined ? ' / ROI ' + spct(res.roi) : ''));
+  };
   if (btn.classList.contains('rBetSave')) {
     var sel = box.querySelector('.rRes').value, retEl = box.querySelector('.rRet');
     var ret = retEl.value;
     if (ret === '' && sel === '취소') ret = retEl.dataset.stake;   // 취소는 원금 환급이 기본
     if (ret === '' && sel === '미적중') ret = '0';
-    guarded(btn, 'r' + id, 'rMsg', 'apiResolveBet', { id:id, result:sel, ret:ret }, function (res) {
-      $('rMsg').textContent = '✔ 손익 ' + signed(res.profit) + ' / ROI ' + spct(res.roi); loadPending();
+    openConfirm({
+      title: '결과 처리 확인',
+      lines: [box.dataset.top, '처리 결과: ' + sel, ret === '' ? '' : '반환금 ' + won(+ret)].filter(Boolean),
+      okLabel: sel + ' 확정',
+      run: function (rid) { return call('apiResolveBet', { id: id, result: sel, ret: ret, reqId: rid }); },
+      onSuccess: done
     });
   } else if (btn.classList.contains('rWdlSave')) {
-    var rank = box.querySelector('.wRank').value, prize = box.querySelector('.wPrize').value;
+    var hits = box.querySelector('.wHits').value, rank = box.querySelector('.wRank').value, prize = box.querySelector('.wPrize').value;
     if (prize === '' && rank === '미당첨') prize = '0';
-    guarded(btn, 'r' + id, 'rMsg', 'apiResolveWdl', { id:id, hits:box.querySelector('.wHits').value, rank:rank, prize:prize }, function (res) {
-      $('rMsg').textContent = '✔ 손익 ' + signed(res.profit); loadPending();
+    openConfirm({
+      title: '결과 처리 확인',
+      lines: [box.dataset.top, '처리 결과: ' + hits + '개 적중 / ' + rank, prize === '' ? '' : '당첨금 ' + won(+prize)].filter(Boolean),
+      okLabel: rank + ' 확정',
+      run: function (rid) { return call('apiResolveWdl', { id: id, hits: hits, rank: rank, prize: prize, reqId: rid }); },
+      onSuccess: done
     });
   }
 });
 
 /* ---------- 월간 성적 ---------- */
-$('mMonth').addEventListener('change', loadMonthly);
+$('mMonth').addEventListener('change', function () { markStale('mon'); loadMonthly(); });
 function loadMonthly() {
   var m = $('mMonth').value || S.month;
-  call('apiGetMonthly', m).then(function (res) {
+  return fetchOnce('mon:' + m, 'apiGetMonthly', m).then(function (res) {
     if (!res.ok) { $('mBody').textContent = res.error; return; }
+    if (res.month === S.month) renderHead(res.summary);
     var s = res.summary;
     function stat(l, v, c) { return '<div class="card stat"><div class="sub">' + l + '</div><div class="v num ' + (c || '') + '">' + v + '</div></div>'; }
     function tbl(title, cols, rows) {
@@ -266,20 +368,12 @@ function loadMonthly() {
         pc(w.profit, signed), w.bestHits === null ? '-' : w.bestHits + '개', w.bestRank || '-']]) +
       tbl('최근 기록 10개', ['날짜', '구분', '내용', '금액', '상태', '손익'], res.recent.map(function (r) {
         return [esc(r.date.slice(5)), esc(r.kind), esc(r.title), won(r.stake), esc(r.status), r.profit === null ? '-' : pc(r.profit, signed)]; }));
+    S.cache.mon = { at: Date.now() };
   });
 }
 
-/* ---------- 시작 ---------- */
-function init() {
-  call('apiBootstrap').then(function (res) {
-    if (!res.ok) { $('hMonth').textContent = '오류: ' + res.error; return; }
-    S.today = res.today; S.month = res.month; S.settings = res.settings;
-    $('mMonth').value = res.month;
-    renderHead(res.summary);
-    loadUnconfirmed();
-  });
-}
-init();
+/* ---------- 시작: 호출 1회 (구매 확인 목록 + 상단 요약) ---------- */
+loadUnconfirmed();
 </script>
 </body>
 </html>

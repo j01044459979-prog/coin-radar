@@ -115,6 +115,10 @@ function calcRate_(hit, miss) { return (hit + miss) > 0 ? round2_(hit / (hit + m
 
 var ssCache_ = null;
 
+/** 한 번의 API 실행 안에서만 유효한 읽기 메모. 쓰기(appendRow_/updateRow_/updateCells_)와 API 진입마다 비운다. */
+var memo_ = {};
+function memoClear_(keepSettings) { var st = memo_.settings; memo_ = {}; if (keepSettings && st) memo_.settings = st; }
+
 function getSS_() {
   if (ssCache_) return ssCache_;
   ssCache_ = openSpreadsheet_();
@@ -199,6 +203,7 @@ function setup() {
 }
 
 function getSettings_() {
+  if (memo_.settings) return memo_.settings;
   var sh = getSheet_(SETTINGS_SHEET.name);
   var last = sh.getLastRow();
   var map = {};
@@ -213,11 +218,12 @@ function getSettings_() {
     }
     return n;
   }
-  return {
+  memo_.settings = {
     budget: read(SETTING_KEYS.BUDGET),
     daily: read(SETTING_KEYS.DAILY),
     wdlRound: read(SETTING_KEYS.WDL_ROUND)
   };
+  return memo_.settings;
 }
 
 function toDateStr_(v) {
@@ -248,9 +254,10 @@ function normalizeRow_(tbl, o) {
 }
 
 function readRows_(tbl) {
+  if (memo_[tbl.name]) return memo_[tbl.name];
   var sh = getSheet_(tbl.name);
   var last = sh.getLastRow();
-  if (last < 2) return [];
+  if (last < 2) return (memo_[tbl.name] = []);
   var vals = sh.getRange(2, 1, last - 1, tbl.cols.length).getValues();
   var out = [];
   vals.forEach(function (v, i) {
@@ -259,6 +266,7 @@ function readRows_(tbl) {
     tbl.cols.forEach(function (c, j) { o[c[0]] = v[j]; });
     out.push(normalizeRow_(tbl, o));
   });
+  memo_[tbl.name] = out;
   return out;
 }
 
@@ -287,6 +295,7 @@ function appendRow_(tbl, o) {
   var r = sh.getLastRow() + 1;
   sh.getRange(r, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
   formatRowCells_(sh, tbl, r);
+  memoClear_(true);
 }
 
 /** 연속된 열(keys 순서가 시트 열 순서와 같아야 함)만 갱신 */
@@ -297,12 +306,14 @@ function updateCells_(tbl, rowNum, keys, o) {
   sh.getRange(rowNum, idx[0] + 1, 1, keys.length)
     .setValues([keys.map(function (k) { return o[k] == null ? '' : o[k]; })]);
   formatRowCells_(sh, tbl, rowNum);
+  memoClear_(true);
 }
 
 function updateRow_(tbl, rowNum, o) {
   var sh = getSheet_(tbl.name);
   sh.getRange(rowNum, 1, 1, tbl.cols.length).setValues([rowToArray_(tbl, o)]);
   formatRowCells_(sh, tbl, rowNum);
+  memoClear_(true);
 }
 
 /* ------------------------------------------------------------------ */
@@ -336,7 +347,7 @@ function dateField_(v, label) {
 
 function enumField_(v, list, label) {
   var s = String(v == null ? '' : v).trim();
-  if (list.indexOf(s) < 0) fail_(label + ': 허용되지 않은 값입니다.');
+  if (list.indexOf(s) < 0) fail_(label + ': 허용되지 않은 값입니다. 허용값: ' + list.join(', '));
   return s;
 }
 
@@ -378,6 +389,7 @@ function monthUsage_(month, bets, wdl) {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(CONFIG.LOCK_WAIT_MS)) fail_('다른 저장이 진행 중입니다. 잠시 후 다시 시도하세요.');
+  memoClear_();   // 락을 잡은 뒤에는 항상 최신 시트 상태에서 시작
   try { return fn(); } finally { lock.releaseLock(); }
 }
 
@@ -406,6 +418,7 @@ function writeApi_(payload, fn) {
 }
 
 function readApi_(fn) {
+  memoClear_();
   try { var r = fn(); r.ok = true; return r; }
   catch (e) { return { ok: false, error: String(e && e.message ? e.message : e) }; }
 }
@@ -716,6 +729,12 @@ function apiResolveBet(payload) { return writeApi_(payload, function () { return
 function apiPurchase(payload) { return writeApi_(payload, function () { return purchaseRecord_(payload); }); }
 function apiResolveWdl(payload) { return writeApi_(payload, function () { return resolveWdl_(payload); }); }
 
+/** 화면 상단 카드용: 현재 월 + 요약 (별도 호출 없이 각 읽기 API 응답에 포함) */
+function viewMeta_() {
+  var m = monthOf_(todayStr_());
+  return { month: m, summary: buildStats_(m).summary };
+}
+
 function apiGetPending() {
   return readApi_(function () {
     var bets = readRows_(TABLES.BET).filter(function (r) {
@@ -728,7 +747,7 @@ function apiGetPending() {
       .map(function (r) { return { id: r.id, round: r.round, date: r.date, combo: r.combo, stake: r.stake, buy: r.buyStatus }; });
     bets.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     wdl.sort(function (a, b) { return a.round === b.round ? (a.combo < b.combo ? -1 : 1) : (a.round < b.round ? 1 : -1); });
-    return { bets: bets, wdl: wdl };
+    return { bets: bets, wdl: wdl, meta: viewMeta_() };
   });
 }
 
@@ -744,7 +763,7 @@ function apiGetUnconfirmed() {
       });
     bets.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
     wdl.sort(function (a, b) { return a.round === b.round ? (a.combo < b.combo ? -1 : 1) : (a.round < b.round ? 1 : -1); });
-    return { bets: bets, wdl: wdl };
+    return { bets: bets, wdl: wdl, meta: viewMeta_() };
   });
 }
 
@@ -765,6 +784,8 @@ function apiGetMonthly(month) {
 /* ------------------------------------------------------------------ */
 
 var RICH = {
+  // 명확히 지원하는 alias 만 정규화(그 외 잘못된 값은 saveBet_ 검증 오류 그대로)
+  SPORT_ALIAS: { '혼합': '기타' },
   TOKEN_PROP: 'RICH_API_TOKEN',
   REQ_PREFIX: 'RICHREQ_',
   MAX_BATCH: 20,
@@ -784,8 +805,8 @@ function richRequestId_(v, label) {
 }
 
 function richTable_(type) {
-  if (type === 'BET') return TABLES.BET;
-  if (type === 'WDL') return TABLES.WDL;
+  if (type === 'BET' || type === 'BET_RESULT') return TABLES.BET;
+  if (type === 'WDL' || type === 'WDL_RESULT') return TABLES.WDL;
   fail_('type 은 BET 또는 WDL 이어야 합니다.');
 }
 
@@ -823,6 +844,10 @@ function richSaveOne_(pick, key) {
   var prior = richLookup_(key, type);
   if (prior) {
     return { requestId: key, type: type, id: prior.id, duplicate: true, message: '이미 저장된 요청입니다.' };
+  }
+  if (type === 'BET') {
+    var alias = RICH.SPORT_ALIAS[String(pick.sport == null ? '' : pick.sport).trim()];
+    if (alias) { pick = Object.assign({}, pick); pick.sport = alias; }   // 예: 혼합 → 기타
   }
   var res = type === 'BET' ? saveBet_(pick) : saveWdl_(pick);   // buyStatus='미확인' 으로 저장됨
   richRemember_(key, type, res.id);
@@ -882,6 +907,70 @@ function apiSaveRichPicks(payload) {
   } catch (e) {
     return { ok: false, error: richErr_(e) };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* RESULT 명령: ChatGPT 가 확인한 경기 결과를 기존 결과 처리 로직으로 반영        */
+/*  - 손익/ROI/당첨금 계산은 resolveBet_/resolveWdl_ 한 곳(웹앱 수동 처리와 공용)   */
+/*  - 외부 결과를 추측/크롤링하지 않는다. source/checkedAt 은 Inbox payloadJson 에만 남는다 */
+/* ------------------------------------------------------------------ */
+
+function sameNumberOrBlank_(given, actual, label) {
+  if (given == null || String(given).trim() === '') return;
+  if (intField_(given, label) !== actual) fail_('이미 같은 결과로 처리되었지만 ' + label + ' 값이 다릅니다.');
+}
+
+/**
+ * payload: { requestId, action:'RESULT', targetType:'BET'|'WDL', targetId, ...결과 필드, checkedAt?, source? }
+ *  BET: result(적중/미적중/적특/취소), ret(반환금: 적중·적특 필수, 취소 생략 시 실제베팅금액, 미적중 0)
+ *  WDL: hits(0~14), rank(1등~4등/미당첨), prize(당첨금)
+ * 구매(buyStatus='구매') 건만 처리. 같은 requestId 재전송 / 같은 결과 재전송은 멱등 성공, 상충 결과는 오류.
+ */
+function resolveRichResultInternal_(payload) {
+  var key = richRequestId_(payload && payload.requestId, 'requestId');
+  var type = String(payload.targetType == null ? '' : payload.targetType).trim().toUpperCase();
+  if (type !== 'BET' && type !== 'WDL') fail_('targetType 은 BET 또는 WDL 이어야 합니다.');
+  var rtype = type + '_RESULT';
+  var prior = richLookup_(key, rtype);
+  if (prior) return { requestId: key, type: rtype, id: prior.id, duplicate: true, message: '이미 처리된 결과 요청입니다.' };
+
+  var targetId = String(payload.targetId == null ? '' : payload.targetId).trim();
+  if (!targetId) fail_('targetId 가 필요합니다.');
+  var rec = readRows_(richTable_(type)).filter(function (r) { return r.id === targetId; })[0];
+  if (!rec) fail_('대상 ID를 찾을 수 없습니다.');
+  if (rec.buyStatus !== '구매') fail_('구매하지 않은 베팅은 결과 처리할 수 없습니다.');
+
+  var duplicate = false, out = null;
+  if (type === 'BET') {
+    var result = enumField_(payload.result, ENUM.BET_RESOLVE, '결과');
+    if (rec.result !== '대기') {
+      if (rec.result !== result) fail_('이미 다른 결과로 처리된 베팅입니다.');
+      if (result !== '미적중') sameNumberOrBlank_(payload.ret, rec.ret, '반환금');
+      duplicate = true;
+      out = { profit: rec.profit, roi: rec.roi };
+    } else {
+      if ((result === '적중' || result === '적특') && (payload.ret == null || String(payload.ret).trim() === '')) {
+        fail_(result + '은(는) 실제 반환금(원금 포함)을 ret 에 넣어야 합니다.');   // 안내용 사전 검사. 계산은 resolveBet_ 가 수행
+      }
+      out = resolveBet_({ id: targetId, result: result, ret: payload.ret });   // 기존 결과 처리(손익/ROI 계산) 그대로
+    }
+  } else {
+    var rank = enumField_(payload.rank, ENUM.RANK_RESOLVE, '등수');
+    if (rec.rank !== '대기') {
+      if (rec.rank !== rank) fail_('이미 다른 결과로 처리된 베팅입니다.');
+      sameNumberOrBlank_(payload.hits, rec.hits, '적중개수');
+      if (rank !== '미당첨') sameNumberOrBlank_(payload.prize, rec.prize, '당첨금');
+      duplicate = true;
+      out = { profit: rec.profit };
+    } else {
+      var blankPrize = payload.prize == null || String(payload.prize).trim() === '';
+      // 웹앱 결과 처리 화면과 같은 기본값: 미당첨은 당첨금 생략 시 0원
+      out = resolveWdl_({ id: targetId, hits: payload.hits, rank: rank, prize: (blankPrize && rank === '미당첨') ? '0' : payload.prize });
+    }
+  }
+  richRemember_(key, rtype, targetId);
+  return { requestId: key, type: rtype, id: targetId, duplicate: duplicate, profit: out.profit, roi: out.roi,
+    message: duplicate ? '이미 같은 결과로 처리된 베팅입니다.' : '결과 저장 완료' };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1032,7 +1121,10 @@ function processRichInbox_() {
         var jsonId = payload.requestId == null ? '' : String(payload.requestId).trim();
         if (colId && jsonId && colId !== jsonId) fail_('requestId 열과 payloadJson 의 requestId 가 다릅니다.');
         payload.requestId = colId || jsonId;
-        res = saveRichPickInternal_(payload);   // 기존 저장 엔진(saveBet_/saveWdl_)에 위임 + requestId 멱등성
+        var action = String(payload.action == null || payload.action === '' ? 'SAVE' : payload.action).trim().toUpperCase();
+        if (action === 'RESULT') res = resolveRichResultInternal_(payload);   // 기존 결과 처리 로직(resolveBet_/resolveWdl_)에 위임
+        else if (action === 'SAVE') res = saveRichPickInternal_(payload);     // 기존 저장 엔진(saveBet_/saveWdl_)에 위임 + requestId 멱등성
+        else fail_('action 은 SAVE 또는 RESULT 여야 합니다.');
       } catch (e) {
         out.error++;
         try { inboxWrite_(sh, rowNum, { status: 'ERROR', processedAt: nowKstStr_(), error: richErr_(e) }); } catch (e2) { out.writeFailed++; }
