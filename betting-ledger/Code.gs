@@ -923,8 +923,24 @@ function repairCancelledWdlRound_(round) {
         return { row: x._row, o: { hits: '', rank: '취소', prize: base, profit: calcProfit_(base, base) } };
       }));
     }
-    return { round: r, repaired: rows.length, total: rows.reduce(function (n, x) { return n + baseStake_(x); }, 0) };
+    // 이미 취소된 회차 행의 메모에 남은 과거 문구('대기 유지', '취소값 미지원')만 현재 상태 문구로 교체 — 메모 외 열은 쓰지 않는다
+    var memoFix = readRows_(TABLES.WDL).filter(function (x) { return x.round === r && x.rank === '취소' && cleanCancelMemo_(x.memo) !== String(x.memo == null ? '' : x.memo); });
+    if (memoFix.length) {
+      updateCellsBulk_(TABLES.WDL, ['memo'], memoFix.map(function (x) { return { row: x._row, o: { memo: cleanCancelMemo_(x.memo) } }; }));
+    }
+    return { round: r, repaired: rows.length, memoFixed: memoFix.length, total: rows.reduce(function (n, x) { return n + baseStake_(x); }, 0) };
   });
+}
+
+var CANCEL_MEMO_DONE = '회차 취소 / 전액환불 처리 완료';
+
+/** 메모의 ' | ' 구간 중 과거 문구(대기 유지/취소값 미지원)를 제거하고 현재 상태 문구를 한 번만 붙인다. 해당 문구가 없으면 입력 그대로(멱등). */
+function cleanCancelMemo_(memo) {
+  var m = String(memo == null ? '' : memo);
+  var parts = m.split(' | '), kept = parts.filter(function (x) { return !/대기 유지|취소값 미지원/.test(x); });
+  if (kept.length === parts.length) return m;
+  if (kept.indexOf(CANCEL_MEMO_DONE) < 0) kept.push(CANCEL_MEMO_DONE);
+  return kept.join(' | ');
 }
 
 /** 58회차 취소/전액환불 일회성 보정(Apps Script 편집기에서 직접 실행 가능, 멱등) */
@@ -1673,7 +1689,7 @@ function seedInbox_() {
   var msgs = [];
   CODE_SEED_INBOX.forEach(function (item) {
     if (item && item.cancelRound) {   // 승무패 회차 취소/전액환불 보정(멱등)
-      try { var rr = repairCancelledWdlRound_(item.cancelRound); msgs.push('취소보정 ' + rr.round + '회차 ' + rr.repaired + '행 ' + rr.total + '원'); }
+      try { var rr = repairCancelledWdlRound_(item.cancelRound); msgs.push('취소보정 ' + rr.round + '회차 ' + rr.repaired + '행 ' + rr.total + '원 / 메모 ' + rr.memoFixed + '행'); }
       catch (e) { msgs.push('취소보정 실패: ' + richErr_(e).slice(0, 120)); }
       return;
     }

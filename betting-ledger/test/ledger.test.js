@@ -1679,9 +1679,37 @@ test('125. 배포 seed 취소보정: {cancelRound:"58"} 은 postDeployCheck 에�
   const sh = env.sheet('DASHBOARD'); sh.grid[10] = ['남은 예산', '=MAX(0,B4-B5)'];
   env.ctx.CODE_REV = 'cr00001'; env.ctx.CODE_SEED_INBOX = [{ cancelRound: '58' }];
   env.get('processRichInbox')();
-  const sys = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'system-deploy-cr00001'); assert.match(sys[7], /취소보정 58회차 8행 8000원/);
+  const sys = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'system-deploy-cr00001'); assert.match(sys[7], /취소보정 58회차 8행 8000원 \/ 메모 0행/);
   assert.match(sys[7], /환경 정상 \/ Rich Bridge 정상/); assert.strictEqual(sh.grid[10][1], '=B4+B9-B6');
   chk(dash(env).summary, { openStake: 0, remain: 200000 });
+});
+test('127. 58회차 메모: 과거 문구(대기 유지/취소값 미지원)만 현재 상태 문구로 교체, 두 번 실행해도 중복 없음, 다른 열·다른 행 불변', () => {
+  const env = bridgeEnv(); const old = '승무패 58회차 리치 추천 | 8조합 | 실제 구매 완료 | 58회차 취소/전액환불 표시 확인 | 등수=대기 유지(현재 취소값 미지원)';
+  const g = saveMulti(env, { memo: old }); assert.ok(buyGroup(env, g.groupId).ok);
+  const other = saveMulti(env, { round: '59', memo: '다른 회차 | 등수=대기 유지(현재 취소값 미지원)' }); assert.ok(buyGroup(env, other.groupId).ok);
+  assert.ok(wdlRows(env, g.groupId).every(x => x[23] === old));
+  const r1 = env.get('repairWdlRound58Cancel')(); assert.deepStrictEqual([r1.repaired, r1.memoFixed], [8, 8]);
+  const want = '승무패 58회차 리치 추천 | 8조합 | 실제 구매 완료 | 58회차 취소/전액환불 표시 확인 | 회차 취소 / 전액환불 처리 완료';
+  const rows = wdlRows(env, g.groupId); assert.ok(rows.every(x => x[23] === want && !/대기 유지|취소값 미지원/.test(x[23])));
+  const frozen = JSON.stringify(env.sheet('WDL_LOG').grid);
+  const r2 = env.get('repairWdlRound58Cancel')(); assert.deepStrictEqual([r2.repaired, r2.memoFixed], [0, 0]); assert.strictEqual(JSON.stringify(env.sheet('WDL_LOG').grid), frozen);
+  assert.ok(wdlRows(env, other.groupId).every(x => x[23] === '다른 회차 | 등수=대기 유지(현재 취소값 미지원)' && x[20] === '대기'));   // 다른 회차는 손대지 않음
+  assert.ok(rows.every(x => x[20] === '취소' && x[21] === 1000 && x[22] === 0 && x[25] === '구매' && x[28] === g.groupId));            // 취소/반환/손익/구매/묶음ID 불변
+  assert.deepStrictEqual(rows.map(x => x[29]), [1, 2, 3, 4, 5, 6, 7, 8]);
+  chk(dash(env).summary, { openStake: 8000, remain: 200000 - 8000 });                                                                    // 59회차 8,000 만 미확정(58회차는 취소로 정리)
+  assert.strictEqual(env.get('cleanCancelMemo_')(''), ''); assert.strictEqual(env.get('cleanCancelMemo_')('메모 | 회차 취소 / 전액환불 처리 완료'), '메모 | 회차 취소 / 전액환불 처리 완료');
+  assert.strictEqual(env.get('cleanCancelMemo_')('등수=대기 유지'), '회차 취소 / 전액환불 처리 완료');
+});
+test('128. 취소 처리 경로(resolveWdl_/RESULT/repair)는 메모를 쓰지 않아 과거 문구가 생성되지 않음', () => {
+  const env = bridgeEnv(); const g = saveMulti(env, { memo: '정상 메모' }); assert.ok(buyGroup(env, g.groupId).ok);
+  const ids = wdlRows(env, g.groupId).map(x => x[0]);
+  assert.ok(env.get('apiResolveWdl')({ id: ids[0], rank: '취소', reqId: 'm128a' }).ok);
+  const i = inboxJson(env, 'rich-result-cancel-0128', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos: Array.from({ length: 8 }, (_, k) => ({ comboNo: k + 1, rank: '취소' })) }); runInbox(env);
+  assert.strictEqual(inboxRow(env, i)[3], 'DONE');
+  env.get('repairWdlRound58Cancel')();
+  assert.ok(wdlRows(env, g.groupId).every(x => x[23] === '정상 메모' && x[20] === '취소'));
+  const all = JSON.stringify(env.sheet('WDL_LOG').grid) + JSON.stringify(env.sheet('RICH_INBOX').grid);
+  assert.ok(!/대기 유지|취소값 미지원/.test(all));
 });
 
 console.log(results.join('\n'));
