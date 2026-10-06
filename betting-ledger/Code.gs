@@ -26,8 +26,8 @@ var ENUM = {
   COMBO: ['주력', '보조1', '보조2'],
   BUY: ['미확인', '구매', '미구매'],
   PICK: ['승', '무', '패'],
-  RANK: ['대기', '1등', '2등', '3등', '4등', '미당첨'],
-  RANK_RESOLVE: ['1등', '2등', '3등', '4등', '미당첨']
+  RANK: ['대기', '1등', '2등', '3등', '4등', '미당첨', '취소'],
+  RANK_RESOLVE: ['1등', '2등', '3등', '4등', '미당첨', '취소']
 };
 
 var SETTING_KEYS = {
@@ -217,6 +217,28 @@ function setup() {
 }
 
 /** WDL_LOG 에 구매묶음ID/조합순번 열(AC, AD)을 비파괴로 추가한다(기존 값/데이터는 건드리지 않음). 여러 번 실행해도 안전. */
+/**
+ * DASHBOARD '남은 예산'(A열 라벨 기준 B열) 수식이 옛 방식 =MAX(0,B4-B5) (월예산 - 총베팅액) 일 때만 =B4+B9-B6
+ * (월 예산 + 확정 손익 - 미확정 베팅액) 으로 바꾼다. 다른 셀/서식은 건드리지 않으며, 이미 바뀌었거나 사용자가 다른 수식을 넣었으면 그대로 둔다(멱등).
+ */
+function updateDashboardRemainFormula() {
+  var sh = getSS_().getSheetByName(DASH_SHEET_NAME);
+  if (!sh) return 'DASHBOARD 없음';
+  var last = Math.min(sh.getLastRow(), 60);
+  var labels = last < 1 ? [] : sh.getRange(1, 1, last, 1).getValues();
+  for (var i = 0; i < labels.length; i++) {
+    if (String(labels[i][0]).trim() !== '남은 예산') continue;
+    var cell = sh.getRange(i + 1, 2), f = String(cell.getFormula() || '').replace(/\s+/g, '').toUpperCase();
+    if (f === '=MAX(0,B4-B5)') {
+      cell.setFormula('=B4+B9-B6');
+      SpreadsheetApp.flush();
+      return 'DASHBOARD 남은 예산 수식 변경: =B4+B9-B6';
+    }
+    return f === '=B4+B9-B6' ? 'DASHBOARD 남은 예산 수식 이미 최신' : 'DASHBOARD 남은 예산 수식이 사용자 정의라 그대로 둠';
+  }
+  return 'DASHBOARD 남은 예산 행 없음';
+}
+
 function setupWdlGroupColumns() {
   var ss = getSS_();
   if (!ss.getSheetByName(TABLES.WDL.name)) throw new Error('시트 "' + TABLES.WDL.name + '"가 없습니다. setup()을 실행하세요.');
@@ -632,22 +654,36 @@ function wdlComboLabels_() {
   return out;
 }
 
-function comboRule_(sh) {
-  var col = TABLES.WDL.cols.map(function (c) { return c[0]; }).indexOf('combo') + 1;
+function comboRule_(sh) { return listRule_(sh, 'combo'); }
+
+function listRule_(sh, key) {
+  var col = TABLES.WDL.cols.map(function (c) { return c[0]; }).indexOf(key) + 1;
   var rule = sh.getRange(2, col).getDataValidation();
   if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) return null;
   return { col: col, rule: rule, list: (rule.getCriteriaValues()[0] || []).slice() };
 }
 
 function ensureWdlComboValidation_(sh) {
-  var info = comboRule_(sh);
+  var a = ensureListValues_(sh, 'combo', wdlComboLabels_());
+  var b = ensureListValues_(sh, 'rank', ['취소']);   // 승무패 취소/환불 상태(등수 드롭다운이 거절형이면 '취소' 쓰기가 막힌다)
+  return a || b;
+}
+
+function ensureListValues_(sh, key, wanted) {
+  var info = listRule_(sh, key);
   if (!info) return false;
-  var missing = wdlComboLabels_().filter(function (v) { return info.list.indexOf(v) < 0; });
+  var missing = wanted.filter(function (v) { return info.list.indexOf(v) < 0; });
   if (!missing.length) return false;
   sh.getRange(2, info.col, Math.max(sh.getMaxRows() - 1, 1), 1).setDataValidation(
     SpreadsheetApp.newDataValidation().requireValueInList(info.list.concat(missing), true).setAllowInvalid(info.rule.getAllowInvalid()).build());
   SpreadsheetApp.flush();
   return true;
+}
+
+/** 거절형 등수 드롭다운에 '취소' 가 없으면 쓰기 전에 안내(부분 쓰기 방지) */
+function requireRankDropdown_() {
+  var info = listRule_(getSheet_(TABLES.WDL.name), 'rank');
+  if (info && !info.rule.getAllowInvalid() && info.list.indexOf('취소') < 0) fail_('WDL_LOG 등수 드롭다운 규칙에 취소가 없어 저장할 수 없습니다. setupWdlGroupColumns() 를 먼저 실행하세요.');
 }
 
 function requireComboDropdown_() {
@@ -706,12 +742,32 @@ function checkWdlRoundLimit_(settings, wdl, round, amount) {
   }
 }
 
+/** 월 운용자금 한도: 신규 금액이 '사용 가능 자금(= 월 예산 + 확정손익 - 미확정 베팅액)' 을 넘으면 거절 (DASHBOARD 남은 예산과 같은 규칙) */
 function checkMonthLimit_(settings, bets, wdl, month, amount) {
-  var used = monthUsage_(month, bets, wdl);
-  if (used + amount > settings.budget) {
-    fail_('월 예산 ' + fmtWon_(settings.budget) + ' 초과: ' + month + ' 구매 ' + fmtWon_(used) + ' + 신규 ' + fmtWon_(amount) +
-      ' = ' + fmtWon_(used + amount));
+  var f = fundOf_(month, bets, wdl, settings.budget);
+  if (amount > f.availableBudget) {
+    fail_('월 운용자금 부족: 사용 가능 ' + fmtWon_(f.availableBudget) + ' (월 예산 ' + fmtWon_(f.monthlyBaseBudget) + ' + 확정손익 ' + fmtWon_(f.realizedPnL) +
+      ' - 미확정 ' + fmtWon_(f.openStake) + ') < 신규 ' + fmtWon_(amount) + ' (' + month + ')');
   }
+}
+
+/**
+ * 월 운용자금 공통 계산 (웹앱 요약·구매 한도가 같은 규칙 사용).
+ *  availableBudget = monthlyBaseBudget + realizedPnL - openStake
+ *  settledStake/openStake: 실제 구매한 베팅 중 결과 처리 완료/대기, settledReturn: 확정 반환금(적중금·취소 환불 포함), realizedPnL = settledReturn - settledStake
+ */
+function fundFromAgg_(budget, bt, wt) {
+  var settledStake = bt.settledStake + wt.settledStake;
+  var settledReturn = bt.ret + wt.prize;
+  var openStake = bt.pendingStake + wt.pendingStake;
+  var realizedPnL = calcProfit_(settledStake, settledReturn);
+  return { monthlyBaseBudget: budget, totalStake: bt.stake + wt.stake, settledStake: settledStake, openStake: openStake,
+    settledReturn: settledReturn, realizedPnL: realizedPnL, availableBudget: budget + realizedPnL - openStake };
+}
+
+function fundOf_(month, bets, wdl, budget) {
+  function boughtIn(r) { return r.buyStatus === '구매' && r.buyAtStr.slice(0, 7) === month; }
+  return fundFromAgg_(budget, aggBets_(bets.filter(boughtIn)), aggWdl_(wdl.filter(boughtIn)));
 }
 
 /**
@@ -818,6 +874,7 @@ function resolveBet_(p) {
 }
 
 function parseWdlResult_(p) {
+  if (String(p.rank == null ? '' : p.rank).trim() === '취소') return { hits: null, rank: '취소', prize: null };   // 취소/전액환불: 당첨금=실제베팅금액(기록 시 확정), 손익 0
   var hits = intField_(p.hits, '적중개수');
   if (hits < 0 || hits > 14) fail_('적중개수는 0~14 사이여야 합니다.');
   var rank = enumField_(p.rank, ENUM.RANK_RESOLVE, '등수');
@@ -837,13 +894,41 @@ function resolveWdl_(p) {
     fail_('먼저 구매 확인에서 샀다/안 샀다를 처리해주세요.');
   }
   if (rec.rank !== '대기') fail_('이미 결과가 처리된 기록입니다.');
-  rec.hits = hits;
+  if (rank === '취소') {
+    requireRankDropdown_();
+    if (p.prize != null && String(p.prize).trim() !== '' && intField_(p.prize, '당첨금') !== baseStake_(rec)) fail_('취소는 실제베팅금액(' + fmtWon_(baseStake_(rec)) + ')이 전액 환불됩니다.');
+    hits = null; prize = baseStake_(rec);
+  }
+  rec.hits = hits == null ? '' : hits;
   rec.rank = rank;
   rec.prize = prize;
   rec.profit = calcProfit_(baseStake_(rec), prize);
   updateRow_(TABLES.WDL, rec._row, rec);
   return { id: rec.id, profit: rec.profit, message: '결과 저장 완료' };
 }
+
+/**
+ * 승무패 회차 취소(전액 환불) 보정 — 멱등. 구매 확정됐지만 아직 '대기' 인 해당 회차 행만 등수=취소, 당첨금=실제베팅금액, 손익=0 으로 바꾼다.
+ * 이미 취소거나 다른 결과가 있는 행, 미구매/미확인 행은 건드리지 않는다(두 번 실행해도 변화 없음).
+ */
+function repairCancelledWdlRound_(round) {
+  var r = String(round == null ? '' : round).trim();
+  if (!r) fail_('회차가 필요합니다.');
+  return withLock_(function () {
+    requireRankDropdown_();
+    var rows = readRows_(TABLES.WDL).filter(function (x) { return x.round === r && x.buyStatus === '구매' && x.rank === '대기'; });
+    if (rows.length) {
+      updateCellsBulk_(TABLES.WDL, ['hits', 'rank', 'prize', 'profit'], rows.map(function (x) {
+        var base = baseStake_(x);
+        return { row: x._row, o: { hits: '', rank: '취소', prize: base, profit: calcProfit_(base, base) } };
+      }));
+    }
+    return { round: r, repaired: rows.length, total: rows.reduce(function (n, x) { return n + baseStake_(x); }, 0) };
+  });
+}
+
+/** 58회차 취소/전액환불 일회성 보정(Apps Script 편집기에서 직접 실행 가능, 멱등) */
+function repairWdlRound58Cancel() { return repairCancelledWdlRound_('58'); }
 
 /* ------------------------------------------------------------------ */
 /* 집계 (대시보드/월간 성적 공통)                                      */
@@ -877,7 +962,7 @@ function aggWdl_(rows) {
     g.settledStake += r.buyStake;
     g.prize += r.prize || 0;
     if (r.hits != null && (g.bestHits === null || r.hits > g.bestHits)) g.bestHits = r.hits;
-    var idx = ENUM.RANK_RESOLVE.indexOf(r.rank);
+    var idx = r.rank === '취소' ? -1 : ENUM.RANK_RESOLVE.indexOf(r.rank);   // 취소는 등수가 아님
     if (idx >= 0 && (bestIdx === null || idx < bestIdx)) bestIdx = idx;
   });
   g.rounds = Object.keys(rounds).length;
@@ -897,10 +982,11 @@ function buildStats_(month) {
   var bt = aggBets_(bets);
   var wt = aggWdl_(wdl);
 
-  var used = bt.stake + wt.stake;
-  var settledStake = bt.settledStake + wt.settledStake;
-  var totalReturn = bt.ret + wt.prize;
-  var profit = calcProfit_(settledStake, totalReturn);
+  var fund = fundFromAgg_(settings.budget, bt, wt);
+  var used = fund.totalStake;
+  var settledStake = fund.settledStake;
+  var totalReturn = fund.settledReturn;
+  var profit = fund.realizedPnL;
 
   function group(list) { return aggBets_(list); }
   var bySport = ENUM.SPORT.map(function (s) {
@@ -924,7 +1010,7 @@ function buildStats_(month) {
     if (r.rank !== '대기') {
       g.settled++; g.prize += r.prize || 0;
       if (r.hits != null && (g.bestHits === null || r.hits > g.bestHits)) g.bestHits = r.hits;
-      if (r.rank !== '미당첨') g.winners++;
+      if (r.rank !== '미당첨' && r.rank !== '취소') g.winners++;
     }
   });
   var wdlGroups = gorder.map(function (k) { return gmap[k]; }).sort(function (a, b) { return a.round < b.round ? 1 : a.round > b.round ? -1 : 0; });
@@ -945,13 +1031,17 @@ function buildStats_(month) {
     summary: {
       budget: settings.budget,
       used: used,
-      totalStake: used,   // 총 베팅액 = 사용액 (대기/취소 포함, 반환금과 무관)
+      totalStake: used,   // 총 베팅액 = 실제 구매한 누적 금액(통계용)
       betUsed: bt.stake,
       wdlUsed: wt.stake,
-      remain: settings.budget - used,
+      remain: fund.availableBudget,           // 남은 예산 = 월 예산 + 확정손익 - 미확정 베팅액
+      monthlyBaseBudget: fund.monthlyBaseBudget,
+      openStake: fund.openStake,
+      realizedPnL: fund.realizedPnL,
+      availableBudget: fund.availableBudget,
       totalReturn: totalReturn,
       settledStake: settledStake,
-      pendingStake: bt.pendingStake + wt.pendingStake,
+      pendingStake: fund.openStake,
       profit: profit,                       // 확정 손익 (확정 건만)
       roi: calcRoi_(settledStake, profit),  // 확정 ROI = 확정 손익 / 확정 베팅액 (대기 제외)
       hitRate: bt.hitRate
@@ -1262,8 +1352,8 @@ function resolveRichResultInternal_(payload) {
     var rank = enumField_(payload.rank, ENUM.RANK_RESOLVE, '등수');
     if (rec.rank !== '대기') {
       if (rec.rank !== rank) fail_('이미 다른 결과로 처리된 베팅입니다.');
-      sameNumberOrBlank_(payload.hits, rec.hits, '적중개수');
-      if (rank !== '미당첨') sameNumberOrBlank_(payload.prize, rec.prize, '당첨금');
+      if (rank !== '취소') sameNumberOrBlank_(payload.hits, rec.hits, '적중개수');
+      if (rank !== '미당첨' && rank !== '취소') sameNumberOrBlank_(payload.prize, rec.prize, '당첨금');
       duplicate = true;
       out = { profit: rec.profit };
     } else {
@@ -1303,7 +1393,7 @@ function resolveRichGroupResult_(payload, key) {
     var blankPrize = c.prize == null || String(c.prize).trim() === '';
     var parsed = parseWdlResult_({ hits: c.hits, rank: c.rank, prize: (blankPrize && String(c.rank).trim() === '미당첨') ? '0' : c.prize });
     if (row.rank !== '대기') {
-      if (row.rank !== parsed.rank || row.hits !== parsed.hits || row.prize !== parsed.prize) fail_('조합' + no + ': 이미 다른 결과로 처리된 베팅입니다.');
+      if (row.rank !== parsed.rank || (parsed.rank !== '취소' && (row.hits !== parsed.hits || row.prize !== parsed.prize))) fail_('조합' + no + ': 이미 다른 결과로 처리된 베팅입니다.');
       return;   // 같은 결과로 이미 처리됨 → 건너뜀
     }
     plan.push({ id: row.id, hits: parsed.hits, rank: parsed.rank, prize: parsed.prize });
@@ -1582,6 +1672,11 @@ function seedInbox_() {
   if (!inbox) return 'seed 생략: RICH_INBOX 없음';
   var msgs = [];
   CODE_SEED_INBOX.forEach(function (item) {
+    if (item && item.cancelRound) {   // 승무패 회차 취소/전액환불 보정(멱등)
+      try { var rr = repairCancelledWdlRound_(item.cancelRound); msgs.push('취소보정 ' + rr.round + '회차 ' + rr.repaired + '행 ' + rr.total + '원'); }
+      catch (e) { msgs.push('취소보정 실패: ' + richErr_(e).slice(0, 120)); }
+      return;
+    }
     var p = item && item.payload, id = String(p && p.requestId || '');
     if (!id) return;
     try {
@@ -1627,6 +1722,7 @@ function postDeployCheck_() {
   var steps = [];
   withLock_(function () {
     try { steps.push(setupWdlGroupColumns()); } catch (e) { steps.push('setupWdlGroupColumns 실패: ' + richErr_(e)); }
+    try { steps.push(updateDashboardRemainFormula()); } catch (e) { steps.push('DASHBOARD 수식 갱신 실패: ' + richErr_(e)); }
   });
   var selftest = (typeof CODE_SELFTEST !== 'undefined' && CODE_SELFTEST) ? selfTest_(rev) : '';
   var seeded = seedInbox_();

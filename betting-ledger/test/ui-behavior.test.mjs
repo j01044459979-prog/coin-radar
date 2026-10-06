@@ -214,6 +214,26 @@ await test('102. 승무패 묶음: 결과 처리는 조합별 독립 입력, 월
     assert.strictEqual(app.errs.length, 0, app.errs.join('|'));
   } finally { await app.close(); }
 });
+await test('126. 승무패 취소: 묶음 조합마다 취소 선택 시 입력칸 숨김·확인창에 전액 환불 표시, 확정 후 남은 예산 원복', async () => {
+  const env = makeEnv(); const g = seedGroup(env);
+  env.get('apiPurchase')({ kind: 'wdl_group', id: g.groupId, buy: true, reqId: 'ui-grp-buy2' });
+  const app = await openApp({ env }); try {
+    await app.page.click('[data-tab=res]'); await app.page.waitForSelector('#pWdl .grp');
+    for (let i = 0; i < 8; i++) {
+      const c = app.page.locator('#pWdl .grp .pend').first();
+      await c.locator('.wRank').selectOption('취소');
+      assert.ok(!(await c.locator('.wHits').isVisible()) && !(await c.locator('.wPrize').isVisible()));
+      await c.locator('.rWdlSave').click(); await flush(app.page);
+      if (i === 0) assert.ok((await app.page.textContent('#cfm')).includes('전액 환불'));
+      await app.page.click('#cfmOk'); await flush(app.page);
+    }
+    assert.strictEqual(await app.page.locator('#pWdl .grp').count(), 0);
+    const rows = env.sheet('WDL_LOG').grid.slice(1);
+    assert.ok(rows.every(r => r[20] === '취소' && r[21] === 1000 && r[22] === 0 && r[19] === ''));
+    assert.strictEqual(env.get('apiGetMonthly')('2026-10').summary.remain, 200000);
+    assert.strictEqual(app.errs.length, 0, app.errs.join('|'));
+  } finally { await app.close(); }
+});
 
 console.log(results.join('\n'));
 console.log(`\n${pass}/${results.length} UI tests passed`);

@@ -304,7 +304,7 @@ function loadPending() {
       return '<div class="pend" data-kind="wdl" data-id="' + esc(id) + '" data-top="' + esc(top) + '">' +
         '<div><b>' + esc(label) + '</b></div><div class="sub">' + sub + '</div>' +
         '<div class="two"><select class="wHits">' + Array.apply(null, Array(15)).map(function (_, i) { return '<option value="' + i + '">' + i + '개 적중</option>'; }).join('') + '</select>' +
-        '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option></select></div>' +
+        '<select class="wRank"><option>미당첨</option><option>1등</option><option>2등</option><option>3등</option><option>4등</option><option>취소</option></select></div>' +
         '<input class="wPrize" type="number" inputmode="numeric" min="0" placeholder="당첨금(원)" style="margin-top:8px">' +
         '<button class="mini rWdlSave" style="margin-top:8px;width:100%">결과 저장</button></div>';
     }
@@ -318,6 +318,11 @@ function loadPending() {
     S.cache.res = { at: Date.now() };
   });
 }
+$('tab-res').addEventListener('change', function (e) {   // 승무패 '취소' 선택 시 적중개수/당첨금 입력 숨김
+  if (!e.target.classList || !e.target.classList.contains('wRank')) return;
+  var box = e.target.closest('.pend'), off = e.target.value === '취소';
+  box.querySelector('.wHits').style.display = off ? 'none' : ''; box.querySelector('.wPrize').style.display = off ? 'none' : '';
+});
 $('tab-res').addEventListener('click', function (e) {
   var btn = e.target.closest('button'); if (!btn) return;
   var box = btn.closest('.pend'); if (!box) return;
@@ -342,9 +347,10 @@ $('tab-res').addEventListener('click', function (e) {
   } else if (btn.classList.contains('rWdlSave')) {
     var hits = box.querySelector('.wHits').value, rank = box.querySelector('.wRank').value, prize = box.querySelector('.wPrize').value;
     if (prize === '' && rank === '미당첨') prize = '0';
+    if (rank === '취소') { hits = ''; prize = ''; }   // 취소/전액환불: 적중개수·당첨금 입력 없음(원금 전액 환급, 손익 0)
     openConfirm({
       title: '결과 처리 확인',
-      lines: [box.dataset.top, '처리 결과: ' + hits + '개 적중 / ' + rank, prize === '' ? '' : '당첨금 ' + won(+prize)].filter(Boolean),
+      lines: [box.dataset.top, rank === '취소' ? '처리 결과: 취소 · 실제 베팅금액 전액 환불(손익 0원)' : '처리 결과: ' + hits + '개 적중 / ' + rank, prize === '' ? '' : '당첨금 ' + won(+prize)].filter(Boolean),
       okLabel: rank + ' 확정',
       run: function (rid) { return call('apiResolveWdl', { id: id, hits: hits, rank: rank, prize: prize, reqId: rid }); },
       onSuccess: done

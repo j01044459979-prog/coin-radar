@@ -35,6 +35,8 @@ function makeSheet(name) {
     getRange(r, c, nr = 1, nc = 1) {
       const rng = {
         getFormulas: () => { flushQ(); return Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => { const v = grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j]; return (typeof v === 'string' && v[0] === '=') ? v : ''; })); },
+        getFormula: () => { flushQ(); const v = grid[r - 1] && grid[r - 1][c - 1]; return (typeof v === 'string' && v[0] === '=') ? v : ''; },
+        setFormula(f) { q.push(() => { cell(r, c, f); }); return prx; },
         getValue: () => { flushQ(); return (grid[r - 1] && grid[r - 1][c - 1] !== undefined) ? grid[r - 1][c - 1] : ''; },
         getValues: () => { flushQ(); return Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => (grid[r - 1 + i] && grid[r - 1 + i][c - 1 + j] !== undefined) ? grid[r - 1 + i][c - 1 + j] : '')); },
         setValues(v) { q.push(() => { v.forEach((row, i) => row.forEach((x, j) => cell(r + i, c + j, x))); }); return prx; },
@@ -230,8 +232,8 @@ test('7. 월 사용 198,000 에서 3,000 신규 → 200,000 초과 차단', () =
   fill198k(env);
   assert.strictEqual(env.get('apiGetMonthly')('2026-09').summary.used, 198000);
   const r = bet(env, { date: '2026-09-30', stake: 3000 });
-  assert.strictEqual(r.ok, false); assert.match(r.error, /월 예산 200,000원 초과/);
-  assert.ok(bet(env, { date: '2026-09-30', stake: 2000 }).ok); // 정확히 200,000 허용
+  assert.strictEqual(r.ok, false); assert.match(r.error, /월 운용자금 부족: 사용 가능 2,000원 \(월 예산 200,000원 \+ 확정손익 0원 - 미확정 198,000원\) < 신규 3,000원/);
+  assert.ok(bet(env, { date: '2026-09-30', stake: 2000 }).ok); // 사용 가능 자금 2,000 정확히 허용
   assert.strictEqual(bet(env, { date: '2026-09-30', stake: 1000 }).ok, false);
 });
 
@@ -256,7 +258,7 @@ test('8. BET_LOG + WDL_LOG 합산 사용액 = 대시보드(시트/웹앱) 일치
   const raw = sumCol('BET_LOG', 8, '2026-10', 1) + sumCol('WDL_LOG', 18, '2026-10', 2);
   assert.strictEqual(raw, 5000 + 4000 + 3000 + 6000 + 4000);
   const s = dash(env).summary;
-  assert.strictEqual(s.used, raw); assert.strictEqual(s.remain, 200000 - raw);
+  assert.strictEqual(s.used, raw); assert.strictEqual(s.remain, 200000 + 5000 - 7000);   // 월 예산 + 확정손익 - 미확정
   assert.strictEqual(env.sheet('DASHBOARD').getLastRow(), 0);   // DASHBOARD 는 코드가 쓰지 않음
 });
 
@@ -374,13 +376,14 @@ test('21. 취소·반환·당첨이 있어도 월 사용액/남은 예산은 줄
   env.get('apiResolveBet')({ id: a, result: '취소', reqId: 'n6' });
   env.get('apiResolveBet')({ id: b, result: '적중', ret: 50000, reqId: 'n7' });
   const s = dash(env).summary;
-  assert.strictEqual(s.used, 15000); assert.strictEqual(s.remain, 185000);
-  // 환급/당첨 후에도 월 한도 검증은 총 베팅액 기준: 9월에 198,000 채우고 취소·당첨 처리해도 차단
+  assert.strictEqual(s.used, 15000); assert.strictEqual(s.remain, 200000 + 45000 - 5000);   // 취소 0 + 적중 +45,000, 대기 5,000만 잠김
+  // 확정 수익은 운용자금으로 돌아온다: 9월에 198,000 채우고 하나가 적중(+)하면 추가 베팅 가능
   const env2 = setup(); fill198k(env2);
   const first = env2.sheet('BET_LOG').grid[1][0];
   env2.get('apiResolveBet')({ id: first, result: '적중', ret: 100000, reqId: 'n8' });
-  assert.strictEqual(env2.get('apiGetMonthly')('2026-09').summary.remain, 2000);
-  assert.strictEqual(bet(env2, { date: '2026-09-30', stake: 3000 }).ok, false);
+  const m2 = env2.get('apiGetMonthly')('2026-09').summary;
+  assert.strictEqual(m2.remain, 200000 + m2.profit - m2.pendingStake); assert.ok(m2.profit > 0 && m2.remain > 2000);
+  assert.ok(bet(env2, { date: '2026-09-30', stake: 3000 }).ok);
   void c;
 });
 test('22. 승무패 1경기 미선택 → 차단 + 친절한 메시지', () => {
@@ -521,13 +524,13 @@ test('32. 월 예산: 실구매 합계 기준(일·회차 한도와 별개), 초
   const x = recBet(env, { date: '2026-09-30', stake: 3000 }).id, y = recBet(env, { date: '2026-09-30', stake: 2000, name: 'Y' }).id;
   assert.strictEqual(env.get('apiGetMonthly')('2026-09').summary.used, 198000);   // 추천만으로는 불변
   const r = buy(env, 'bet', x);
-  assert.strictEqual(r.ok, false); assert.match(r.error, /월 예산 200,000원 초과: 2026-09 구매 198,000원 \+ 신규 3,000원 = 201,000원/);
-  assert.ok(buy(env, 'bet', y).ok);                                                // 정확히 200,000 허용
+  assert.strictEqual(r.ok, false); assert.match(r.error, /월 운용자금 부족: 사용 가능 2,000원 .* < 신규 3,000원/);
+  assert.ok(buy(env, 'bet', y).ok);                                                // 사용 가능 2,000 정확히 허용
   assert.strictEqual(env.get('apiGetMonthly')('2026-09').summary.remain, 0);
   assert.ok(buy(env, 'bet', x, false).ok);
-  // 반환/당첨은 예산을 되살리지 않음
+  // 확정 수익은 예산에 반영: y(2,000) 적중 반환 100,000 → 확정손익 +98,000, 남은 예산 = 200,000 + 98,000 - 미확정 198,000
   env.get('apiResolveBet')({ id: y, result: '적중', ret: 100000, reqId: 'm1' });
-  assert.strictEqual(env.get('apiGetMonthly')('2026-09').summary.remain, 0);
+  assert.strictEqual(env.get('apiGetMonthly')('2026-09').summary.remain, 200000 + 98000 - 198000);
 });
 test('33. 샀다/안 샀다 중복 클릭: 두 번째는 변경 없이 거절, 동일 reqId 는 캐시 응답', () => {
   const env = setup(); env.setNow(new Date('2026-10-03T03:00:00Z'));
@@ -1347,7 +1350,7 @@ test('97. 그룹 구매 한도: 회차 10,000원/월 예산을 그룹 전체 금
   // 월 예산: 9월 198,000원 구매 상태에서 8,000원 그룹 → 월 한도로 전체 거절
   const env3 = setup(); env3.get('setupRichBridge')(); fill198k(env3); env3.setNow(kst('2026-09-30'));
   const g3 = env3.get('apiSaveRichPick')(mp({ date: '2026-09-30', round: '70' })); assert.ok(g3.ok, g3.error);
-  const m = buyGroup(env3, g3.groupId); assert.strictEqual(m.ok, false); assert.match(m.error, /월 예산 200,000원 초과: 2026-09 구매 198,000원 \+ 신규 8,000원 = 206,000원/);
+  const m = buyGroup(env3, g3.groupId); assert.strictEqual(m.ok, false); assert.match(m.error, /월 운용자금 부족: 사용 가능 2,000원 .* < 신규 8,000원/);
   assert.ok(wdlRows(env3, g3.groupId).every(x => x[25] === '미확인'));
 });
 test('98. 그룹 구매는 원자적: 쓰기 중 오류가 나도 일부 행만 구매 처리되지 않음', () => {
@@ -1567,6 +1570,118 @@ test('112. 배포 seed: 저장→전체 구매 확정(8행 구매, 1,000원), �
   assert.strictEqual(wdlRows(env).filter(x => x[0]).length, 8);
   assert.strictEqual(env.sheet('RICH_INBOX').grid[err][3], 'ERROR');
   const sys = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'system-deploy-sd00001'); assert.match(sys[7], /구매 확정 8조합 8000원/);
+});
+
+/* ---------- 월 운용자금(남은 예산 = 월 예산 + 확정손익 - 미확정) + 승무패 취소/환불 ---------- */
+const fundOf = (env) => dash(env).summary;
+const bigDaily = (env) => { env.sheet('SETTINGS').grid[2][1] = 20000; return env; };   // 일 최대 한도는 이번 검증과 무관 → 올려서 10,000원 베팅 허용
+const chk = (s, e) => { for (const k of Object.keys(e)) assert.strictEqual(s[k], e[k], k + ': ' + s[k] + ' ≠ ' + e[k]); };
+test('113. CASE A 미확정: 10,000원 대기 → 남은 예산 190,000', () => {
+  const env = bigDaily(setup()); assert.ok(bet(env, { stake: 10000 }).ok);
+  chk(fundOf(env), { remain: 190000, openStake: 10000, pendingStake: 10000, realizedPnL: 0, monthlyBaseBudget: 200000, availableBudget: 190000 });
+});
+test('114. CASE B 전액 미적중: 확정손익 -10,000, 미확정 0, 남은 예산 190,000', () => {
+  const env = bigDaily(setup()); const id = bet(env, { stake: 10000 }).id; assert.ok(env.get('apiResolveBet')({ id, result: '미적중', reqId: 'fb' }).ok);
+  chk(fundOf(env), { profit: -10000, realizedPnL: -10000, openStake: 0, remain: 190000 });
+});
+test('115. CASE C 적중 수익: 반환 15,000 → 확정손익 +5,000, 남은 예산 205,000', () => {
+  const env = bigDaily(setup()); const id = bet(env, { stake: 10000 }).id; assert.ok(env.get('apiResolveBet')({ id, result: '적중', ret: 15000, reqId: 'fc' }).ok);
+  chk(fundOf(env), { profit: 5000, openStake: 0, settledStake: 10000, totalReturn: 15000, remain: 205000 });
+});
+test('116. CASE D 취소 환불: 확정손익 0, 미확정 0, 남은 예산 200,000(원금 전액 복구)', () => {
+  const env = bigDaily(setup()); const id = bet(env, { stake: 10000 }).id; assert.ok(env.get('apiResolveBet')({ id, result: '취소', reqId: 'fd' }).ok);
+  chk(fundOf(env), { profit: 0, openStake: 0, remain: 200000, totalStake: 10000, totalReturn: 10000 });
+});
+const resolveCancelGroup = (env, gid) => wdlRows(env, gid).filter(x => x[0]).map(x => env.get('apiResolveWdl')({ id: x[0], rank: '취소', reqId: 'c' + x[0] }));
+test('117. CASE E 현재 실제 장부: 일반 10,000→23,010 + 승무패 58회차 8조합 취소환불 8,000 → 남은 예산 213,010', () => {
+  const env = bigDaily(bridgeEnv()); const id = bet(env, { stake: 10000, date: '2026-10-05' }).id;
+  assert.ok(env.get('apiResolveBet')({ id, result: '적중', ret: 23010, reqId: 'fe' }).ok);
+  const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  chk(fundOf(env), { remain: 200000 + 13010 - 8000, openStake: 8000 });                       // 취소 전: 8,000 미확정으로 잠김
+  assert.ok(resolveCancelGroup(env, g.groupId).every(r => r.ok));
+  chk(fundOf(env), { budget: 200000, totalStake: 18000, openStake: 0, pendingStake: 0, settledStake: 18000, totalReturn: 31010, profit: 13010, remain: 213010 });
+  const rows = wdlRows(env, g.groupId).filter(x => x[0]);
+  assert.ok(rows.every(x => x.length === 30 && x[19] === '' && x[20] === '취소' && x[21] === 1000 && x[22] === 0));   // 적중개수 빈값, 등수 취소, 당첨금=원금, 손익 0
+});
+test('118. CASE F 혼합: 확정손익 +20,000, 대기 7,000 → 남은 예산 213,000', () => {
+  const env = bigDaily(setup()); const a = bet(env, { stake: 10000 }).id; bet(env, { stake: 5000, name: 'B' }); bet(env, { stake: 2000, name: 'C', date: '2026-10-04' });
+  assert.ok(env.get('apiResolveBet')({ id: a, result: '적중', ret: 30000, reqId: 'ff' }).ok);
+  chk(fundOf(env), { profit: 20000, openStake: 7000, remain: 213000 });
+});
+test('119. 불변식: remain = 월예산 + 확정손익 - 미확정 (혼합 시드 전체), 구매 한도도 같은 규칙', () => {
+  const env = setup(); seedMixed(env); const s = fundOf(env);
+  assert.strictEqual(s.availableBudget, s.monthlyBaseBudget + s.realizedPnL - s.openStake); assert.strictEqual(s.remain, s.availableBudget);
+  // 사용 가능 자금 초과 신청만 차단: 확정 수익이 있으면 총 베팅액이 예산을 넘어도 구매 가능
+  const env2 = setup(); env2.setNow(kst('2026-10-03'));
+  for (let i = 0; i < 4; i++) { const id = bet(env2, { stake: 5000, date: ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'][i], name: 'L' + i }).id; env2.get('apiResolveBet')({ id, result: '적중', ret: 100000, reqId: 'inv' + i }); }
+  const big = bet(env2, { stake: 5000, date: '2026-10-05', name: 'Z' }); assert.ok(big.ok, big.error);
+  assert.ok(fundOf(env2).totalStake <= 25000 && fundOf(env2).remain > 200000);
+});
+test('120. 승무패 취소: 단일 WDL 도 취소 가능(적중개수 불필요, 당첨금=실제베팅금액, 손익 0), 당첨금을 다르게 주면 거절', () => {
+  const env = bridgeEnv(); const id = wdl(env, { stake: 4000, date: '2026-10-05' }).id;
+  const bad = env.get('apiResolveWdl')({ id, rank: '취소', prize: '3000', reqId: 'cw0' }); assert.strictEqual(bad.ok, false); assert.match(bad.error, /전액 환불/);
+  const r = env.get('apiResolveWdl')({ id, rank: '취소', reqId: 'cw1' }); assert.ok(r.ok, r.error); assert.strictEqual(r.profit, 0);
+  const row = env.sheet('WDL_LOG').grid.find(x => x[0] === id);
+  assert.deepStrictEqual([row[19], row[20], row[21], row[22]], ['', '취소', 4000, 0]);
+  chk(dash(env).summary, { openStake: 0, profit: 0, remain: 200000, totalReturn: 4000 });
+  assert.strictEqual(dash(env).wdl.bestRank, null);                                               // 취소는 등수가 아님
+  assert.strictEqual(env.get('apiResolveWdl')({ id, rank: '미당첨', hits: 3, prize: '0', reqId: 'cw2' }).ok, false);   // 이미 처리됨
+});
+test('121. 등수 드롭다운이 거절형이면 취소 쓰기 전에 차단(부분 쓰기 없음), setupWdlGroupColumns 가 비파괴로 취소 추가', () => {
+  const env = setupLegacyRules(); env.setNow(kst('2026-10-05')); env.get('setupRichBridge')(); env.get('setupWdlGroupColumns')();
+  env.sheet('WDL_LOG')._rules.filter(r => r.c0 === 21).forEach(r => { r.list = r.list.filter(v => v !== '취소'); r.allowInvalid = false; });   // 취소 없는 사용자 규칙 재현
+  const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  const snap = JSON.stringify(env.sheet('WDL_LOG').grid);
+  const r = env.get('apiResolveWdl')({ id: wdlRows(env, g.groupId)[0][0], rank: '취소', reqId: 'cd1' });
+  assert.strictEqual(r.ok, false); assert.match(r.error, /등수 드롭다운 규칙에 취소가 없어/); assert.strictEqual(JSON.stringify(env.sheet('WDL_LOG').grid), snap);
+  env.get('setupWdlGroupColumns')();
+  assert.ok(env.sheet('WDL_LOG')._rules.some(r => r.c0 === 21 && r.list.includes('취소') && r.list.includes('1등')));
+  assert.ok(env.get('apiResolveWdl')({ id: wdlRows(env, g.groupId)[0][0], rank: '취소', reqId: 'cd2' }).ok);
+});
+test('122. 58회차 보정(repairCancelledWdlRound_): 구매·대기 행만 취소/환불로, 두 번 실행해도 동일, 다른 회차/미구매/기결과 불변', () => {
+  const env = bridgeEnv(); const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  const other = saveMulti(env, { round: '59' }); assert.ok(buyGroup(env, other.groupId).ok);
+  const unbought = saveMulti(env, { round: '58' });
+  const one = wdlRows(env, other.groupId)[0][0]; assert.ok(env.get('apiResolveWdl')({ id: one, hits: 5, rank: '미당첨', prize: '0', reqId: 'rp1' }).ok);
+  const r1 = env.get('repairWdlRound58Cancel')(); assert.deepStrictEqual([r1.round, r1.repaired, r1.total], ['58', 8, 8000]);
+  const snap = JSON.stringify(env.sheet('WDL_LOG').grid);
+  const r2 = env.get('repairWdlRound58Cancel')(); assert.strictEqual(r2.repaired, 0); assert.strictEqual(JSON.stringify(env.sheet('WDL_LOG').grid), snap);
+  const rows = wdlRows(env).filter(x => x[0]);
+  assert.strictEqual(rows.filter(x => x[1] === '58' && x[28] === g.groupId && x[20] === '취소' && x[21] === 1000 && x[22] === 0).length, 8);
+  assert.ok(rows.filter(x => x[28] === unbought.groupId).every(x => x[20] === '대기'));                      // 미구매/미확인은 그대로
+  assert.ok(rows.filter(x => x[28] === other.groupId).every(x => x[20] === '대기' || x[0] === one));         // 다른 회차는 그대로
+  assert.strictEqual(rows.find(x => x[0] === one)[20], '미당첨');
+  chk(dash(env).summary, { openStake: 7000, profit: -1000, remain: 200000 - 1000 - 7000 });                 // 58회차는 취소로 정리, 59회차는 미당첨 1,000(손실) + 대기 7,000
+});
+test('123. Rich RESULT: WDL_MULTI 묶음 취소(조합별 취소), 같은 요청/같은 결과 재전송 멱등, 단일 WDL RESULT 도 취소 지원', () => {
+  const env = bridgeEnv(); const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  const combos = Array.from({ length: 8 }, (_, i) => ({ comboNo: i + 1, rank: '취소' }));
+  const a = inboxJson(env, 'rich-result-cancel-0001', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos }); runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, a)[3], inboxRow(env, a)[7]], ['DONE', '']);
+  chk(dash(env).summary, { openStake: 0, profit: 0, remain: 200000, totalReturn: 8000 });
+  const c = inboxJson(env, 'rich-result-cancel-0002', { action: 'RESULT', targetType: 'WDL_MULTI', targetId: g.groupId, combos }); runInbox(env);   // 같은 결과 재전송
+  assert.strictEqual(inboxRow(env, c)[3], 'DONE'); assert.strictEqual(wdlRows(env, g.groupId).filter(x => x[20] === '취소').length, 8);
+  const s = env.get('apiSaveRichPick')(rw({ stake: 3000 })); assert.ok(buy(env, 'wdl', s.id).ok);
+  const d = inboxJson(env, 'rich-result-cancel-0003', { action: 'RESULT', targetType: 'WDL', targetId: s.id, rank: '취소' }); runInbox(env);
+  assert.deepStrictEqual([inboxRow(env, d)[3], inboxRow(env, d)[7]], ['DONE', '']);
+  chk(dash(env).summary, { openStake: 0, remain: 200000, totalReturn: 11000 });
+});
+test('124. DASHBOARD 남은 예산 수식: 옛 =MAX(0,B4-B5) 만 =B4+B9-B6 으로 바꾸고 다른 셀·사용자 정의 수식은 그대로(멱등)', () => {
+  const env = preexisting(); const sh = env.sheet('DASHBOARD');
+  sh.grid[3] = ['월 예산', 200000]; sh.grid[10] = ['남은 예산', '=MAX(0, B4-B5)']; sh.grid[8] = ['확정 손익', '=B8-B7'];
+  assert.match(env.get('updateDashboardRemainFormula')(), /변경: =B4\+B9-B6/);
+  assert.strictEqual(sh.grid[10][1], '=B4+B9-B6'); assert.strictEqual(sh.grid[8][1], '=B8-B7');
+  assert.match(env.get('updateDashboardRemainFormula')(), /이미 최신/);
+  sh.grid[10][1] = '=B4-B5+100'; assert.match(env.get('updateDashboardRemainFormula')(), /사용자 정의/); assert.strictEqual(sh.grid[10][1], '=B4-B5+100');
+});
+test('125. 배포 seed 취소보정: {cancelRound:"58"} 은 postDeployCheck 에서 1회 보정되고 DASHBOARD 수식도 함께 갱신', () => {
+  const env = bridgeEnv(); const g = saveMulti(env); assert.ok(buyGroup(env, g.groupId).ok);
+  const sh = env.sheet('DASHBOARD'); sh.grid[10] = ['남은 예산', '=MAX(0,B4-B5)'];
+  env.ctx.CODE_REV = 'cr00001'; env.ctx.CODE_SEED_INBOX = [{ cancelRound: '58' }];
+  env.get('processRichInbox')();
+  const sys = env.sheet('RICH_INBOX').grid.find(x => x[0] === 'system-deploy-cr00001'); assert.match(sys[7], /취소보정 58회차 8행 8000원/);
+  assert.match(sys[7], /환경 정상 \/ Rich Bridge 정상/); assert.strictEqual(sh.grid[10][1], '=B4+B9-B6');
+  chk(dash(env).summary, { openStake: 0, remain: 200000 });
 });
 
 console.log(results.join('\n'));
