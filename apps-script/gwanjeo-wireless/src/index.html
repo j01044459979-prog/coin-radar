@@ -552,6 +552,52 @@
     .spot-stat.done .v{color:#047857}
     .spot-stat.pending .v{color:#b45309}
 
+    .spot-memo{
+      margin-top:10px;
+      padding:10px 12px;
+      border-radius:12px;
+      background:#f8fafc;
+      min-width:0;
+    }
+
+    .spot-memo + .spot-memo{
+      margin-top:6px;
+    }
+
+    .spot-memo .k{
+      font-size:12px;
+      font-weight:800;
+      color:#6b7280;
+      margin-bottom:4px;
+    }
+
+    .spot-text{
+      font-size:14px;
+      line-height:1.55;
+      color:#111827;
+      white-space:pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+
+    .spot-text.clamp{
+      display:-webkit-box;
+      -webkit-box-orient:vertical;
+      -webkit-line-clamp:4;
+      overflow:hidden;
+    }
+
+    .spot-more{
+      margin-top:4px;
+      padding:6px 0;
+      min-height:32px;
+      border:0;
+      background:transparent;
+      color:#2563eb;
+      font-size:13px;
+      font-weight:800;
+    }
+
     .spot-targets{
       margin-top:10px;
       border-top:1px solid #f0f0f0;
@@ -2234,6 +2280,9 @@ function renderSpots(){
               </div>
             </div>
 
+            ${renderSpotMemo(s,'cond','달성조건',spotConditionText(s))}
+            ${renderSpotMemo(s,'note','비고',s.note)}
+
             ${renderSpotTargets(s)}
 
           </div>
@@ -2242,6 +2291,53 @@ function renderSpots(){
       .join('');
 }
 
+
+/*
+ * 스팟 카드: 달성조건 → 비고 (실적 요약 바로 아래)
+ * 달성조건 = 스팟 관리에 등록된 계산방식 + 1~3차 목표/금액 (저장 데이터 그대로, 화면 표시만)
+ * 비고 = 등록 원문 그대로 (줄바꿈 유지), 빈 항목은 숨김
+ * 긴 내용은 4줄까지 보이고 펼쳐보기 (펼친 상태는 새로고침 후에도 유지)
+ */
+const SPOT_MEMO_OPEN=new Set();
+
+function spotMetricLabel(m){
+  const o=document.querySelector(`#spotMetric option[value="${CSS.escape(String(m||''))}"]`);
+  return o?o.textContent.trim():String(m||'');
+}
+
+function spotConditionText(s){
+  const tiers=(s.tiers||[]).slice().sort((a,b)=>a.target-b.target);
+  if(!tiers.length) return '';
+  const perCase=s.mode==='구간건당';
+  return[
+    `${s.mode||''} · ${spotMetricLabel(s.metric)} 완료 건수 기준`,
+    ...tiers.map(t=>`${t.no}차: ${Number(t.target)}건 이상 → ${perCase?'건당 ':''}${money(t.value)}`)
+  ].join('\n');
+}
+
+function renderSpotMemo(s,field,label,text){
+  const t=String(text==null?'':text).replace(/\r\n?/g,'\n');
+  if(!t.trim()) return '';
+  const key=String(s.id)+'|'+field;
+  const long=t.split('\n').length>4||t.length>120;
+  const open=SPOT_MEMO_OPEN.has(key);
+  return`
+    <div class="spot-memo" data-memo="${esc(field)}">
+      <div class="k">${esc(label)}</div>
+      <div class="spot-text ${long&&!open?'clamp':''}">${esc(t)}</div>
+      ${long?`<button type="button" class="spot-more" data-key="${esc(key)}" onclick="toggleSpotMemo(this)">${open?'접기':'펼쳐보기'}</button>`:''}
+    </div>
+  `;
+}
+
+function toggleSpotMemo(btn){
+  const key=btn.dataset.key;
+  const text=btn.parentElement.querySelector('.spot-text');
+  const open=!SPOT_MEMO_OPEN.has(key);
+  if(open) SPOT_MEMO_OPEN.add(key); else SPOT_MEMO_OPEN.delete(key);
+  text.classList.toggle('clamp',!open);
+  btn.textContent=open?'접기':'펼쳐보기';
+}
 
 function spotDateLabel(d){
 
