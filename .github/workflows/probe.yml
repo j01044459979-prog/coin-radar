@@ -1,0 +1,12 @@
+name: probe
+on:
+  push:
+    branches: [claude/coin-radar-auto-alerts-fzsnyl]
+    paths: [.github/workflows/probe.yml, radar-service/probe-exchanges.mjs]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: date -u && node radar-service/probe-exchanges.mjs
