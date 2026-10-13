@@ -69,7 +69,7 @@ export async function cycle({ now, state, collect, send, save }) {
     state.retryAt = now + Math.max(300000, error.retryAfter * 1000 || 0, [403, 451].includes(error.status) ? 3600000 : 0);
     await save(state);
     if (now - (state.errorSentAt || 0) >= 3600000) {
-      await send(`리치 선물 레이더 · 수집 장애\n${error.message}\n가격·매매 신호를 생성하지 않습니다. 다음 점검까지 대기합니다.`);
+      await send(`리치 선물 레이더 · 수집 장애\n${error.message}\n가격·매매 신호를 생성하지 않습니다(대기). 다음 점검까지 대기합니다.`);
       state.errorSentAt = now; await save(state);
     }
     return { failed: true };
@@ -89,7 +89,7 @@ export async function cycle({ now, state, collect, send, save }) {
     for (const row of top) {
       const key = `${row.symbol}:${row.direction}`;
       if (now - (state.sent[key] || 0) < 3600000) continue;
-      await send(`🚨 신규 조건 포착 · 규칙 기반 분석\n${signalText(row)}\n수집: ${new Date(now).toISOString()}\n위험: BTC 역방향 급변 또는 기준선 이탈 시 무효`);
+      await send(`🚨 신규 조건 포착 · 규칙 기반 분석 (${row.source ?? '거래소'})\n${signalText(row)}\n수집: ${new Date(now).toISOString()}\n위험: BTC 역방향 급변 또는 기준선 이탈 시 무효`);
       state.sent[key] = now; await save(state);
     }
   }
