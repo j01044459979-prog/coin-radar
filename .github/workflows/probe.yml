@@ -1,0 +1,15 @@
+name: probe
+on:
+  push:
+    branches: [claude/coin-radar-auto-alerts-fzsnyl]
+    paths: [.github/workflows/probe.yml]
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          date -u
+          for u in https://fapi.binance.com/fapi/v1/ping https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT\&interval=5m\&limit=2 https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT\&period=5m\&limit=2 https://api.telegram.org; do
+            echo "$u -> $(curl -s -o /dev/null -w '%{http_code}' -m 15 "$u")"
+          done
