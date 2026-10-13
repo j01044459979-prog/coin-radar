@@ -1,0 +1,52 @@
+name: radar
+# 리치 선물 레이더: OKX 공개 API 수집 → 분석 → Telegram. 키/주문 없음. 공개 저장소 표준 러너(무료).
+# 스케줄은 GitHub 사정으로 수 분~수십 분 지연되거나 일부 건너뛸 수 있다(정확한 5분/정시 보장 없음).
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'once = 분석·알림 1회, telegram-test = 연결 확인 메시지 1건, preview = 전송 없이 출력'
+        type: choice
+        options: [once, telegram-test, preview]
+        default: once
+  push:
+    branches: [claude/coin-radar-auto-alerts-fzsnyl]
+    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js]
+permissions:
+  contents: read
+concurrency:
+  group: radar
+  cancel-in-progress: false
+jobs:
+  radar:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}
+          restore-keys: radar-state-
+      - name: Unit tests
+        run: node --test radar-service/test/*.test.mjs
+      - name: Run radar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RADAR_STATE_DIR: .radar-state
+          MODE: ${{ github.event.inputs.mode || 'once' }}
+        run: node radar-service/run.mjs --"$MODE"
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
