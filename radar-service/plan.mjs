@@ -1,5 +1,5 @@
 // 참고 시나리오(진입·손절·목표)와 선물 리스크. 주문/레버리지 권고가 아니며 수수료·슬리피지·펀딩비는 반영하지 않는다.
-const pct = (a, b) => Math.abs(a - b) / b * 100;
+const pct = (from, to) => Math.abs(to - from) / from * 100; // 기준(from) 대비 거리 %
 
 export function planOf(row, dir, mtf) {
   if (!['LONG', 'SHORT'].includes(dir) || !(row.atr > 0) || !Number.isFinite(row.price)) return null;
@@ -22,7 +22,7 @@ export function planOf(row, dir, mtf) {
   const ahead = levels.filter(x => (long ? x > entry : x < entry)).sort((a, b) => (long ? a - b : b - a))[0] ?? null;
   return {
     dir, mark: row.price, entry, conditional: !(row.strong && broken), entryNote: row.strong && broken ? '진입 참고가(현재가 기준)' : '조건부 진입 참고가',
-    stop, tp1, tp2, stopPct: pct(entry, stop), tp1Pct: pct(tp1, entry), tp2Pct: pct(tp2, entry),
+    stop, tp1, tp2, stopPct: pct(entry, stop), tp1Pct: pct(entry, tp1), tp2Pct: pct(entry, tp2),
     rr1: 1, rr2: 2, structureAhead: ahead, tp1BeyondStructure: ahead !== null && (long ? ahead < tp1 : ahead > tp1),
     basis: `손절=기준선∓1ATR·12봉 스윙 중 먼 쪽, TP=진입∓1R/2R(저항·지지 확정가 아님)`,
     liquidation: '확인 불가', // 증거금·유지증거금·포지션 데이터 없음
