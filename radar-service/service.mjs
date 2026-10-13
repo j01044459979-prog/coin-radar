@@ -63,8 +63,10 @@ export function telegramSender(token, chatId, fetcher = fetch) {
 // 뉴스 갱신은 부가 기능: 실패·지연이 가격 분석/보고를 막지 않도록 시간 제한과 예외를 격리한다.
 async function safeNews(news, state, now) {
   if (!news || !needsRefresh(state, now)) return;
-  try { await Promise.race([news(state, now), new Promise((_, reject) => setTimeout(() => reject(new Error('뉴스 시간 초과')), 30000))]); }
+  let timer;
+  try { await Promise.race([news(state, now), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('뉴스 시간 초과')), 30000); })]); }
   catch (error) { state.newsError = String(error.message).slice(0, 80); }
+  finally { clearTimeout(timer); }
 }
 
 export async function cycle({ now, state, collect, send, save, news }) {
