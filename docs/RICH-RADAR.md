@@ -52,3 +52,14 @@ Upbit HTTP 200을 확인했습니다. 따라서 기존 Cloudflare Cron에 Binanc
 API 출처: Binance `/fapi/v1/exchangeInfo`, `/fapi/v1/ticker/24hr`, `/fapi/v1/klines`,
 `/fapi/v1/premiumIndex`, `/fapi/v1/openInterest`, `/futures/data/openInterestHist`.
 Telegram 공식 Bot API `sendMessage`를 사용합니다.
+
+## 무료 실행 환경 검증 결과 (2026-10-13 19:40 KST)
+
+- 공개 저장소의 GitHub Actions 표준 러너(ubuntu-24.04, Azure centralus)에서 실제 호출:
+  `fapi.binance.com` ping / klines / openInterestHist 모두 **HTTP 451**, `api.telegram.org`는 도달 가능(302).
+  기존 Cloudflare Worker는 403, Work 실행 환경은 451. 즉 무료 후보 3곳 모두 Binance Futures 지역 차단.
+- 프록시/미러/VPN 우회는 하지 않으며, 다른 거래소 가격을 Binance 가격으로 표기하지 않습니다.
+- 따라서 Binance 데이터 기반 자동 보고는 현재 무료 환경에서 운영 불가. 운영 완료 아님.
+- 남은 선택지: (1) 사용자 본인 PC/휴대폰 등 Binance 접속이 허용된 네트워크에서 실행(상시 PC 없음 → 부분적),
+  (2) 데이터 출처를 접근 가능한 거래소(Upbit 원화 마켓 등 기존 Worker 데이터)로 바꾸고 "Binance 아님"을 명시,
+  (3) 무료 티어이면서 허용 지역 리전을 선택할 수 있는 실행 환경을 사용자가 약관 확인 후 직접 선택.
