@@ -47,14 +47,14 @@ jobs:
           RADAR_STATE_DIR: .radar-state
         run: node radar-service/run.mjs --"$MODE"
       - name: Save state
-        if: always() && env.MODE != 'preview' && env.MODE != 'telegram-test'
+        if: always() && env.MODE != 'telegram-test'
         uses: actions/cache/save@v4
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
       # 캐시 저장이 실제로 반영됐는지 확인한다. 실패하면 이 실행을 성공으로 표시하지 않는다.
       - name: Verify state saved
-        if: always() && env.MODE != 'preview' && env.MODE != 'telegram-test'
+        if: always() && env.MODE != 'telegram-test'
         uses: actions/cache/restore@v4
         with:
           path: .radar-verify
