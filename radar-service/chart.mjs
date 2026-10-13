@@ -87,8 +87,9 @@ export function buildSvg(spec) {
   const pad = (hi0 - lo0) * 0.07 || hi0 * 0.01;
   const hi = hi0 + pad, lo = lo0 - pad;
   const y = v => Y1 - ((v - lo) / (hi - lo)) * (Y1 - Y0);
-  const candleW = (X1 - X0) * 0.74 / n;                       // 오른쪽 26%는 시나리오 화살표 공간
-  const xi = i => X0 + candleW * (i + 0.5);
+  const GUTTER = 72;                                          // 왼쪽 가격 눈금 여백(캔들과 겹침 방지)
+  const candleW = (X1 - X0 - GUTTER) * 0.74 / n;              // 오른쪽 26%는 시나리오 화살표 공간
+  const xi = i => X0 + GUTTER + candleW * (i + 0.5);
   const xLast = xi(n - 1);
   const body = [];
   const add = s => body.push(s);
