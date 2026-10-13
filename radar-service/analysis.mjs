@@ -45,7 +45,8 @@ export function analyze(symbol, raw, now) {
   const level = direction === 'LONG' ? high : direction === 'SHORT' ? low : null;
   const strong = direction !== 'WAIT' && volume >= 2 && oi15 >= 1 && Math.abs(mark.fundingPct) <= 0.05 &&
     atr > 0 && Math.abs(mark.markPrice - level) <= atr;
-  return { symbol, direction, strong, trend: fast > slow ? '상승' : fast < slow ? '하락' : '횡보', atrPct: atr / mark.markPrice * 100, price: mark.markPrice, priceAt: mark.time, collectedAt: now,
+  const swing = candles.slice(-12);
+  return { symbol, direction, strong, high, low, swingHigh: Math.max(...swing.map(c => c.h)), swingLow: Math.min(...swing.map(c => c.l)), trend: fast > slow ? '상승' : fast < slow ? '하락' : '횡보', atrPct: atr / mark.markPrice * 100, price: mark.markPrice, priceAt: mark.time, collectedAt: now,
     candleAt: last.end, oiAt: oi.t, change15, volume, oi15, funding: mark.fundingPct, atr, level,
     stop: direction === 'LONG' ? level - atr : direction === 'SHORT' ? level + atr : null };
 }
@@ -55,32 +56,11 @@ export function applyBtcFilter(rows) {
   return rows.map(r => {
     const strong = r.strong && Boolean(btc) &&
       !(r.direction === 'LONG' && btc.change15 < -0.5) && !(r.direction === 'SHORT' && btc.change15 > 0.5);
-    // 안전형: BTC가 같은 방향이고 펀딩 과열·OI 과열·기준선 이격이 모두 작을 때. 나머지 강한 조건은 공격형. 수익률과 무관한 규칙 분류.
+    // 보수형(상대적으로 보수적인 조건): BTC가 같은 방향이고 펀딩 과열·OI 과열·기준선 이격이 모두 작을 때. 나머지 강한 조건은 공격형. 수익률과 무관한 규칙 분류.
     const aligned = btc && (r.direction === 'LONG' ? btc.change15 >= 0 : btc.change15 <= 0);
     const safe = strong && aligned && Math.abs(r.funding) <= 0.02 && r.oi15 <= 5 && Math.abs(r.price - r.level) <= 0.5 * r.atr;
-    return { ...r, strong, grade: strong ? (safe ? '안전형' : '공격형') : null };
+    return { ...r, strong, grade: strong ? (safe ? '보수형' : '공격형') : null };
   });
 }
 
-const f = n => Number(n.toPrecision(7)).toString();
-const kst = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }) + ' KST';
-const dirKo = d => (d === 'LONG' ? '롱' : d === 'SHORT' ? '숏' : '대기');
-export function signalText(row) {
-  return `${row.symbol} · ${dirKo(row.direction)} 관찰${row.grade ? ` · ${row.grade} 후보` : ''}\n현재 검증 마크가격: ${f(row.price)} USDT (${kst(row.priceAt)})\n` +
-    `추세 ${row.trend} · 15분 가격 ${row.change15.toFixed(2)}% · OI ${row.oi15.toFixed(2)}%\n` +
-    `거래대금 직전 20봉 평균의 ${row.volume.toFixed(2)}배 · 펀딩 ${row.funding.toFixed(4)}% · 변동성(ATR) ${row.atrPct.toFixed(2)}%\n` +
-    (row.level === null ? '돌파 조건 미충족\n' : `핵심 가격대(돌파 기준선) ${f(row.level)} · 5분봉 재지지/재저항 확인 필요\n무효화 참고선 ${f(row.stop)} (기준선 ± 14봉 ATR)\n`) +
-    `출처: ${row.source ?? '거래소'} · ${row.sourceUrl ?? ''}`;
-}
-
-export function reportText(rows, failures, now) {
-  const candidates = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
-  const source = rows.find(r => r.source)?.source ?? '데이터 출처 미확인';
-  const btc = rows.find(r => r.symbol === 'BTCUSDT');
-  const count = d => rows.filter(r => r.direction === d).length;
-  return `리치 선물 레이더 · 정기 분석\n데이터: ${source} (Binance 데이터 아님)\n수집 ${kst(now)}\n정상 ${rows.length}종목 / 실패 ${failures.length}종목\n` +
-    (btc ? `BTC ${f(btc.price)} USDT · 추세 ${btc.trend} · 15분 ${btc.change15.toFixed(2)}% · OI ${btc.oi15.toFixed(2)}% · 펀딩 ${btc.funding.toFixed(4)}% · 거래대금 ${btc.volume.toFixed(2)}배\n` : 'BTC 데이터 미확인 · 강한 조건 판단 대기\n') +
-    `롱 관찰 ${count('LONG')} · 숏 관찰 ${count('SHORT')} · 대기 ${count('WAIT')}\n\n` +
-    (candidates.length ? candidates.map(signalText).join('\n\n') : '현재 검증된 강한 조건 없음 · 대기') +
-    '\n\n위험: BTC 역방향 급변·기준선 이탈 시 조건 무효. 규칙 기반 관찰이며 수익 확률을 뜻하지 않습니다. 자동 주문 없음.';
-}
+export { signalText, reportText, reportMessages } from './report.mjs';
