@@ -63,9 +63,10 @@ test('hourly send is once per hour, signal is cooled down across saved state', a
   await cycle({ ...options, now, state });
   state = saved;
   await cycle({ ...options, now: now + 300000, state });
-  assert.equal(messages.length, 1);
+  const reports = () => messages.filter(m => m.startsWith('📡')).length; // 정기 보고 1건 = 핵심 요약 + 상세(여러 메시지)
+  assert.equal(reports(), 1);
   await cycle({ ...options, now: now + 3600000, state });
-  assert.equal(messages.length, 2);
+  assert.equal(reports(), 2);
 });
 test('a new intrahour condition sends immediately and does not repeat', async () => {
   const state = { reportHour: Math.floor(now / 3600000) }; let count = 0;

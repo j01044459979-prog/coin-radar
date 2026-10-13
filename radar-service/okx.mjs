@@ -20,13 +20,14 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
   const stats = { calls: 0 };
   const get = async path => { stats.calls++; const body = await jsonRequest(base + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
   // 상위 시간대: OKX 확정(confirm=1) 캔들만 사용. 실패는 해당 시간대만 '미확인' 처리하고 5분 레이더는 계속 동작한다.
-  async function loadMtf(instId, now) {
+  async function loadMtf(instId, now, keep) {
     const out = {};
     for (const tf of ['15m', '1H', '4H']) {
       try {
         const rows = okData(await get(`/market/candles?instId=${instId}&bar=${tf}&limit=100`), `${tf} 캔들`);
         const candles = rows.filter(r => r[8] === '1').reverse().map(r => ({ t: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), end: Number(r[0]) + TF_MS[tf] - 1 }));
         out[tf] = candles.some(c => !(c.o > 0 && c.h >= Math.max(c.o, c.c, c.l) && c.l > 0 && c.l <= Math.min(c.o, c.c))) ? trendOf(null, tf, now, '비정상 캔들') : trendOf(candles, tf, now);
+        if (keep && out[tf].dir !== 'UNKNOWN') keep[tf] = candles.slice(-100); // 검증(최신·연속·정상 OHLC)을 통과한 캔들만 차트에 사용
       } catch (error) {
         out[tf] = trendOf(null, tf, now); out[tf].basis = `수집 실패(${error.status ?? error.message})`;
         if ([403, 418, 429, 451].includes(error.status)) { out.blocked = true; break; } // 제한 응답이면 추가 호출 중단
@@ -41,7 +42,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
     const universe = selectUniverse({ instruments, tickers, max, priority });
     const ids = universe.ids;
     const turn24 = universe.turnover;
-    const rows = [], failures = [];
+    const rows = [], failures = [], raw5 = {};
     for (const instId of ids) {
       if (Date.now() - started > 150000) throw new Error('전체 수집 시간 초과');
       const symbol = internalSymbol(instId);
@@ -54,6 +55,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
         if (!mark || !oi || !funding || mark.instId !== instId || oi.instId !== instId || funding.instId !== instId) throw new Error('응답 종목 불일치');
         // 확정(confirm=1) 5분봉만 사용, 오래된 순 정렬. 인덱스: ts,o,h,l,c,vol,volCcy,volCcyQuote(USDT),confirm
         const klines = candles.filter(r => r[8] === '1').reverse().map(r => [r[0], r[1], r[2], r[3], r[4], r[5], Number(r[0]) + 299999, r[7]]);
+        raw5[symbol] = klines.map(k => ({ t: Number(k[0]), o: Number(k[1]), h: Number(k[2]), l: Number(k[3]), c: Number(k[4]), end: Number(k[6]) })).slice(-70);
         const raw = {
           klines,
           premium: { symbol, markPrice: mark.markPx, lastFundingRate: funding.fundingRate, time: mark.ts },
@@ -74,12 +76,14 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
     const ranked2 = filtered.filter(r => r.symbol !== 'BTCUSDT').map(r => ({ r, p: preliminary(r, btcRow) }))
       .sort((a, b) => (b.r.strong - a.r.strong) || (b.p.score - a.p.score));
     const targets = [...new Set([...(btcRow ? [btcRow] : []), ...ranked2.slice(0, 4).map(x => x.r)])];
-    const mtf = {}; let blocked = false;
+    const mtf = {}, charts = {}; let blocked = false;
+    // 차트용 5분 확정 캔들(대체 시간봉): 이미 받은 데이터를 재사용하므로 추가 호출 없음
+    for (const r of filtered) if (raw5[r.symbol]) charts[r.symbol] = { '5m': raw5[r.symbol] };
     for (const row of targets) {
       if (blocked || Date.now() - started > 200000) break;
-      try { const m = await loadMtf(row.instId, now); blocked = Boolean(m.blocked); delete m.blocked; mtf[row.symbol] = m; }
+      try { const keep = charts[row.symbol] ??= {}; const m = await loadMtf(row.instId, now, keep); blocked = Boolean(m.blocked); delete m.blocked; mtf[row.symbol] = m; }
       catch { /* 시간대 분석 실패는 격리 */ }
     }
-    return { rows: enrich(filtered, mtf), failures, stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf), universe: { selected: ids, eligible: universe.eligibleCount, priority: universe.priorityStatus, excluded: universe.excluded, reasons: universe.reasonCounts, categories: universe.categoryCounts } } };
+    return { rows: enrich(filtered, mtf), failures, charts, stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf), universe: { selected: ids, eligible: universe.eligibleCount, priority: universe.priorityStatus, excluded: universe.excluded, reasons: universe.reasonCounts, categories: universe.categoryCounts } } };
   };
 }

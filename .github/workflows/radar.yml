@@ -12,8 +12,8 @@ on:
         options: [once, telegram-test, preview]
         default: once
   push:
-    branches: [claude/coin-radar-auto-alerts-fzsnyl, feature/radar-2-0]
-    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js, worker/src/intel/**]
+    branches: [claude/coin-radar-auto-alerts-fzsnyl, feature/radar-2-0, feature/radar-2-1]
+    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js, worker/src/intel/**, radar-service/package-lock.json]
 permissions:
   contents: read
 concurrency:
@@ -25,13 +25,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      # 기능 브랜치(feature/radar-2-0) push는 읽기 전용 프리뷰: Telegram 전송·상태 저장 없음
-      MODE: ${{ github.event.inputs.mode || ((github.event_name == 'push' && github.ref_name == 'feature/radar-2-0') && 'preview' || 'once') }}
+      # feature/* 브랜치 push는 읽기 전용 프리뷰: Telegram 전송 없음
+      MODE: ${{ github.event.inputs.mode || ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/')) && 'preview' || 'once') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: radar-service/package-lock.json
+      # 차트 PNG 렌더러(@resvg/resvg-js). 설치에 실패해도 레이더는 텍스트 전용으로 계속 동작한다.
+      - name: Install chart dependency
+        continue-on-error: true
+        run: npm ci --prefix radar-service --no-audit --no-fund
       - name: Restore state
         uses: actions/cache/restore@v4
         with:

@@ -1,4 +1,5 @@
-import { reportMessages, signalText } from './report.mjs';
+import { reportParts, signalText } from './report.mjs';
+import { candidateSpec, chartCaption, chartPlan } from './chart.mjs';
 import { needsRefresh } from './news.mjs';
 
 export class ApiError extends Error {
@@ -8,7 +9,8 @@ export class ApiError extends Error {
 }
 export async function jsonRequest(url, options = {}, fetcher = fetch) {
   let response;
-  try { response = await fetcher(url, { ...options, signal: AbortSignal.timeout(10000), redirect: 'error' }); }
+  const { timeoutMs = 10000, ...rest } = options;
+  try { response = await fetcher(url, { ...rest, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' }); }
   catch { throw new Error('외부 API 연결 실패'); } // Never log token-bearing Telegram URLs.
   if (!response.ok) throw new ApiError(new URL(url).hostname, response.status, Number(response.headers.get('retry-after')) || 0);
   try { return await response.json(); } catch { throw new Error('외부 API JSON 오류'); }
@@ -58,6 +60,42 @@ export function telegramSender(token, chatId, fetcher = fetch) {
   };
 }
 
+// sendPhoto: 차트 PNG 업로드. 성공(message_id) 확인 후에만 true 취급. 토큰은 오류 메시지에 노출되지 않는다.
+export function telegramPhotoSender(token, chatId, fetcher = fetch) {
+  if (!token || !/^[1-9]\d*$/.test(chatId || '')) throw new Error('개인 Telegram token/chat ID 설정 필요');
+  return async (png, caption = '') => {
+    if (!png?.length) throw new Error('이미지 없음');
+    if (caption.length > 1024) throw new Error('Telegram 캡션 길이 초과');
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption);
+    form.append('photo', new Blob([png], { type: 'image/png' }), 'chart.png');
+    const result = await jsonRequest(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form, timeoutMs: 20000 }, fetcher);
+    if (!result.ok || !result.result?.message_id) throw new Error('Telegram 사진 전송 미확인');
+  };
+}
+
+// 차트 렌더링 격리: 개별 실패·시간 초과는 png=null로 남기고 텍스트 보고는 계속된다.
+async function withTimeout(promise, ms, label) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} 시간 초과`)), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+async function buildChart(spec, render) {
+  if (spec.skipped) return { symbol: spec.symbol, png: null, error: spec.skipped };
+  try { return { symbol: spec.symbol, tf: spec.tf, kind: spec.kind, reason: spec.reason, caption: chartCaption(spec), png: await withTimeout(render(spec), 15000, '차트 렌더링') }; }
+  catch (error) { return { symbol: spec.symbol, tf: spec.tf, kind: spec.kind, reason: spec.reason, png: null, error: String(error.message).slice(0, 80) }; }
+}
+// 사진 전송은 한 번만 재시도(네트워크·5xx), 429/4xx는 즉시 포기. 실패해도 예외를 던지지 않는다.
+async function sendPhotoSafe(sendPhoto, item) {
+  if (!sendPhoto || !item.png) return false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { await sendPhoto(item.png, item.caption); return true; }
+    catch (error) { item.error = String(error.message).slice(0, 80); if (error.status && error.status < 500) return false; }
+  }
+  return false;
+}
+
 // Caller serializes cycles and persists state on every acknowledged message.
 // Telegram has no idempotency key: a crash after delivery but before save can duplicate once.
 // 뉴스 갱신은 부가 기능: 실패·지연이 가격 분석/보고를 막지 않도록 시간 제한과 예외를 격리한다.
@@ -69,7 +107,7 @@ async function safeNews(news, state, now) {
   finally { clearTimeout(timer); }
 }
 
-export async function cycle({ now, state, collect, send, save, news }) {
+export async function cycle({ now, state, collect, send, save, news, render, sendPhoto }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now); }
@@ -84,7 +122,7 @@ export async function cycle({ now, state, collect, send, save, news }) {
     }
     return { failed: true };
   }
-  const { rows, failures, stats } = result;
+  const { rows, failures, stats, charts: chartData } = result;
   state.lastAttempt = now; state.lastSuccess = now; state.lastError = null; state.retryAt = 0;
   state.rows = rows.map(r => ({ symbol: r.symbol, direction: r.direction, strong: r.strong, price: r.price, score: r.candidate?.score ?? null }));
   state.failures = failures; state.stats = stats ?? null; state.sent ||= {};
@@ -93,12 +131,18 @@ export async function cycle({ now, state, collect, send, save, news }) {
   const top = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
   if (hourly) {
     await safeNews(news, state, now);
-    const messages = reportMessages(rows, failures, now, { news: state.news });
-    // 여러 건으로 나뉜 보고는 건별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 보낸 건을 건너뛴다.
-    for (let i = state.partial?.hour === hour ? state.partial.sent : 0; i < messages.length; i++) {
-      await send(messages[i]);
+    // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 이미지 → 상세)는 항상 같다.
+    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).map(spec => buildChart(spec, render))) : [];
+    const parts = reportParts(rows, failures, now, { news: state.news, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
+    // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
+    const done = [];
+    for (let i = state.partial?.hour === hour ? state.partial.sent : 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.type === 'text') await send(part.text);
+      else done.push({ symbol: part.symbol, tf: part.tf, ok: await sendPhotoSafe(sendPhoto, part), error: part.error ?? null });
       state.partial = { hour, sent: i + 1 }; await save(state);
     }
+    if (items.length) state.chart = { hour, at: now, items: done.length ? done : items.map(i => ({ symbol: i.symbol, tf: i.tf, ok: false, error: i.error ?? null })) };
     delete state.partial;
     state.reportHour = hour;
     for (const row of top) state.sent[`${row.symbol}:${row.direction}`] = now;
@@ -109,6 +153,12 @@ export async function cycle({ now, state, collect, send, save, news }) {
       if (now - (state.sent[key] || 0) < 3600000) continue;
       await send(`🚨 신규 조건 포착 · 규칙 기반 분석 (${row.source ?? '거래소'})\n${signalText(row)}\n수집: ${new Date(now).toISOString()}\n위험: BTC 역방향 급변 또는 기준선 이탈 시 무효`);
       state.sent[key] = now; await save(state);
+      // 긴급 알림: 간결 텍스트 뒤에 해당 종목 차트 1장(실패하면 생략)
+      if (render && chartData) {
+        const item = await buildChart(candidateSpec(row, chartData, '강한 신규 신호'), render);
+        const ok = await sendPhotoSafe(sendPhoto, item);
+        state.chart = { hour, at: now, items: [{ symbol: item.symbol, tf: item.tf ?? null, ok, error: item.error ?? null }] }; await save(state);
+      }
     }
   }
   state.sent = Object.fromEntries(Object.entries(state.sent).filter(([, at]) => now - at < 86400000));

@@ -133,7 +133,7 @@ test('보고서 문구: 안전 보장·승률 표현 없이 점수의 의미를 
   const text = reportMessages(rows, failures, now).join('\n');
   assert.match(text, /점수는 조건 충족도이며 승률이 아님/); assert.match(text, /보수형=상대적으로 보수적인 조건/);
   assert.doesNotMatch(text, /(승률|확률|수익률)\s*\d|수익 보장!|안전합니다/);
-  assert.match(text, /RICH FUTURES RADAR 2\.0/); assert.match(text, /\(Binance 아님\)/);
+  assert.match(text, /RICH FUTURES RADAR/); assert.match(text, /\(Binance 아님\)/);
 });
 test('긴 보고서는 순서 있는 여러 메시지로 나뉘고 각 4000자 이하', () => {
   const out = pack(['a'.repeat(3000), 'b'.repeat(3000), 'c'.repeat(9000)]);
@@ -194,7 +194,7 @@ test('뉴스 수집 실패·시간 초과가 정기 보고를 막지 않는다',
   const state = {}, sent = [];
   const row = await strongRow();
   await cycle({ now, state, collect: async () => ({ rows: [row], failures: [] }), send: async t => sent.push(t), save: async () => {}, news: async () => { throw new Error('boom'); } });
-  assert.equal(sent.length, 1); assert.match(sent[0], /RICH FUTURES RADAR 2\.0/); assert.equal(state.newsError, 'boom');
+  assert.ok(sent.length >= 1); assert.match(sent[0], /RICH FUTURES RADAR/); assert.equal(state.newsError, 'boom');
 });
 test('캐시 복원: 같은 시간대 재실행은 재전송 없음, 캐시 유실 시 보고 1회만(긴급 중복 없음)', async () => {
   const row = await strongRow(); const sent = []; let saved;

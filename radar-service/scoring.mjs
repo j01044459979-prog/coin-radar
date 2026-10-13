@@ -99,3 +99,19 @@ export function pickNear(rows, limit = 3) {
       r.candidate.dist && r.candidate.dist.atrUnits <= NEAR_MAX_ATR)
     .sort((a, b) => b.candidate.score - a.candidate.score).slice(0, limit);
 }
+
+// 짧은 "체크 포인트" 문구(고정 어휘). 보고서 요약과 차트 칩이 같이 쓴다. 강한 조건이면 재지지/재저항 확인이 먼저.
+export function checkPhrases(row, dir, limit = 2) {
+  const c = row.candidate;
+  if (!c) return [];
+  const out = [];
+  if (row.strong) out.push(dir === 'LONG' ? '재지지 확인 필요' : '재저항 확인 필요');
+  for (const u of c.unmet || []) {
+    if (/OI/.test(u)) out.push('15분 OI 증가 필요');
+    else if (/거래대금/.test(u)) out.push('거래대금 증가 필요');
+    else if (/돌파 확정/.test(u)) out.push(dir === 'LONG' ? '고점 돌파 확인 필요' : '저점 이탈 확인 필요');
+    else if (/펀딩/.test(u)) out.push('펀딩 과열 주의');
+    else if (/5분 추세/.test(u)) out.push('5분 추세 확인 필요');
+  }
+  return [...new Set(out)].slice(0, limit);
+}
