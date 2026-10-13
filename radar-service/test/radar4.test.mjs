@@ -153,9 +153,9 @@ test('sendPhoto: multipart 요청 구성, 캡션 제한, 전송 확인 필요, �
   await assert.rejects(telegramPhotoSender('secret-token', '123', async url => { throw Error(url); })(Buffer.from([1]), ''), e => !e.message.includes('secret-token'));
   assert.throws(() => telegramPhotoSender('t', '-100123'));
 });
-async function runHourly({ render, sendPhoto, rows = [btcRow, longRow], chartData = data, state = {}, failSendAt } = {}) {
+async function runHourly({ render, sendPhoto, rows = [btcRow, longRow], chartData = data, state = {}, failSendAt, chartTimeoutMs } = {}) {
   const log = []; let n = 0;
-  const opts = { now, state, collect: async () => ({ rows, failures: [], charts: chartData }), save: async () => {}, render, sendPhoto,
+  const opts = { now, state, chartTimeoutMs, collect: async () => ({ rows, failures: [], charts: chartData }), save: async () => {}, render, sendPhoto,
     send: async t => { if (failSendAt !== undefined && n++ === failSendAt) throw new Error('tg'); log.push(['text', t]); } };
   const wrapped = sendPhoto && { ...opts, sendPhoto: async (p, c) => { await sendPhoto(p, c); log.push(['photo', c]); } };
   try { await cycle(wrapped ?? opts); } catch { /* 일부 테스트는 실패를 기대 */ }
@@ -170,8 +170,10 @@ test('정기 보고 전송 순서: 핵심 요약 → 사진(캡션) → 상세, 
 test('차트 렌더링 실패 시에도 텍스트 보고는 정상 전송된다', async () => {
   const { log, state } = await runHourly({ render: async () => { throw new Error('boom'); }, sendPhoto: async () => { throw new Error('no photo expected'); } });
   assert.deepEqual(log.map(x => x[0]), ['text', 'text']); assert.equal(state.chart.items[0].ok, false); assert.equal(state.chart.items[0].error, 'boom'); assert.ok(state.reportHour !== undefined);
-  const timeout = await runHourly({ render: () => new Promise(() => {}), sendPhoto: async () => {} }).catch(e => e);
-}, { timeout: 30000 });
+  // 렌더러가 멈춰도(시간 초과) 텍스트 보고는 전송된다
+  const hung = await runHourly({ render: () => new Promise(() => {}), sendPhoto: async () => {}, chartTimeoutMs: 50 });
+  assert.deepEqual(hung.log.map(x => x[0]), ['text', 'text']); assert.match(hung.state.chart.items[0].error, /시간 초과/);
+});
 test('사진 업로드가 실패해도 텍스트는 전송되고 재시도는 1회만, 보고는 완료로 기록', async () => {
   let attempts = 0;
   const { log, state } = await runHourly({ render: fakeRender, sendPhoto: async () => { attempts++; throw Object.assign(new Error('upstream'), { status: 502 }); } });

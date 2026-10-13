@@ -81,9 +81,9 @@ async function withTimeout(promise, ms, label) {
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} 시간 초과`)), ms); })]); }
   finally { clearTimeout(timer); }
 }
-async function buildChart(spec, render) {
+async function buildChart(spec, render, timeoutMs = 15000) {
   if (spec.skipped) return { symbol: spec.symbol, png: null, error: spec.skipped };
-  try { return { symbol: spec.symbol, tf: spec.tf, kind: spec.kind, reason: spec.reason, caption: chartCaption(spec), png: await withTimeout(render(spec), 15000, '차트 렌더링') }; }
+  try { return { symbol: spec.symbol, tf: spec.tf, kind: spec.kind, reason: spec.reason, caption: chartCaption(spec), png: await withTimeout(render(spec), timeoutMs, '차트 렌더링') }; }
   catch (error) { return { symbol: spec.symbol, tf: spec.tf, kind: spec.kind, reason: spec.reason, png: null, error: String(error.message).slice(0, 80) }; }
 }
 // 사진 전송은 한 번만 재시도(네트워크·5xx), 429/4xx는 즉시 포기. 실패해도 예외를 던지지 않는다.
@@ -107,7 +107,7 @@ async function safeNews(news, state, now) {
   finally { clearTimeout(timer); }
 }
 
-export async function cycle({ now, state, collect, send, save, news, render, sendPhoto }) {
+export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000 }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now); }
@@ -132,7 +132,7 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   if (hourly) {
     await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 이미지 → 상세)는 항상 같다.
-    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).map(spec => buildChart(spec, render))) : [];
+    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
     const parts = reportParts(rows, failures, now, { news: state.news, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
     // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
     const done = [];
@@ -155,7 +155,7 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
       state.sent[key] = now; await save(state);
       // 긴급 알림: 간결 텍스트 뒤에 해당 종목 차트 1장(실패하면 생략)
       if (render && chartData) {
-        const item = await buildChart(candidateSpec(row, chartData, '강한 신규 신호'), render);
+        const item = await buildChart(candidateSpec(row, chartData, '강한 신규 신호'), render, chartTimeoutMs);
         const ok = await sendPhotoSafe(sendPhoto, item);
         state.chart = { hour, at: now, items: [{ symbol: item.symbol, tf: item.tf ?? null, ok, error: item.error ?? null }] }; await save(state);
       }
