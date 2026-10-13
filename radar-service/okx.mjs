@@ -1,6 +1,9 @@
 // OKX 공식 공개 API(USDT 무기한 스왑) 수집기. 키·주문 없음. 응답을 기존 분석 입력 형태로 변환한다.
 import { analyze, applyBtcFilter } from './analysis.mjs';
+import { enrich, preliminary } from './enrich.mjs';
+import { TF_MS, trendOf } from './indicators.mjs';
 import { jsonRequest } from './service.mjs';
+import { selectUniverse, MAX_SYMBOLS } from './universe.mjs';
 
 export const SOURCE = { name: 'OKX', label: 'OKX USDT 무기한(SWAP)', url: 'https://www.okx.com/api/v5' };
 const base = SOURCE.url;
@@ -13,17 +16,31 @@ function okData(body, what) {
 // 'BTC-USDT-SWAP' -> 'BTCUSDT'
 export const internalSymbol = instId => instId.replace(/-USDT-SWAP$/, 'USDT');
 
-export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = 12 } = {}) {
-  const get = async path => { const body = await jsonRequest(base + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
+export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYMBOLS, priority } = {}) {
+  const stats = { calls: 0 };
+  const get = async path => { stats.calls++; const body = await jsonRequest(base + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
+  // 상위 시간대: OKX 확정(confirm=1) 캔들만 사용. 실패는 해당 시간대만 '미확인' 처리하고 5분 레이더는 계속 동작한다.
+  async function loadMtf(instId, now) {
+    const out = {};
+    for (const tf of ['15m', '1H', '4H']) {
+      try {
+        const rows = okData(await get(`/market/candles?instId=${instId}&bar=${tf}&limit=100`), `${tf} 캔들`);
+        const candles = rows.filter(r => r[8] === '1').reverse().map(r => ({ t: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), end: Number(r[0]) + TF_MS[tf] - 1 }));
+        out[tf] = candles.some(c => !(c.o > 0 && c.h >= Math.max(c.o, c.c, c.l) && c.l > 0 && c.l <= Math.min(c.o, c.c))) ? trendOf(null, tf, now, '비정상 캔들') : trendOf(candles, tf, now);
+      } catch (error) {
+        out[tf] = trendOf(null, tf, now); out[tf].basis = `수집 실패(${error.status ?? error.message})`;
+        if ([403, 418, 429, 451].includes(error.status)) { out.blocked = true; break; } // 제한 응답이면 추가 호출 중단
+      }
+    }
+    return out;
+  }
   return async function collect(now) {
     const started = Date.now();
     const instruments = okData(await get('/public/instruments?instType=SWAP'), '계약 목록');
     const tickers = okData(await get('/market/tickers?instType=SWAP'), '티커');
-    const live = new Set(instruments.filter(x => x.state === 'live' && x.ctType === 'linear' && x.settleCcy === 'USDT' && /^[A-Z0-9]+-USDT-SWAP$/.test(x.instId)).map(x => x.instId));
-    const turnover = x => Number(x.volCcy24h) * Number(x.last); // USDT 근사 거래대금(기초자산 수량 × 최근가)
-    const ranked = tickers.filter(x => live.has(x.instId) && turnover(x) > 0).sort((a, b) => turnover(b) - turnover(a));
-    const turn24 = Object.fromEntries(ranked.map(x => [x.instId, turnover(x)]));
-    const ids = [...new Set(['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP', ...ranked.map(x => x.instId)])].filter(i => live.has(i)).slice(0, max);
+    const universe = selectUniverse({ instruments, tickers, max, priority });
+    const ids = universe.ids;
+    const turn24 = universe.turnover;
     const rows = [], failures = [];
     for (const instId of ids) {
       if (Date.now() - started > 150000) throw new Error('전체 수집 시간 초과');
@@ -51,6 +68,18 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = 12 } = 
     }
     if (Date.now() - started > 150000) throw new Error('전체 수집 시간 초과');
     if (!rows.length) throw new Error('모든 종목 수집 실패');
-    return { rows: applyBtcFilter(rows), failures };
+    const filtered = applyBtcFilter(rows);
+    // MTF 조회 대상: BTC + 강한 후보 + 예비 점수 상위 4종목 (호출 수 절약)
+    const btcRow = filtered.find(r => r.symbol === 'BTCUSDT');
+    const ranked2 = filtered.filter(r => r.symbol !== 'BTCUSDT').map(r => ({ r, p: preliminary(r, btcRow) }))
+      .sort((a, b) => (b.r.strong - a.r.strong) || (b.p.score - a.p.score));
+    const targets = [...new Set([...(btcRow ? [btcRow] : []), ...ranked2.slice(0, 4).map(x => x.r)])];
+    const mtf = {}; let blocked = false;
+    for (const row of targets) {
+      if (blocked || Date.now() - started > 200000) break;
+      try { const m = await loadMtf(row.instId, now); blocked = Boolean(m.blocked); delete m.blocked; mtf[row.symbol] = m; }
+      catch { /* 시간대 분석 실패는 격리 */ }
+    }
+    return { rows: enrich(filtered, mtf), failures, stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf), universe: { selected: ids, eligible: universe.eligibleCount, priority: universe.priorityStatus, excluded: universe.excluded, reasons: universe.reasonCounts, categories: universe.categoryCounts } } };
   };
 }

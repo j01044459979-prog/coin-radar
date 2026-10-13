@@ -12,8 +12,8 @@ on:
         options: [once, telegram-test, preview]
         default: once
   push:
-    branches: [claude/coin-radar-auto-alerts-fzsnyl]
-    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js]
+    branches: [claude/coin-radar-auto-alerts-fzsnyl, feature/radar-2-0]
+    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js, worker/src/intel/**]
 permissions:
   contents: read
 concurrency:
@@ -24,6 +24,9 @@ jobs:
     if: github.repository == 'j01044459979-prog/coin-radar'
     runs-on: ubuntu-latest
     timeout-minutes: 8
+    env:
+      # 기능 브랜치(feature/radar-2-0) push는 읽기 전용 프리뷰: Telegram 전송·상태 저장 없음
+      MODE: ${{ github.event.inputs.mode || ((github.event_name == 'push' && github.ref_name == 'feature/radar-2-0') && 'preview' || 'once') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,11 +45,19 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RADAR_STATE_DIR: .radar-state
-          MODE: ${{ github.event.inputs.mode || 'once' }}
         run: node radar-service/run.mjs --"$MODE"
       - name: Save state
-        if: always()
+        if: always() && env.MODE != 'telegram-test'
         uses: actions/cache/save@v4
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
+      # 캐시 저장이 실제로 반영됐는지 확인한다. 실패하면 이 실행을 성공으로 표시하지 않는다.
+      - name: Verify state saved
+        if: always() && env.MODE != 'telegram-test'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
+          lookup-only: true
+          fail-on-cache-miss: true

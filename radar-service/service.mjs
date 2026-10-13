@@ -1,4 +1,5 @@
-import { analyze, applyBtcFilter, reportText, signalText } from './analysis.mjs';
+import { reportMessages, signalText } from './report.mjs';
+import { needsRefresh } from './news.mjs';
 
 export class ApiError extends Error {
   constructor(service, status, retryAfter = 0) {
@@ -59,7 +60,16 @@ export function telegramSender(token, chatId, fetcher = fetch) {
 
 // Caller serializes cycles and persists state on every acknowledged message.
 // Telegram has no idempotency key: a crash after delivery but before save can duplicate once.
-export async function cycle({ now, state, collect, send, save }) {
+// 뉴스 갱신은 부가 기능: 실패·지연이 가격 분석/보고를 막지 않도록 시간 제한과 예외를 격리한다.
+async function safeNews(news, state, now) {
+  if (!news || !needsRefresh(state, now)) return;
+  let timer;
+  try { await Promise.race([news(state, now), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('뉴스 시간 초과')), 30000); })]); }
+  catch (error) { state.newsError = String(error.message).slice(0, 80); }
+  finally { clearTimeout(timer); }
+}
+
+export async function cycle({ now, state, collect, send, save, news }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now); }
@@ -74,14 +84,22 @@ export async function cycle({ now, state, collect, send, save }) {
     }
     return { failed: true };
   }
-  const { rows, failures } = result;
+  const { rows, failures, stats } = result;
   state.lastAttempt = now; state.lastSuccess = now; state.lastError = null; state.retryAt = 0;
-  state.rows = rows; state.failures = failures; state.sent ||= {};
+  state.rows = rows.map(r => ({ symbol: r.symbol, direction: r.direction, strong: r.strong, price: r.price, score: r.candidate?.score ?? null }));
+  state.failures = failures; state.stats = stats ?? null; state.sent ||= {};
   const hour = Math.floor(now / 3600000);
   const hourly = state.reportHour !== hour;
   const top = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
   if (hourly) {
-    await send(reportText(rows, failures, now));
+    await safeNews(news, state, now);
+    const messages = reportMessages(rows, failures, now, { news: state.news });
+    // 여러 건으로 나뉜 보고는 건별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 보낸 건을 건너뛴다.
+    for (let i = state.partial?.hour === hour ? state.partial.sent : 0; i < messages.length; i++) {
+      await send(messages[i]);
+      state.partial = { hour, sent: i + 1 }; await save(state);
+    }
+    delete state.partial;
     state.reportHour = hour;
     for (const row of top) state.sent[`${row.symbol}:${row.direction}`] = now;
     await save(state);
