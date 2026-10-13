@@ -57,7 +57,7 @@ jobs:
         if: always() && env.MODE != 'telegram-test'
         uses: actions/cache/restore@v4
         with:
-          path: .radar-verify
+          path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
           lookup-only: true
           fail-on-cache-miss: true
