@@ -14,11 +14,25 @@ export function pivots(candles, k = 2) {
   return { highs, lows };
 }
 
-// candles: [{t,o,h,l,c,end}] 오래된 순. 간격 누락·부족 시 '미확인'.
-export function trendOf(candles, tf) {
+// 최신성 허용: 마지막 확정봉이 직전 마감봉이어야 한다. 마감 직후 90초까지는 거래소 확정 지연으로 한 봉 앞도 허용.
+export const FRESH_GRACE_MS = 90000;
+export function staleReason(candles, tf, now) {
+  const step = TF_MS[tf], last = candles.at(-1);
+  if (candles.some(c => c.t % step !== 0)) return '캔들 시각 정렬 이상';
+  if (last.end > now) return '미래 시각 캔들';
+  const expected = Math.floor(now / step) * step - step; // 가장 최근에 마감된 봉의 시작 시각
+  if (last.t === expected) return null;
+  if (last.t === expected - step && now - (expected + step) < FRESH_GRACE_MS) return null;
+  return `데이터 지연(마지막 확정봉 ${Math.round((expected - last.t) / step)}봉 뒤처짐)`;
+}
+
+// candles: 확정 캔들만. now를 주면 최신성도 검사한다(지연·비정상이면 점수를 주지 않도록 '미확인').
+export function trendOf(candles, tf, now, note) {
   const unknown = basis => ({ tf, dir: 'UNKNOWN', label: '미확인', arrow: '?', basis, lastClosedAt: candles?.at?.(-1)?.end ?? null });
+  if (note) return unknown(note);
   if (!Array.isArray(candles) || candles.length < 30) return unknown('확정 캔들 부족');
   for (let i = 1; i < candles.length; i++) if (candles[i].t - candles[i - 1].t !== TF_MS[tf]) return unknown('캔들 누락');
+  if (now !== undefined) { const reason = staleReason(candles, tf, now); if (reason) return unknown(reason); }
   const closes = candles.map(c => c.c);
   const ma10 = mean(closes.slice(-10)), ma30 = mean(closes.slice(-30)), close = closes.at(-1);
   const { highs, lows } = pivots(candles);

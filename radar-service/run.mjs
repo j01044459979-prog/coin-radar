@@ -26,6 +26,13 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   const { rows, failures, stats } = await collect(now);
   const preview = {};
   try { await refreshNews(preview, now); } catch (error) { console.log(`뉴스 수집 실패(격리됨): ${error.message}`); }
+  const u = stats?.universe;
+  if (u) {
+    console.log(`감시 종목(${u.selected.length}/${u.eligible} 적격): ${u.selected.join(', ')}`);
+    console.log(`우선 감시 상태: ${JSON.stringify(u.priority)}`);
+    console.log(`제외 사유 집계: ${JSON.stringify(u.reasons)} · 분류 분포: ${JSON.stringify(u.categories)}`);
+    for (const e of u.excluded) console.log(`제외: ${e.id} — ${e.reason}`);
+  }
   const messages = reportMessages(rows, failures, now, { news: preview.news });
   messages.forEach((m, i) => console.log(`===== 메시지 ${i + 1}/${messages.length} (${m.length}자) =====\n${m}`));
   console.log(JSON.stringify({ analyzed: rows.length, failed: failures.length, failures, stats, news: preview.news ? { status: preview.news.status, items: preview.news.items?.length ?? 0, health: preview.news.health } : null }));

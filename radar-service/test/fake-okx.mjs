@@ -14,16 +14,25 @@ export function mtfCandles(bar, kind) {
     const c = 100 + drift + wave + (i === 0 ? 50 : 0); // 미확정 봉은 일부러 튀게(사용되면 결과가 바뀜)
     rows.push([String(cur - i * step), String(c - .1), String(c + .5), String(c - .5), String(c), '1', '1', '1', i === 0 ? '0' : '1']);
   }
+  if (kind === 'stale') return rows.slice(4); // 최근 3개 마감봉이 빠진 오래된 데이터(미확정 봉 포함 4개 제거)
   return kind === 'gap' ? rows.filter((_, i) => i !== 40) : rows;
 }
-export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {} } = {}) {
+// 종목 구성: 기본은 BTC/ETH/SOL. universe:'full'이면 관심 코인·주식형·분류 없음 상품을 추가한다.
+export const CRYPTOS = ['BTC', 'ETH', 'SOL'], FULL_CRYPTOS = ['BTC', 'ETH', 'SOL', 'ZEC', 'RENDER', 'DOGE'], NON_CRYPTO = { SOXL: '2', SNDK: '2', SKHYNIX: '2', GOLD: '3' };
+export function instrumentList(universe) {
+  const crypto = (universe === 'full' ? FULL_CRYPTOS : CRYPTOS).map(c => ({ instId: `${c}-USDT-SWAP`, state: 'live', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' }));
+  const extra = universe === 'full' ? [...Object.entries(NON_CRYPTO).map(([c, k]) => ({ instId: `${c}-USDT-SWAP`, state: 'live', ctType: 'linear', settleCcy: 'USDT', instCategory: k })),
+    { instId: 'MYSTERY-USDT-SWAP', state: 'live', ctType: 'linear', settleCcy: 'USDT' }, // 분류 없음
+    { instId: 'OLDCOIN-USDT-SWAP', state: 'suspend', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' }] : [];
+  return [...crypto, ...extra, { instId: 'BTC-USD-SWAP', state: 'live', ctType: 'inverse', settleCcy: 'BTC', instCategory: '1' }];
+}
+export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {}, universe, instruments } = {}) {
   return async url => {
     calls.push(url);
     const u = new URL(url); const id = u.searchParams.get('instId');
     switch (u.pathname.replace('/api/v5', '')) {
-      case '/public/instruments': return ok(['BTC', 'ETH', 'SOL'].map(c => ({ instId: `${c}-USDT-SWAP`, state: 'live', ctType: 'linear', settleCcy: 'USDT' }))
-        .concat([{ instId: 'BTC-USD-SWAP', state: 'live', ctType: 'inverse', settleCcy: 'BTC' }]));
-      case '/market/tickers': return ok(['BTC', 'ETH', 'SOL'].map(c => ({ instId: `${c}-USDT-SWAP`, last: '100', volCcy24h: '1000' })));
+      case '/public/instruments': return ok(instruments ?? instrumentList(universe));
+      case '/market/tickers': return ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', volCcy24h: x.instCategory === '1' ? '1000' : '900000' })));
       case '/market/candles': {
         const bar = u.searchParams.get('bar');
         if (bar !== '5m') { if (mtf[bar] === 'fail') return new Response('', { status: 500 }); return ok(mtfCandles(bar, mtf[bar] ?? 'up')); }

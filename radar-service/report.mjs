@@ -21,6 +21,7 @@ export const mtfLine = row => {
 function planLines(plan) {
   if (!plan) return ['진입·손절·목표: 계산 불가 (검증 가능한 기준선/ATR/스윙 데이터 부족)'];
   const l = [
+    '※ 진입·손절·목표는 조건부 참고값이며 매매 지시가 아닙니다',
     `현재 마크가격 ${f(plan.mark)} · ${plan.entryNote} ${f(plan.entry)}`,
     `손절(무효화) 참고선 ${f(plan.stop)} (진입 대비 ${plan.stopPct.toFixed(2)}%)`,
     `TP1 ${f(plan.tp1)} (+${plan.tp1Pct.toFixed(2)}%, 1R) · TP2 ${f(plan.tp2)} (+${plan.tp2Pct.toFixed(2)}%, 2R)`,
@@ -46,9 +47,9 @@ export function signalText(row, { compact = false } = {}) {
     if (!(c?.plan && !compact)) lines.push(`무효화 참고선 ${f(row.stop)}${c?.plan ? '' : ' (기준선 ± 14봉 ATR)'}`);
   }
   if (c) {
-    lines.push(`${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`, `조건 충족 점수 ${c.score}/100 (수익 확률 아님) · 위험 수준 ${c.risk.level}`);
+    lines.push(`${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`, `조건 충족 점수 ${c.score}/100 (수익 확률 아님) · 위험 수준 ${c.risk.level}(상대 평가, 선물거래 자체의 저위험을 뜻하지 않음)`);
     if (!compact) {
-      if (c.plan) lines.push(...planLines(c.plan).slice(0, 4));
+      if (c.plan) lines.push(...planLines(c.plan).slice(0, 5));
       lines.push(...c.risk.factors.slice(0, 2).map(x => `- ${x}`));
     }
   }
@@ -72,7 +73,7 @@ const pickNearRows = rows => pickNear(rows, 3);
 function detailBlock(row) {
   const c = row.candidate;
   const top = Object.entries(c.parts).filter(([, p]) => p.score > 0).sort((a, b) => b[1].score / b[1].max - a[1].score / a[1].max).slice(0, 3);
-  const caution = c.risk.factors.filter(x => !x.startsWith('레버리지') && !x.startsWith('특별한')).slice(0, 2);
+  const caution = c.risk.factors.filter(x => !x.startsWith('레버리지') && !x.startsWith('특별한') && !x.startsWith('위험 수준은')).slice(0, 2);
   const tfLines = ['15m', '1H', '4H'].map(tf => {
     const t = row.mtf?.[tf];
     return t ? `  ${tf === '15m' ? '15분' : tf === '1H' ? '1시간' : '4시간'} ${t.arrow} ${t.label} · ${t.basis}${t.lastClosedAt ? ` · 마지막 확정봉 ${kstShort(t.lastClosedAt)}` : ''}` : `  ${tf} 미확인`;
@@ -81,7 +82,7 @@ function detailBlock(row) {
     `■ ${row.symbol} · ${dirKo(c.dir)} 관찰 · ${row.strong ? `강한 조건 충족${row.grade ? ` (${row.grade})` : ''}` : '조건 미완성(근접 관찰)'} · 점수 ${c.score}/100`,
     `다중 시간대: ${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`, ...tfLines,
     ...planLines(c.plan),
-    `위험 수준: ${c.risk.level}`, ...c.risk.factors.map(x => `- ${x}`),
+    `위험 수준: ${c.risk.level} (상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음)`, ...c.risk.factors.map(x => `- ${x}`),
     `추천 근거 TOP ${top.length}: ${top.map(([k, p]) => `${PART_LABEL[k]} ${p.score.toFixed(1)}/${p.max}(${p.note})`).join(' · ') || '없음'}`,
     `주의할 점: ${caution.join(' / ') || '없음'}`,
     `미충족 조건: ${c.unmet.join(' / ') || '없음'}`,
@@ -131,7 +132,7 @@ export function reportMessages(rows, failures, now, ctx = {}) {
   const detailRows = [...strong, ...near].filter(r => r.candidate).slice(0, 2);
   const detail = detailRows.length ? '[상세 분석]\n' + detailRows.map(detailBlock).join('\n\n') : null;
   const top = detailRows[0];
-  const verdict = '[요약 판단]\n' + (strong.length ? '즉시 진입 조건 충족(규칙 기준) — 무효화 참고선과 BTC 방향을 함께 확인' : near.length ? '조건부 관찰 — 강한 조건은 아직 미완성' : '대기') +
+  const verdict = '[요약 판단]\n' + (strong.length ? '강한 관찰 조건 포착 — 진입·손절·목표는 조건부 참고값이며 매매 지시가 아님. 무효화 참고선과 BTC 방향을 함께 확인' : near.length ? '조건부 관찰 — 강한 조건은 아직 미완성' : '대기') +
     (top && !top.strong ? `\n다음 확인 조건: ${top.candidate.unmet.slice(0, 2).join(' / ') || '없음'}` : '') +
     (failures.length ? `\n데이터 누락: ${failures.length}종목 수집 실패` : '') +
     (ctx.stats ? '' : '') +

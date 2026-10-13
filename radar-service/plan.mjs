@@ -56,5 +56,6 @@ export function riskOf(row, dir, mtf, plan, btc) {
   const levelName = pts >= 5 ? '높음' : pts >= 2 ? '보통' : '낮음';
   if (levelName !== '낮음' || f.length) f.push('레버리지 사용 시 손실 확대 주의 (배수·청산가는 계정 데이터가 없어 확인 불가)');
   else f.push('특별한 경고 요인 없음 (위험이 없다는 뜻은 아님)');
+  f.push('위험 수준은 위 지표 기준의 상대 평가이며 선물거래 자체가 저위험이라는 뜻이 아님');
   return { level: levelName, points: pts, factors: f };
 }
