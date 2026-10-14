@@ -1,15 +1,15 @@
 // 후보 차트: 확정 캔들 + 조건부 참고 시나리오를 SVG로 그려 PNG로 변환한다. 외부 서비스·유료 API 없음.
 // 렌더링 실패는 호출자가 격리한다(텍스트 보고는 항상 나간다). 차트의 한글은 fonts/의 Noto Sans KR 부분집합(OFL)을 쓴다.
 import { checkPhrases, pickNear } from './scoring.mjs';
+import { fmtPrice, priceDecimals } from './format.mjs';
 
 const W = 1200, H = 760;
-const X0 = 28, X1 = 984, Y0 = 138, Y1 = 640;   // 플롯 영역 (오른쪽은 가격 태그 영역)
+const X0 = 28, X1 = 936, Y0 = 150, Y1 = 626;   // 플롯 영역 (오른쪽은 가격 태그 영역)
 const FONT = 'Noto Sans KR';
 const C = { bg: '#0e1621', panel: '#131d2a', grid: '#1e2b3a', text: '#e8edf3', muted: '#93a1b3', up: '#2dd4bf', down: '#fb7185',
   entry: '#fbbf24', stop: '#ef4444', tp: '#4ade80', now: '#60a5fa', zone: '#fbbf24', struct: '#a78bfa' };
 const TF_NAME = { '5m': '5분', '15m': '15분', '1H': '1시간', '4H': '4시간' };
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const fmt = n => Number(Number(n).toPrecision(6)).toString();
 const kstTime = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(5, 16);
 const kstFull = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
 const dirKo = d => (d === 'LONG' ? '롱' : d === 'SHORT' ? '숏' : '시장');
@@ -53,28 +53,29 @@ export function makeSpec(row, tf, candles, kind, reason, fallback = false) {
     price: row.price, priceAt: row.priceAt, atr: row.atr, plan: market ? null : c?.plan ?? null, level: market ? null : c?.dist?.level ?? null,
     structureAhead: market ? null : c?.plan?.structureAhead ?? null, risk: c?.risk?.level ?? null, conflict: Boolean(c?.mtfConflict),
     checks: market ? [] : checkPhrases(row, c?.dir), mtf: row.mtf ?? null, trend: row.trend, collectedAt: row.collectedAt,
-    source: row.source ?? 'OKX', candles: candles.slice(-56), marketLevels: market ? { r: row.mtf?.[tf]?.resistance?.slice(-2) ?? [], s: row.mtf?.[tf]?.support?.slice(-2) ?? [] } : null,
+    source: row.source ?? 'OKX', candles: candles.slice(-48), marketLevels: market ? { r: row.mtf?.[tf]?.resistance?.slice(-2) ?? [], s: row.mtf?.[tf]?.support?.slice(-2) ?? [] } : null,
   };
 }
 
+// 캡션은 1~2줄. 시나리오 숫자는 이미지와 본문에 이미 있으므로 반복하지 않는다.
 export function chartCaption(spec) {
-  const p = spec.plan;
-  const head = spec.kind === 'market' ? `${spec.symbol} · 시장 기준 차트` : `${spec.symbol} · ${dirKo(spec.dir)} 관찰`;
-  const lines = [head, `${spec.tf} 차트 · ${spec.kind === 'market' ? `BTC 추세 ${spec.mtf?.[spec.tf]?.label ?? '미확인'}` : spec.strong ? '강한 관찰 조건 포착' : '조건 미완성'}`];
-  if (p) lines.push(`진입 참고 ${fmt(p.entry)} / 손절 ${fmt(p.stop)} / TP1 ${fmt(p.tp1)} / TP2 ${fmt(p.tp2)}`);
-  lines.push('조건부 참고 시나리오 · 매매 지시 아님');
-  return lines.join('\n').slice(0, 1000);
+  const head = spec.kind === 'market' ? `${spec.symbol} · 시장 기준 · ${spec.tf}봉` : `${spec.symbol} · ${dirKo(spec.dir)} 관찰 · ${spec.tf}봉`;
+  return `${head}\n${spec.kind === 'market' ? '시장 참고 차트 · 매매 지시 아님' : '조건부 참고 시나리오 · 매매 지시 아님'}`;
 }
 
 // 가격 태그 겹침 방지: y 순서대로 최소 간격을 확보한다.
-function spreadTags(tags, gap = 26, lo = Y0 + 4, hi = Y1 - 4) {
+function spreadTags(tags, gap = 34, lo = Y0 + 4, hi = Y1 - 4) {
   const t = [...tags].sort((a, b) => a.y - b.y);
   for (let i = 0; i < t.length; i++) t[i].ty = Math.max(t[i].y, i ? t[i - 1].ty + gap : lo);
   for (let i = t.length - 1; i >= 0; i--) { t[i].ty = Math.min(t[i].ty, i < t.length - 1 ? t[i + 1].ty - gap : hi); }
   return t;
 }
 
+// 글자 폭 추정(한글·전각은 1em, 그 외 0.58em): 태그 박스가 글자보다 좁아지지 않게 한다.
+const textW = (str, size) => [...String(str)].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e80 ? size : size * 0.58), 0);
+
 export function buildSvg(spec) {
+  const dec = priceDecimals(spec.price), fmt = v => fmtPrice(v, dec); // 가격 표시 자릿수는 자산 가격대에 맞추고 계산값은 바꾸지 않는다
   const candles = spec.candles, n = candles.length;
   const p = spec.plan;
   const levels = [spec.price];
@@ -101,17 +102,17 @@ export function buildSvg(spec) {
   add(`<rect width="${W}" height="${H}" fill="${C.bg}"/>`);
   add(`<text x="${X0}" y="52" font-size="34" font-weight="700" fill="${C.text}">${esc(spec.symbol)}</text>`);
   add(`<text x="${X0 + 16 + spec.symbol.length * 25}" y="52" font-size="26" font-weight="700" fill="${spec.dir === 'LONG' ? C.tp : spec.dir === 'SHORT' ? C.down : C.muted}">${esc(market ? '시장 기준' : dirKo(spec.dir) + ' 관찰')}</text>`);
-  add(`<text x="${X0}" y="88" font-size="20" fill="${C.muted}">${esc(tfName)}봉 · ${esc(status)}${spec.score != null ? ` · 점수 ${esc(spec.score)}/100 (승률 아님)` : ''}${spec.grade ? ` · ${esc(spec.grade)}` : ''}</text>`);
+  add(`<text x="${X0}" y="88" font-size="22" fill="${C.muted}">${esc(tfName)}봉 · ${esc(status)}${spec.score != null ? ` · 점수 ${esc(spec.score)}/100 (승률 아님)` : ''}${spec.grade ? ` · ${esc(spec.grade)}` : ''}</text>`);
   const m = spec.mtf;
   const a = tf => m?.[tf]?.arrow ?? '?';
-  add(`<text x="${X1 + 190}" y="52" font-size="20" text-anchor="end" fill="${C.text}">15분 ${a('15m')} / 1시간 ${a('1H')} / 4시간 ${a('4H')}</text>`);
+  add(`<text x="${W - 28}" y="52" font-size="22" text-anchor="end" fill="${C.text}">15분 ${a('15m')} / 1시간 ${a('1H')} / 4시간 ${a('4H')}</text>`);
   let chipX = X0;
   const chips = [...spec.checks, ...(spec.conflict ? ['상위 시간대 역행 주의'] : []), ...(spec.risk ? [`위험 ${spec.risk}`] : [])];
   chips.forEach((t, i) => {
-    const w = 22 + t.length * 17;
+    const w = 28 + textW(t, 18);
     const warn = /역행|위험 높음|과열/.test(t);
-    add(`<rect x="${chipX}" y="${100}" width="${w}" height="30" rx="15" fill="${warn ? '#3b1d22' : '#1b2a3b'}" stroke="${warn ? C.stop : '#3a4f66'}"/>`);
-    add(`<text x="${chipX + w / 2}" y="121" font-size="16" text-anchor="middle" fill="${warn ? '#fecaca' : C.text}">${esc(t)}</text>`);
+    add(`<rect x="${chipX}" y="${102}" width="${w}" height="36" rx="18" fill="${warn ? '#3b1d22' : '#1b2a3b'}" stroke="${warn ? C.stop : '#3a4f66'}"/>`);
+    add(`<text x="${chipX + w / 2}" y="127" font-size="18" text-anchor="middle" fill="${warn ? '#fecaca' : C.text}">${esc(t)}</text>`);
     chipX += w + 10;
   });
 
@@ -121,11 +122,11 @@ export function buildSvg(spec) {
     if (i === 0 || i === 5) continue; // 가장자리 눈금은 헤더·시간축과 겹치므로 생략
     const v = lo + ((hi - lo) * i) / 5, yy = y(v);
     add(`<line x1="${X0}" x2="${X1}" y1="${yy}" y2="${yy}" stroke="${C.grid}" stroke-width="1"/>`);
-    add(`<text x="${X0 + 6}" y="${yy - 5}" font-size="13" fill="${C.muted}" fill-opacity="0.8">${esc(fmt(v))}</text>`);
+    add(`<text x="${X0 + 4}" y="${yy - 5}" font-size="15" fill="${C.muted}" fill-opacity="0.85">${esc(fmt(v))}</text>`);
   }
   // 시간축
   const step = Math.max(1, Math.round(n / 6));
-  for (let i = Math.min(2, n - 1); i < n; i += step) add(`<text x="${Math.min(Math.max(xi(i), X0 + 50), X1 - 60)}" y="${Y1 + 24}" font-size="14" text-anchor="middle" fill="${C.muted}">${esc(kstTime(candles[i].t))}</text>`);
+  for (let i = Math.min(2, n - 1); i < n; i += step) add(`<text x="${Math.min(Math.max(xi(i), X0 + 50), X1 - 60)}" y="${Y1 + 26}" font-size="16" text-anchor="middle" fill="${C.muted}">${esc(kstTime(candles[i].t))}</text>`);
 
   // 핵심 구간(박스): 진입 참고가 ± 구간
   let zone = null;
@@ -133,7 +134,9 @@ export function buildSvg(spec) {
     const half = Math.max(0.3 * (spec.atr || 0), p.entry * 0.0015);
     zone = { top: y(p.entry + half), bottom: y(p.entry - half) };
     add(`<rect x="${X0}" y="${zone.top}" width="${X1 - X0}" height="${zone.bottom - zone.top}" fill="${C.zone}" fill-opacity="0.13" stroke="${C.zone}" stroke-opacity="0.45" stroke-dasharray="6 5"/>`);
-    add(`<text x="${X0 + 8}" y="${zone.bottom + 20}" font-size="16" fill="${C.zone}">핵심 구간 ${esc(fmt(p.entry - half))} ~ ${esc(fmt(p.entry + half))}</text>`);
+    const zy = (zone.top + zone.bottom) / 2;
+    add(`<rect x="${X0 + 1}" y="${zy - 11}" width="64" height="22" rx="3" fill="${C.bg}" fill-opacity="0.85"/>`);
+    add(`<text x="${X0 + 5}" y="${zy + 5}" font-size="14" font-weight="700" fill="${C.zone}">핵심 구간</text>`);
   }
   if (spec.marketLevels) {
     for (const v of spec.marketLevels.r) add(`<line x1="${X0}" x2="${X1}" y1="${y(v)}" y2="${y(v)}" stroke="${C.struct}" stroke-dasharray="4 6" opacity="0.8"/>`);
@@ -141,7 +144,7 @@ export function buildSvg(spec) {
   }
   if (structure != null) {
     add(`<line x1="${X0}" x2="${X1}" y1="${y(structure)}" y2="${y(structure)}" stroke="${C.struct}" stroke-dasharray="3 6" opacity="0.85"/>`);
-    add(`<text x="${X1 - 8}" y="${y(structure) - 6}" text-anchor="end" font-size="14" fill="${C.struct}">1시간 구조 ${esc(fmt(structure))}</text>`);
+    add(`<text x="${X1 - 8}" y="${y(structure) - 6}" text-anchor="end" font-size="16" fill="${C.struct}">1시간 구조 ${esc(fmt(structure))}</text>`);
   }
 
   // 캔들
@@ -162,18 +165,18 @@ export function buildSvg(spec) {
     const sg = spec.dir === 'LONG' ? ['+', '-'] : ['-', '+']; // 가격 변동 방향: 목표(수익 쪽), 손절(손실 쪽)
     hline(p.tp2, C.tp, '10 6', 2, `TP2 ${fmt(p.tp2)} (${sg[0]}${p.tp2Pct.toFixed(2)}%)`);
     hline(p.tp1, C.tp, '10 6', 2, `TP1 ${fmt(p.tp1)} (${sg[0]}${p.tp1Pct.toFixed(2)}%)`);
-    hline(p.entry, C.entry, '14 6', 2.4, `진입 참고 ${fmt(p.entry)}`);
-    hline(p.stop, C.stop, null, 2.6, `손절 참고 ${fmt(p.stop)} (${sg[1]}${p.stopPct.toFixed(2)}%)`);
+    hline(p.entry, C.entry, '14 6', 2.4, `진입 ${fmt(p.entry)}`);
+    hline(p.stop, C.stop, null, 2.6, `손절 ${fmt(p.stop)} (${sg[1]}${p.stopPct.toFixed(2)}%)`);
   } else if (spec.level != null) {
     hline(spec.level, C.entry, '14 6', 2.4, `기준선 ${fmt(spec.level)}`);
   }
   add(`<line x1="${X0}" x2="${X1}" y1="${y(spec.price)}" y2="${y(spec.price)}" stroke="${C.now}" stroke-width="1.4" stroke-dasharray="2 4"/>`);
   tags.push({ y: y(spec.price), color: C.now, label: `현재 ${fmt(spec.price)}`, id: 'now' });
   for (const t of spreadTags(tags)) {
-    const w = 8 + t.label.length * 9.2;
-    add(`<line x1="${X1}" x2="${X1 + 6}" y1="${t.y}" y2="${t.ty}" stroke="${t.color}" stroke-width="1.2"/>`);
-    add(`<rect x="${X1 + 6}" y="${t.ty - 12}" width="${Math.min(w, W - X1 - 10)}" height="24" rx="4" fill="${t.color}" fill-opacity="0.18" stroke="${t.color}"/>`);
-    add(`<text x="${X1 + 12}" y="${t.ty + 5}" font-size="14.5" font-weight="700" fill="${t.color === C.stop ? '#fecaca' : t.color}">${esc(t.label)}</text>`);
+    const w = Math.min(textW(t.label, 17) + 18, W - X1 - 14);
+    add(`<line x1="${X1}" x2="${X1 + 8}" y1="${t.y}" y2="${t.ty}" stroke="${t.color}" stroke-width="1.4"/>`);
+    add(`<rect x="${X1 + 8}" y="${t.ty - 15}" width="${w}" height="30" rx="5" fill="${t.color}" fill-opacity="0.2" stroke="${t.color}" stroke-width="1.4"/>`);
+    add(`<text x="${X1 + 17}" y="${t.ty + 6}" font-size="17" font-weight="700" fill="${t.color === C.stop ? '#fecaca' : t.color}">${esc(t.label)}</text>`);
   }
 
   // 시나리오 화살표(참고): 현재가 → 진입 구간(돌파/리테스트 확인) → TP1
@@ -188,14 +191,14 @@ export function buildSvg(spec) {
     const above = long ? spec.price >= p.entry : spec.price <= p.entry;
     const note = long ? (above ? '여기 지지 확인 필요' : '여기 돌파 확인 필요') : (above ? '여기 저항 확인 필요' : '여기 이탈 확인 필요');
     const ny = zone ? (long ? zone.bottom + 22 : zone.top - 28) : y(p.entry) + 22;
-    add(`<text x="${xr}" y="${ny}" font-size="17" font-weight="700" text-anchor="middle" fill="${C.entry}">${esc(note)}</text>`);
+    add(`<text x="${xr}" y="${ny}" font-size="19" font-weight="700" text-anchor="middle" fill="${C.entry}">${esc(note)}</text>`);
   }
 
   // 푸터
   add(`<rect x="0" y="${H - 96}" width="${W}" height="96" fill="#0a111a"/>`);
-  add(`<text x="${X0}" y="${H - 62}" font-size="19" font-weight="700" fill="${C.entry}">조건부 참고 시나리오 · 매매 지시 아님</text>`);
-  add(`<text x="${X0}" y="${H - 36}" font-size="15" fill="${C.muted}">${p ? '진입·손절·목표는 1R/2R 기준 참고값이며 수수료·슬리피지·펀딩비 미반영 · 강제청산가 확인 불가' : '시나리오를 계산할 수 없어 기준 수준만 표시합니다'}</text>`);
-  add(`<text x="${X0}" y="${H - 12}" font-size="15" fill="${C.muted}">${esc(spec.source)} (Binance 아님) · 마지막 확정봉 ${esc(kstFull(candles[n - 1].t))} KST · 분석 ${esc(kstFull(spec.collectedAt ?? spec.priceAt))} KST</text>`);
+  add(`<text x="${X0}" y="${H - 62}" font-size="20" font-weight="700" fill="${C.entry}">조건부 참고 시나리오 · 매매 지시 아님</text>`);
+  add(`<text x="${X0}" y="${H - 36}" font-size="17" fill="${C.muted}">${p ? '1R/2R 참고값 · 수수료·슬리피지·펀딩비 미반영 · 강제청산가 확인 불가' : '시나리오를 계산할 수 없어 기준 수준만 표시합니다'}</text>`);
+  add(`<text x="${X0}" y="${H - 12}" font-size="16" fill="${C.muted}">${esc(spec.source)} (Binance 아님) · 마지막 확정봉 ${esc(kstFull(candles[n - 1].t))} KST · 분석 ${esc(kstFull(spec.collectedAt ?? spec.priceAt))} KST</text>`);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}">${body.join('')}</svg>`;
 }
 

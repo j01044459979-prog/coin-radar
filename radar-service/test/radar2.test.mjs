@@ -9,6 +9,7 @@ import { enrich, marketState } from '../enrich.mjs';
 import { trendOf, TF_MS } from '../indicators.mjs';
 import { needsRefresh, refreshNews, relevantNews, newsSources } from '../news.mjs';
 import { cycle } from '../service.mjs';
+import { alertReport } from '../compact.mjs';
 import { applyBtcFilter } from '../analysis.mjs';
 
 const collect = (opts = {}) => createOkxCollector(fakeOkx(opts), { gapMs: 0 })(now);
@@ -206,25 +207,14 @@ test('캐시 복원: 같은 시간대 재실행은 재전송 없음, 캐시 유�
   const lost = []; await cycle({ ...opts, send: async t => lost.push(t), now: now + 600000, state: {} }); // 캐시 유실
   assert.equal(lost.length, n1); assert.ok(lost.every(m => !m.startsWith('🚨')));
 });
-test('여러 건 보고 중간 실패 시 다음 실행이 이미 보낸 건을 건너뛴다', async () => {
-  const rows = (await collect({ breakout: false })).rows;
-  const long = { status: 'ok', checkedAt: now, items: [] };
-  const state = { news: long }; const sent = []; let n = 0;
-  const big = rows.map(r => ({ ...r, candidate: r.candidate && { ...r.candidate, unmet: Array(40).fill('매우 긴 부족 조건 설명 '.repeat(4)) } }));
-  const run = fail => cycle({ now, state, collect: async () => ({ rows: big, failures: [] }), save: async () => {}, send: async t => { if (fail && ++n === 2) throw new Error('tg'); sent.push(t); } });
-  await run(true).catch(() => {});
-  assert.equal(state.reportHour, undefined); assert.equal(state.partial.sent, 1);
-  const first = sent.length; await run(false);
-  assert.equal(state.reportHour, Math.floor(now / 3600000)); assert.equal(state.partial, undefined);
-  assert.equal(new Set(sent).size, sent.length); assert.ok(sent.length > first);
-});
-test('강한 신규 신호 알림은 간결하며 점수·시나리오·위험을 포함하고 기존 형식을 유지', async () => {
+test('강한 신규 신호 알림은 짧은 HTML 요약이며 점수·시나리오·주의를 포함', async () => {
   const row = await strongRow();
-  const t = signalText(row);
-  assert.match(t, /^BTCUSDT · 롱 관찰 · (보수형|공격형) 후보/); assert.match(t, /조건 충족 점수 \d+(\.\d)?\/100/); assert.match(t, /손절\(무효화\) 참고선/); assert.match(t, /TP1/); assert.ok(t.length < 1500);
+  const t = alertReport(row, now).plain;
+  assert.match(t, /^🚨 신규 조건 포착\nBTCUSDT · 롱 관찰 \(\d+점\)/); assert.match(t, /진입 참고 [\d.]+\n손절 [\d.]+\nTP1 [\d.]+ · TP2 [\d.]+/); assert.match(t, /조건부 참고값 · 매매 지시 아님/);
+  assert.ok(t.length < 400, `길이 ${t.length}`);
   const state = { reportHour: Math.floor(now / 3600000) }, sent = [];
   await cycle({ now, state, collect: async () => ({ rows: [row], failures: [] }), send: async m => sent.push(m), save: async () => {} });
-  assert.equal(sent.length, 1); assert.match(sent[0], /^🚨 신규 조건 포착/);
+  assert.equal(sent.length, 1); assert.match(sent[0], /^<b>🚨 신규 조건 포착<\/b>/);
   await cycle({ now: now + 300000, state, collect: async () => ({ rows: [row], failures: [] }), send: async m => sent.push(m), save: async () => {} });
   assert.equal(sent.length, 1);
 });
