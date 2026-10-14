@@ -3,6 +3,11 @@ import { alertReport } from './compact.mjs';
 import { candidateSpec, chartCaption, chartPlan } from './chart.mjs';
 import { needsRefresh } from './news.mjs';
 
+// 제한 응답 대기 정책(전체 수집 실패·수집 중간 제한 공통): 최소 5분, 429는 Retry-After 반영,
+// 403(지역/권한 차단)·451(지역 제한)·418(IP 차단 경고)은 반복 요청이 차단을 악화시킬 수 있어 최소 1시간 대기한다.
+export const RESTRICTED = [403, 418, 429, 451];
+export const waitMs = (status, retryAfterSec = 0) => Math.max(300000, (Number(retryAfterSec) || 0) * 1000, [403, 418, 451].includes(status) ? 3600000 : 0);
+
 export class ApiError extends Error {
   constructor(service, status, retryAfter = 0) {
     super(`${service} HTTP ${status}`); this.status = status; this.retryAfter = retryAfter;
@@ -127,7 +132,7 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   catch (error) {
     state.lastError = error.message;
     state.lastAttempt = now;
-    state.retryAt = now + Math.max(300000, error.retryAfter * 1000 || 0, [403, 451].includes(error.status) ? 3600000 : 0);
+    state.retryAt = now + waitMs(error.status, error.retryAfter);
     await save(state);
     if (now - (state.errorSentAt || 0) >= 3600000) {
       await send(`리치 선물 레이더 · 수집 장애\n${error.message}\n가격·매매 신호를 생성하지 않습니다(대기). 다음 점검까지 대기합니다.`);
@@ -139,7 +144,9 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   state.lastAttempt = now; state.lastSuccess = now; state.lastError = null; state.retryAt = 0;
   state.rows = rows.map(r => ({ symbol: r.symbol, direction: r.direction, strong: r.strong, price: r.price, score: r.candidate?.score ?? null }));
   if (result.rotation) state.rotation = result.rotation; // 순환 위치·종목별 마지막 정밀 분석 시각(캐시 유실 시 안전하게 재초기화)
-  if (result.backoffMs) state.retryAt = now + result.backoffMs; // 수집 도중 한도 응답을 받았으면 다음 수집을 늦춘다
+  // 수집 도중 제한 응답을 받았으면 일부만 수집된 결과를 보고하되 다음 수집을 정책대로 늦추고, 원인·대기시간을 기록한다.
+  if (result.backoffMs) state.retryAt = now + result.backoffMs;
+  state.lastLimit = result.limit ? { at: now, ...result.limit, waitMs: result.backoffMs || 0 } : null;
   state.failures = failures; state.stats = stats ?? null; state.sent ||= {};
   const hour = Math.floor(now / 3600000);
   const hourly = state.reportHour !== hour;

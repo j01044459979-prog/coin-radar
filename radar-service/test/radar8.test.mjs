@@ -185,3 +185,90 @@ test('수집이 1분 넘게 걸려도 뒤쪽 종목의 가격/OI 신선도 판�
     assert.equal(out.stats.scan.analyzed, 40);
   } finally { Date.now = realNow; }
 });
+
+// ── 운영 안정성 패치: 제한 응답 대기 정책 ──
+import { waitMs } from '../service.mjs';
+const mid = (status, { after = 12, headers = {}, re = /mark-price/ } = {}) => { let n = 0; return url => (re.test(url) && ++n === after) ? new Response('', { status, headers }) : null; };
+const HOUR = 3600000;
+
+test('대기 정책 함수: 429는 최소 5분·Retry-After 반영, 403/451/418은 최소 1시간', () => {
+  assert.equal(waitMs(429, 0), 300000); assert.equal(waitMs(429, 120), 300000); assert.equal(waitMs(429, 900), 900000);
+  for (const s of [403, 451, 418]) { assert.equal(waitMs(s, 0), HOUR); assert.equal(waitMs(s, 7200), 7200000); }
+  assert.equal(waitMs(500, 0), 300000);
+});
+
+test('첫 종목에서 403/451/418 차단: 장애로 처리되고 다음 수집은 1시간 뒤', async () => {
+  for (const status of [403, 451, 418]) {
+    const state = {}; const sent = [];
+    const collect = (n, ctx) => createOkxCollector(fullFake({ hook: url => /candles/.test(url) ? new Response('', { status }) : null }), { gapMs: 0 })(n, ctx);
+    const r = await cycle({ now, state, collect, send: async t => { sent.push(t); }, save: async () => {}, news: async () => {} });
+    assert.equal(r.failed, true); assert.equal(state.retryAt, now + HOUR, `status ${status}`);
+    assert.equal(state.reportHour, undefined); // 가짜 분석 보고 없음
+  }
+});
+
+test('10개 이상 성공 뒤 403/451/418: 부분 결과 보존, 1시간 대기, 실제 분석 수만 보고', async () => {
+  for (const status of [403, 451, 418]) {
+    const out = await createOkxCollector(fullFake({ hook: mid(status, { after: 15 }) }), { gapMs: 0 })(now);
+    const sc = out.stats.scan;
+    assert.equal(out.backoffMs, HOUR, `status ${status}`);
+    assert.equal(sc.analyzed, 14); assert.equal(out.rows.length, 14); assert.equal(sc.partial, true);
+    assert.equal(sc.skipped, sc.targets - sc.analyzed - sc.failed); assert.equal(sc.stopped.status, status); assert.equal(sc.stopped.stage, '5m');
+    assert.deepEqual(out.limit, { status, retryAfter: 0, stage: '5m', partial: true, analyzed: 14, skipped: sc.skipped, mtfSkipped: out.stats.mtfSkipped });
+    assert.equal(out.stats.mtfSymbols.length, 0, '제한 이후 상위 시간대 추가 호출 없음');
+    assert.equal(out.rotation.swept, 14, '분석하지 못한 종목은 분석한 것으로 기록되지 않음');
+  }
+});
+
+test('429 + Retry-After: 최소 5분 유지하고 더 긴 Retry-After는 따른다', async () => {
+  const a = await createOkxCollector(fullFake({ hook: mid(429, { headers: { 'retry-after': '120' } }) }), { gapMs: 0 })(now);
+  assert.equal(a.backoffMs, 300000); assert.equal(a.limit.retryAfter, 120);
+  const b = await createOkxCollector(fullFake({ hook: mid(429, { headers: { 'retry-after': '1200' } }) }), { gapMs: 0 })(now);
+  assert.equal(b.backoffMs, 1200000); assert.equal(b.limit.status, 429);
+});
+
+test('상위 시간대(MTF) 조회 중 429/403/451/418/50011: 원인·대기시간이 상위로 전달되고 5분봉 결과는 보존된다', async () => {
+  const mtfCandle = /bar=(15m|1H|4H)/;
+  const cases = [[429, 300000, { 'retry-after': '600' }, 600000], [403, HOUR], [451, HOUR], [418, HOUR]];
+  for (const [status, expect, headers = {}, want = expect] of cases) {
+    const out = await createOkxCollector(fullFake({ hook: mid(status, { after: 4, re: mtfCandle, headers }) }), { gapMs: 0 })(now);
+    assert.equal(out.stats.scan.analyzed, 40, 'MTF 제한이어도 5분 정밀 분석 결과 유지');
+    assert.equal(out.stats.scan.stopped.stage, 'MTF'); assert.equal(out.stats.scan.stopped.status, status);
+    assert.equal(out.backoffMs, want, `status ${status}`); assert.equal(out.limit.stage, 'MTF'); assert.ok(out.stats.mtfSkipped > 0);
+    assert.ok(out.stats.mtfSymbols.length < 7, '제한 이후에는 상위 시간대를 분석했다고 보고하지 않음');
+  }
+  // OKX 본문 코드 50011
+  const body = url => mtfCandle.test(url) ? new Response(JSON.stringify({ code: '50011', msg: 'Too Many Requests', data: [] }), { status: 200 }) : null;
+  const out = await createOkxCollector(fullFake({ hook: body }), { gapMs: 0 })(now);
+  assert.equal(out.stats.scan.stopped.status, 429); assert.equal(out.stats.scan.stopped.stage, 'MTF'); assert.equal(out.backoffMs, 300000);
+  assert.equal(out.stats.scan.analyzed, 40);
+});
+
+test('정상 40종목: 제한 정보·추가 대기 없음, 서비스는 다음 주기에 바로 실행된다', async () => {
+  const state = {}, sent = [];
+  const collect = (n, ctx) => createOkxCollector(fullFake(), { gapMs: 0 })(n, ctx);
+  const deps = { state, collect, send: async t => { sent.push(t); }, save: async () => {}, news: async () => {} };
+  const out = await collect(now, {});
+  assert.equal(out.backoffMs, 0); assert.equal(out.limit, null); assert.equal(out.stats.scan.partial, false); assert.equal(out.stats.scan.stopped, null);
+  await cycle({ ...deps, now });
+  assert.equal(state.retryAt, 0); assert.equal(state.lastLimit, null);
+  const r = await cycle({ ...deps, now: now + 300000 });
+  assert.notEqual(r.skipped, true);
+});
+
+test('제한으로 일부만 수집해도 상태 캐시·정기 보고 중복 방지가 유지된다', async () => {
+  const state = {}, sent = [];
+  let hookOn = true;
+  const collect = (n, ctx) => createOkxCollector(fullFake({ hook: hookOn ? mid(429, { after: 12, headers: { 'retry-after': '900' } }) : undefined }), { gapMs: 0 })(n, ctx);
+  const deps = { state, collect, send: async t => { sent.push(t); }, save: async () => {}, news: async () => {} };
+  await cycle({ ...deps, now });
+  const n = sent.length; assert.ok(n >= 1);
+  assert.equal(state.retryAt, now + 900000); assert.equal(state.lastLimit.status, 429); assert.equal(state.lastLimit.waitMs, 900000); assert.equal(state.lastLimit.partial, true);
+  assert.match(sent[0], /정밀 분석 11종목/); // 실제 분석한 수만 표시
+  assert.equal((await cycle({ ...deps, now: now + 300000 })).skipped, true); // 대기 중 실행 안 함
+  hookOn = false;
+  state.retryAt = 0; // 대기 시간이 지난 것으로 간주(모의 거래소 시각 고정)
+  await cycle({ ...deps, now }); // 재개: 같은 시간대 정기 보고 중복 없음
+  assert.equal(sent.filter(t => /RICH FUTURES RADAR/.test(t)).length, 1); // 정기 보고는 1회뿐(5분 긴급 알림은 별개)
+  assert.equal(state.lastLimit, null);
+});

@@ -2,7 +2,7 @@
 import { analyze, applyBtcFilter } from './analysis.mjs';
 import { enrich, preliminary } from './enrich.mjs';
 import { TF_MS, trendOf } from './indicators.mjs';
-import { jsonRequest } from './service.mjs';
+import { jsonRequest, RESTRICTED, waitMs } from './service.mjs';
 import { parseCandleVolume } from './volume.mjs';
 import { scanMarket, selectTargets, recordRotation, TARGET_CONFIG } from './universe.mjs';
 
@@ -18,7 +18,6 @@ function okData(body, what) {
 // 'BTC-USDT-SWAP' -> 'BTCUSDT'
 export const internalSymbol = instId => instId.replace(/-USDT-SWAP$/, 'USDT');
 
-const STOP = [403, 418, 429, 451];
 // config: max(정밀 분석 상한), topTurnover, movers, rotation, minTurnover / budgetMs: 종목 수집 시간 예산 / mtfTop: 상위 시간대 조회 후보 수
 export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, config = {}, budgetMs = 150000, mtfTop = 6 } = {}) {
   const stats = { calls: 0 };
@@ -34,7 +33,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
         if (keep && out[tf].dir !== 'UNKNOWN') keep[tf] = candles.slice(-100); // 검증(최신·연속·정상 OHLC)을 통과한 캔들만 차트에 사용
       } catch (error) {
         out[tf] = trendOf(null, tf, now); out[tf].basis = `수집 실패(${error.status ?? error.message})`;
-        if ([403, 418, 429, 451].includes(error.status)) { out.blocked = true; break; } // 제한 응답이면 추가 호출 중단
+        if (RESTRICTED.includes(error.status)) { out.blocked = { status: error.status, retryAfter: error.retryAfter || 0 }; break; } // 제한 응답이면 추가 호출 중단하고 원인·Retry-After를 상위로 전달
       }
     }
     return out;
@@ -48,7 +47,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
     const ids = sel.ids;
     const turn24 = Object.fromEntries(market.eligible.map(e => [e.instId, e.turnover]));
     const rows = [], failures = [], raw5 = {}, analyzedIds = [], skipped = [];
-    let stopped = null, perSymbol = 0;
+    let stopped = null, perSymbol = 0; // stopped: { status, retryAfter, stage } — 제한 응답 원인
     for (let i = 0; i < ids.length; i++) {
       const instId = ids[i];
       // 시간 예산: 다음 종목을 끝낼 시간이 없으면 남은(우선순위 낮은) 종목을 건너뛰고 기록한다. 우선 종목 앞에서는 멈추지 않는다.
@@ -75,10 +74,10 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
         analyzedIds.push(instId);
         perSymbol = Math.max(perSymbol, Date.now() - t0);
       } catch (error) {
-        if (STOP.includes(error.status)) {
+        if (RESTRICTED.includes(error.status)) {
           // 제한 응답: 이미 확보한 종목이 있으면 거기까지로 보고하고 대기 시간을 상위에 알린다. 하나도 없으면 장애로 처리한다.
           if (!rows.length) throw error;
-          stopped = { status: error.status, retryAfter: error.retryAfter || 0 }; skipped.push(...ids.slice(i)); break;
+          stopped = { status: error.status, retryAfter: error.retryAfter || 0, stage: '5m' }; skipped.push(...ids.slice(i)); break;
         }
         failures.push({ symbol, reason: error.message });
       }
@@ -90,13 +89,17 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
     const ranked2 = filtered.filter(r => r.symbol !== 'BTCUSDT').map(r => ({ r, p: preliminary(r, btcRow) }))
       .sort((a, b) => (b.r.strong - a.r.strong) || (b.p.score - a.p.score));
     const targets = [...new Set([...(btcRow ? [btcRow] : []), ...ranked2.slice(0, mtfTop).map(x => x.r)])];
-    const mtf = {}, charts = {}; let blocked = Boolean(stopped);
+    const mtf = {}, charts = {}; let blocked = Boolean(stopped), mtfSkipped = 0;
     // 차트용 5분 확정 캔들(대체 시간봉): 이미 받은 데이터를 재사용하므로 추가 호출 없음
     for (const r of filtered) if (raw5[r.symbol]) charts[r.symbol] = { '5m': raw5[r.symbol] };
     for (const row of targets) {
-      if (blocked || Date.now() - started > budgetMs + 50000) break;
-      try { const keep = charts[row.symbol] ??= {}; const m = await loadMtf(row.instId, now + (Date.now() - started), keep); blocked = Boolean(m.blocked); if (m.blocked && !stopped) stopped = { status: 'MTF', retryAfter: 0 }; delete m.blocked; mtf[row.symbol] = m; }
-      catch { /* 시간대 분석 실패는 격리 */ }
+      if (blocked || Date.now() - started > budgetMs + 50000) { mtfSkipped++; continue; }
+      try {
+        const keep = charts[row.symbol] ??= {};
+        const m = await loadMtf(row.instId, now + (Date.now() - started), keep);
+        if (m.blocked) { blocked = true; stopped ??= { ...m.blocked, stage: 'MTF' }; }
+        delete m.blocked; mtf[row.symbol] = m;
+      } catch { /* 시간대 분석 실패는 격리 */ }
     }
     const rotation = recordRotation(sel.rotation, analyzedIds, market.eligible.map(e => e.instId), now);
     const excluded = [...market.reasons.entries()].map(([id, reason]) => ({ id, reason, t: Number(tickers.find(x => x.instId === id)?.volCcy24h) * Number(tickers.find(x => x.instId === id)?.last) || 0 }))
@@ -105,12 +108,12 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
     for (const r of market.reasons.values()) { const k = r.replace(/\(.*\)/, ''); reasonCounts[k] = (reasonCounts[k] || 0) + 1; }
     const pct = a => { const v = [...market.eligible.map(e => e.turnover)].sort((x, y) => x - y); return v.length ? v[Math.min(v.length - 1, Math.floor(v.length * a))] : null; };
     const scan = {
-      eligible: sel.eligibleCount, targets: ids.length, analyzed: analyzedIds.length, failed: failures.length, skipped: skipped.length, stopped,
+      eligible: sel.eligibleCount, targets: ids.length, analyzed: analyzedIds.length, failed: failures.length, skipped: skipped.length, stopped, partial: Boolean(stopped) || skipped.length > 0,
       groups: Object.fromEntries(Object.entries(sel.groups).map(([k, v]) => [k, v.map(internalSymbol)])),
       liquidityExcluded: sel.liquidityExcluded, minTurnover: sel.cfg.minTurnover, turnoverPct: { p10: pct(0.1), p25: pct(0.25), p50: pct(0.5), p75: pct(0.75), p90: pct(0.9) },
       rotation: { reinit: rotation.reinit, swept: rotation.swept, neverAnalyzed: rotation.neverAnalyzed, lastGapMs: rotation.lastGapMs, lastMissed: rotation.lastMissed, missedTotal: rotation.missedTotal, maxGapMs: rotation.maxGapMs, oldestAt: rotation.oldestAt },
     };
-    return { rows: enrich(filtered, mtf), failures, charts, rotation, backoffMs: stopped && typeof stopped.status === 'number' ? Math.max(300000, stopped.retryAfter * 1000) : 0,
-      stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf), scan, universe: { selected: ids, eligible: sel.eligibleCount, priority: sel.priorityStatus, excluded, reasons: reasonCounts, categories: market.categoryCounts } } };
+    return { rows: enrich(filtered, mtf), failures, charts, rotation, backoffMs: stopped ? waitMs(stopped.status, stopped.retryAfter) : 0, limit: stopped && { status: stopped.status, retryAfter: stopped.retryAfter, stage: stopped.stage, partial: true, analyzed: analyzedIds.length, skipped: skipped.length, mtfSkipped },
+      stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf).filter(k => ['15m', '1H', '4H'].some(tf => mtf[k][tf]?.dir !== 'UNKNOWN')), mtfAttempted: Object.keys(mtf).length, mtfSkipped, scan, universe: { selected: ids, eligible: sel.eligibleCount, priority: sel.priorityStatus, excluded, reasons: reasonCounts, categories: market.categoryCounts } } };
   };
 }
