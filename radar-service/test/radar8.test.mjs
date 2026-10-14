@@ -172,3 +172,16 @@ test('서비스: 순환 상태가 저장되고 한도 대기가 retryAt에 반�
   await cycle({ ...base, now: now + 60000 }); // 대기 중에는 실행하지 않음 → 추가 전송 없음
   assert.equal(sent.length, n);
 });
+
+test('수집이 1분 넘게 걸려도 뒤쪽 종목의 가격/OI 신선도 판정이 틀어지지 않는다', async () => {
+  const realNow = Date.now; let skew = 0;
+  Date.now = () => realNow() + skew;
+  try {
+    let n = 0;
+    const base = fullFake();
+    const f = async u => { if (++n === 60) skew += 90000; if (n === 130) skew += 90000; return base(u); }; // 실행 중 총 3분 경과
+    const out = await createOkxCollector(f, { gapMs: 0, budgetMs: 600000 })(now);
+    assert.equal(out.stats.scan.failed, 0, JSON.stringify(out.failures.slice(0, 2)));
+    assert.equal(out.stats.scan.analyzed, 40);
+  } finally { Date.now = realNow; }
+});

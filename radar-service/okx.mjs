@@ -71,7 +71,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
           oi: { symbol, openInterest: oi.oiCcy, time: oi.ts }, // 기초자산 수량 기준(가격 변동 영향 제외)
           history: history.map(h => ({ timestamp: h[0], sumOpenInterest: h[2], sumOpenInterestValue: h[3] })),
         };
-        rows.push({ ...analyze(symbol, raw, now), turnover24h: turn24[instId] ?? null, source: SOURCE.label, sourceUrl: `${base}/public/mark-price?instType=SWAP&instId=${instId}`, instId });
+        rows.push({ ...analyze(symbol, raw, now + (Date.now() - started)), turnover24h: turn24[instId] ?? null, source: SOURCE.label, sourceUrl: `${base}/public/mark-price?instType=SWAP&instId=${instId}`, instId });
         analyzedIds.push(instId);
         perSymbol = Math.max(perSymbol, Date.now() - t0);
       } catch (error) {
@@ -95,7 +95,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
     for (const r of filtered) if (raw5[r.symbol]) charts[r.symbol] = { '5m': raw5[r.symbol] };
     for (const row of targets) {
       if (blocked || Date.now() - started > budgetMs + 50000) break;
-      try { const keep = charts[row.symbol] ??= {}; const m = await loadMtf(row.instId, now, keep); blocked = Boolean(m.blocked); if (m.blocked && !stopped) stopped = { status: 'MTF', retryAfter: 0 }; delete m.blocked; mtf[row.symbol] = m; }
+      try { const keep = charts[row.symbol] ??= {}; const m = await loadMtf(row.instId, now + (Date.now() - started), keep); blocked = Boolean(m.blocked); if (m.blocked && !stopped) stopped = { status: 'MTF', retryAfter: 0 }; delete m.blocked; mtf[row.symbol] = m; }
       catch { /* 시간대 분석 실패는 격리 */ }
     }
     const rotation = recordRotation(sel.rotation, analyzedIds, market.eligible.map(e => e.instId), now);
