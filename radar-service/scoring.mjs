@@ -115,3 +115,19 @@ export function checkPhrases(row, dir, limit = 2) {
   }
   return [...new Set(out)].slice(0, limit);
 }
+
+// ── 추천 관찰 TOP 2 ──────────────────────────────────────────
+// 1) 강한 관찰 조건 충족 종목(점수 높은 순) → 2) 근접 후보 중 순위값이 높은 순. 같은 종목은 1회만.
+// 순위값 = 조건 충족 점수 − 2 × 위험 점수(상대 평가). 표시 점수는 원래 조건 충족 점수이며 성공 확률이 아니다.
+// 적격 후보가 부족하면 1개 또는 0개만 반환한다(차단·저점수 후보로 채우지 않음). 롱/숏 구성은 강제하지 않는다.
+// 정기 보고 '추천 관찰 TOP 2'에 노출하는 하한(조건 충족 점수 기준). 내부 근접 후보 감시 하한(NEAR_MIN_SCORE = 40)과 별개이며,
+// 위험 점수를 차감한 순위값(rankValue)이 아니라 표시 점수(candidate.score) ≥ 55 여야 한다. 강한 신호 판정·5분 긴급 알림에는 적용하지 않는다.
+export const RECOMMEND_MIN_SCORE = 55;
+export const rankValue = row => row.candidate.score - 2 * (row.candidate.risk?.points ?? 0);
+export function pickTop2(rows, limit = 2) {
+  const seen = new Set(), out = [];
+  const take = (row, tier) => { if (out.length < limit && !seen.has(row.symbol)) { seen.add(row.symbol); out.push({ row, tier, rank: out.length + 1 }); } };
+  rows.filter(r => r.strong && r.candidate && !(r.candidate.blockers?.length) && r.candidate.score >= RECOMMEND_MIN_SCORE).sort((a, b) => b.candidate.score - a.candidate.score).forEach(r => take(r, 'strong'));
+  pickNear(rows, rows.length).filter(r => r.candidate.score >= RECOMMEND_MIN_SCORE).sort((a, b) => rankValue(b) - rankValue(a) || b.candidate.score - a.candidate.score).forEach(r => take(r, 'near'));
+  return out;
+}

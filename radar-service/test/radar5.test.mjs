@@ -14,7 +14,7 @@ function row(sym, dir, strong, price, over = {}, unmet) {
     atr: price * 0.0035, atrPct: 0.35, volume: 1.2, oi15: 0.4, funding: 0.01, change15: 0.2, source: 'OKX USDT 무기한(SWAP)', ...over };
   const mtf = { '15m': { dir: 'UP', arrow: '↑' }, '1H': { dir: 'DOWN', arrow: '↓' }, '4H': { dir: 'FLAT', arrow: '→' } };
   const plan = planOf(r, dir, null);
-  return { ...r, mtf, grade: strong ? '공격형' : null, candidate: { dir, score: strong ? 88.2 : 44.1, plan, dist: { level: long ? r.high : r.low, pct: 1.2, atrUnits: 1.2, broken: false },
+  return { ...r, mtf, grade: strong ? '공격형' : null, candidate: { dir, score: strong ? 88.2 : 60.1, plan, dist: { level: long ? r.high : r.low, pct: 1.2, atrUnits: 1.2, broken: false },
     unmet: strong ? [] : unmet ?? ['고점 돌파 확정 필요', '거래대금 1.20배 → 2배 필요', '15분 OI 0.40% → +1% 필요'], blockers: [], missing: [], met: [], mtfConflict: long, risk: riskOf(r, dir, mtf, plan, { change15: 0.2 }), parts: { btc: { score: 7, max: 10 } } } };
 }
 const btc = { symbol: 'BTCUSDT', price: 83150.4, trend: '상승', mtf: { '15m': { arrow: '↑', dir: 'UP' }, '1H': { arrow: '→', dir: 'FLAT' }, '4H': { arrow: '→', dir: 'FLAT' } }, candidate: null, source: 'OKX USDT 무기한(SWAP)' };
@@ -22,39 +22,63 @@ const item = (title, url, over = {}) => ({ title, url, publishedAt: now - 360000
 const news = (...items) => ({ status: 'ok', checkedAt: now, items });
 const near = row('STRKUSDT', 'LONG', false, 0.08497), strong = row('SOLUSDT', 'SHORT', true, 106.34);
 
-// ── 길이·구조 ──
-test('기본 보고는 strong / near / 후보 없음 모두 650자 이내(보이는 글자), 구역별 빈 줄 포함', () => {
+// ── 길이·구조 (2.3: 추천 관찰 TOP 2) ──
+const mk2 = (sym, dir, strong, price, score, unmet) => { const r = row(sym, dir, strong, price, {}, unmet); r.candidate.score = score; return r; };
+const A = mk2('SOLUSDT', 'LONG', false, 108, 82, ['고점 돌파 확정 필요', '거래대금 1.20배 → 2배 필요', '15분 OI 0.10% → +1% 필요']);
+const B = mk2('ETHUSDT', 'SHORT', false, 2520, 76, ['저점 이탈 확정 필요', '거래대금 1.20배 → 2배 필요']);
+test('기본 보고는 near×2 / strong+near / strong×2 / near×1 / 후보 없음 모두 800자 이내(보이는 글자), 구역별 빈 줄 포함', () => {
   const n = news(item('스트라이브, 일주일간 BTC 3311개 추가 매집', 'https://www.blockmedia.co.kr/a'), item('Bitcoin rebounds ahead of CPI data', 'https://cointelegraph.com/b'));
-  for (const [rows, ctx] of [[[btc, strong], { news: n }], [[btc, near], { news: n }], [[btc], { news: n }], [[btc, near], {}], [[btc, near], { news: news() }]]) {
-    const c = compactReport(rows, [], now, ctx), len = visibleLength(c.text);
-    assert.ok(len <= COMPACT_MAX && len >= 150, `길이 ${len}`);
-    assert.ok(c.text.length < 1200); assert.match(c.text, /\n\n/);                   // 구역 사이 빈 줄
-    assert.equal(c.text.split('\n\n').length >= 3, true);
-    assert.ok(c.text.endsWith('※ OKX 기준 · 조건부 참고값 · 매매 지시 아님'));        // 면책은 마지막에 1회
+  const S2 = mk2('DOGEUSDT', 'LONG', true, 0.0849, 85, []);
+  for (const rows of [[btc, A, B], [btc, strong, A], [btc, strong, S2], [btc, A], [btc], [btc, near]]) {
+    const c = compactReport(rows, [], now, { news: n }), len = visibleLength(c.text);
+    assert.ok(len <= COMPACT_MAX && len >= 150, `길이 ${len}`); assert.equal(COMPACT_MAX, 800);
+    assert.ok(c.text.length < 1400); assert.match(c.text, /\n\n/); assert.ok(c.text.split('\n\n').length >= 3);
+    assert.ok(c.text.endsWith('※ 조건부 참고값 · 매매 지시 아님 · 점수는 승률 아님'));
     assert.equal((c.plain.match(/매매 지시 아님/g) ?? []).length, 1);
   }
 });
-test('near: 핵심 후보·가격 구역·필요 조건 2개 이하·주의 2개 이하·판단이 설계 형식으로 나온다', () => {
-  const c = compactReport([btc, near], [], now, {});
+test('TOP 2 형식: 순위·종목·방향·점수·상태 / 현재가·진입 기준·손절·목표 / 확인 조건·주의 / 판단', () => {
+  const c = compactReport([btc, A, B], [], now, {});
   const t = c.plain;
-  assert.match(t, /^📡 RICH FUTURES RADAR\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\n\n🔎 STRKUSDT · 롱 관찰 \(44점\)\n현재가 0\.08497\n돌파 확인 0\.08600\n\n🎯 목표와 위험\n손절 0\.08\d{3}\nTP1 0\.08\d{3} · TP2 0\.08\d{3}\n\n✅ 필요한 조건\n• 0\.08600 돌파 확정\n• 거래대금 2배 · OI \+1%\n\n⚠️ 주의\n• 1시간 하락 추세와 역행/);
-  assert.equal((t.match(/^• /gm) ?? []).length, 4); // 조건 2 + 주의 2
-  assert.match(t, /⏳ 판단: 조건부 관찰 · 아직 진입 조건 미완성/);
-  assert.match(c.text, /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.ok(c.text.includes('<b>STRKUSDT</b>')); assert.ok(c.text.includes('<b>🎯 목표와 위험</b>'));
+  assert.match(t, /^📡 RICH FUTURES RADAR\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2\n\n🥇 1순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성\n\n현재가 108\.00\n진입 기준 [\d.]+\n손절 [\d.]+\n목표 [\d.]+ \/ [\d.]+\n\n✅ [\d.]+ 돌파 확정\n✅ 거래대금 2배 · OI \+1%\n⚠️/);
+  assert.match(t, /\n\n🥈 2순위 ETHUSDT · 숏 관찰\n점수 76 · 조건 미완성\n\n현재가 2520\.0\n진입 기준 [\d.]+\n손절 [\d.]+\n목표 [\d.]+ \/ [\d.]+\n\n✅ /);
+  assert.match(t, /⏳ 현재 확정 진입 신호 없음/); assert.deepEqual(c.tops, ['SOLUSDT', 'ETHUSDT']);
+  for (const block of t.split('\n\n🥈')[0].split('\n\n')) assert.ok((block.match(/^✅/gm) ?? []).length <= 2 && (block.match(/^⚠️/gm) ?? []).length <= 2);
+  assert.match(c.text, /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.ok(c.text.includes('🥇 1순위 <b>SOLUSDT</b> · 롱 관찰')); assert.ok(c.text.includes('🥈 2순위 <b>ETHUSDT</b> · 숏 관찰'));
+  assert.match(t, /추천 관찰 후보/); assert.doesNotMatch(t, /즉시 진입|확정 매수|매수하세요/);
 });
-test('strong: 진입 참고가와 재확인 조건, "강한 관찰 조건 포착" 판단', () => {
-  const t = compactReport([btc, strong], [], now, {}).plain;
-  assert.match(t, /SOLUSDT · 숏 관찰 \(88점\)\n현재가 106\.34\n진입 참고 [\d.]+/); assert.match(t, /• 재저항 확인/); assert.match(t, /⏳ 판단: 강한 관찰 조건 포착/);
-  assert.doesNotMatch(t, /즉시 진입/);
+test('strong + near 혼합: strong이 1순위, 판단 줄에 강한 신호 건수. strong×2도 가능', () => {
+  const sx = mk2('XRPUSDT', 'SHORT', true, 0.52, 88, []);
+  const t = compactReport([btc, A, sx], [], now, {}).plain;
+  assert.match(t, /🥇 1순위 XRPUSDT · 숏 관찰\n점수 88 · 강한 신호/); assert.match(t, /🥈 2순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성/);
+  assert.match(t, /✅ 강한 관찰 조건 포착 1건/);
+  const t2 = compactReport([btc, strong, mk2('DOGEUSDT', 'LONG', true, 0.0849, 85, [])], [], now, {}).plain;
+  assert.match(t2, /강한 신호[\s\S]*강한 신호/); assert.match(t2, /강한 관찰 조건 포착 2건/); assert.match(t2, /• ?/.source ? /재저항 확인[\s\S]*재지지 확인/ : /x/);   // 숏·롱 혼합
+  const t3 = compactReport([btc, strong, mk2('XYZUSDT', 'SHORT', true, 1.234, 80, [])], [], now, {}).plain;   // 같은 방향 2개(숏 숏)
+  assert.equal((t3.match(/숏 관찰/g) ?? []).length, 2);
+});
+test('유효 후보가 1개면 1개만, 0개면 후보 없음. 점수 낮음·차단·중복은 숫자 맞추기용으로 넣지 않는다', () => {
+  const low = mk2('LOWUSDT', 'LONG', false, 10, 30, ['x']), blocked = { ...mk2('BLKUSDT', 'LONG', false, 10, 90, ['x']) }; blocked.candidate.blockers = ['BTC 15분 0.5% 초과 역행'];
+  const far = mk2('FARUSDT', 'LONG', false, 10, 80, ['x']); far.candidate.dist = { level: 11, atrUnits: 5, broken: false };
+  const one = compactReport([btc, A, low, blocked, far], [], now, {});
+  assert.deepEqual(one.tops, ['SOLUSDT']); assert.doesNotMatch(one.plain, /🥈|LOWUSDT|BLKUSDT|FARUSDT/); assert.match(one.plain, /TOP 1/);
+  const none = compactReport([btc, low, blocked, far], [], now, {});
+  assert.deepEqual(none.tops, []); assert.match(none.plain, /🔎 후보 없음 · 대기/);
+  const dup = compactReport([btc, A, { ...A }], [], now, {}); assert.deepEqual(dup.tops, ['SOLUSDT']);   // 같은 종목 중복 제거
 });
 test('후보 없음: 임의의 진입 가격을 만들지 않고 BTC 요약과 대기만 표시', () => {
   const t = compactReport([btc], [], now, {}).plain;
-  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|TP1/); assert.match(t, /판단: 대기/);
-  assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*판단: 대기 · 데이터 확인 필요[\s\S]*수집 실패 1종목/);   // 데이터가 없으면 정직하게 표시
+  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|목표/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
+  assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*추천 표시 기준\(55점\)을 충족한 후보 없음[\s\S]*수집 실패 1종목/);
 });
 test('시나리오를 계산할 수 없으면 계산 불가로 표시', () => {
-  const r = { ...near, candidate: { ...near.candidate, plan: null } };
-  assert.match(compactReport([btc, r], [], now, {}).plain, /🎯 손절·목표: 계산 불가/);
+  const r = { ...A, candidate: { ...A.candidate, plan: null } };
+  assert.match(compactReport([btc, r], [], now, {}).plain, /현재가 108\.00\n진입·손절·목표 계산 불가/);
+});
+test('순위 규칙: 순위값 = 점수 − 2×위험점수, 표시 점수는 조건 충족 점수 그대로', () => {
+  const x = mk2('AAAUSDT', 'LONG', false, 10, 70, ['x']), y = mk2('BBBUSDT', 'LONG', false, 10, 66, ['x']);
+  x.candidate.risk = { ...x.candidate.risk, points: 5 }; y.candidate.risk = { ...y.candidate.risk, points: 0 };   // 70−10=60 < 66−0
+  const t = compactReport([btc, x, y], [], now, {}); assert.deepEqual(t.tops, ['BBBUSDT', 'AAAUSDT']); assert.match(t.plain, /1순위 BBBUSDT[\s\S]*점수 66/);
 });
 test('필요 조건·주의 문구 규칙', () => {
   assert.deepEqual(neededConditions(near, 'LONG'), ['0.08600 돌파 확정', '거래대금 2배 · OI +1%']);
@@ -63,17 +87,17 @@ test('필요 조건·주의 문구 규칙', () => {
   assert.deepEqual(neededConditions(strong, 'SHORT'), ['재저항 확인']);
   assert.deepEqual(cautionLines({ candidate: { risk: { factors: ['4시간 추세와 역행', '15분 OI 급증 (3.00%)', '손절까지 거리 3.1%', '레버리지 사용 시 손실 확대 주의 (…)'] } } }, 'SHORT'), ['4시간 상승 추세와 역행', 'OI 급증']);
   assert.deepEqual(cautionLines({ candidate: { risk: { factors: ['특별한 경고 요인 없음', '위험 수준은 위 지표 기준의 상대 평가이며'] } } }, 'LONG'), []);
-  assert.match(compactReport([btc, { ...near, candidate: { ...near.candidate, risk: { level: '낮음', factors: ['특별한 경고 요인 없음'] } } }], [], now, {}).plain, /⚠️ 주의\n• 특이 경고 없음/);
+  assert.match(compactReport([btc, { ...near, candidate: { ...near.candidate, risk: { level: '낮음', factors: ['특별한 경고 요인 없음'] } } }], [], now, {}).plain, /⚠️ 특이 경고 없음/);
   assert.equal(kstLabel(Date.UTC(2026, 9, 14, 0, 19)), '10월 14일 09:19');
 });
 // ── 뉴스 ──
-test('뉴스: 관련 있을 때만 최대 2건, 제목은 클릭 링크이고 URL 문자열은 본문에 없다', () => {
+test('뉴스(2.3): 두 후보 정보를 밀어내지 않도록 기본 보고에서 최대 1건, 제목은 클릭 링크이고 URL 문자열은 본문에 없다', () => {
   const n = news(item('스트라이브, 일주일간 BTC 3311개 추가 매집', 'https://www.blockmedia.co.kr/archives/1151034?utm_source=general&utm_medium=rss'), item('Bitcoin rebounds', 'https://cointelegraph.com/b'), item('BTC third', 'https://x.example.com/3'));
   const c = compactReport([btc, near], [], now, { news: n });
-  assert.equal((c.text.match(/<a href=/g) ?? []).length, 2);
+  assert.equal((c.text.match(/<a href=/g) ?? []).length, 1);
   assert.ok(c.text.includes('<a href="https://www.blockmedia.co.kr/archives/1151034?utm_source=general&amp;utm_medium=rss">스트라이브, 일주일간 BTC 3311개 추가 매집</a> (BlockMedia)'));
   assert.doesNotMatch(htmlToPlain(c.text.replace(/<a href="[^"]*">/g, '<a>')), /https?:/); // 보이는 본문에는 URL 없음
-  assert.match(c.text, /📰 주요 이슈/); assert.deepEqual(c.news.map(i => i.url), [n.items[0].url, n.items[1].url]);   // 원본 URL은 내부 데이터에 보존
+  assert.match(c.text, /📰 주요 이슈/); assert.deepEqual(c.news.map(i => i.url), [n.items[0].url]);   // 원본 URL은 내부 데이터에 보존(나머지 기사도 상태 캐시에 그대로 있음)
 });
 test('뉴스: 없음·오래됨·관련 없음·장애일 때는 섹션 없이(빈 문구도 없이) 짧게', () => {
   const unrelated = item('Solana ETF', 'https://a.example.com/x', { symbols: ['SOL'] });
@@ -111,9 +135,9 @@ test('가격 표시 자릿수는 가격대별이고 계산값은 바꾸지 않�
 });
 // ── 기본/전체 분리 ──
 test('기본 보고에는 상세 분석·근접 TOP 3·뉴스 목록이 자동 포함되지 않고 전체 분석은 별도로 계산된다', () => {
-  const basic = reportParts([btc, near], [], now, { news: news(item('Bitcoin x', 'https://a.example.com/x')), charts: [{ symbol: 'STRKUSDT', tf: '1H', png: Buffer.from('x'), caption: 'c' }, { symbol: 'BTCUSDT', tf: '4H', png: Buffer.from('x'), caption: 'c' }] });
-  assert.deepEqual(basic.map(p => p.type), ['text', 'photo']);                           // 차트 입력이 2개여도 기본 보고는 1장
-  assert.doesNotMatch(basic[0].text, /진입 근접 TOP|상세 분석|추천 근거|점수는 조건 충족도|다중 시간대/);
+  const basic = reportParts([btc, near], [], now, { news: news(item('Bitcoin x', 'https://a.example.com/x')), charts: ['A', 'B', 'C'].map(s => ({ symbol: s + 'USDT', tf: '1H', png: Buffer.from('x'), caption: 'c' })) });
+  assert.deepEqual(basic.map(p => p.type), ['text', 'photo', 'photo']);                  // 차트 입력이 3개여도 기본 보고는 최대 2장
+  assert.doesNotMatch(basic[0].text, /진입 근접 TOP|상세 분석|추천 근거|점수는 조건 충족도|다중 시간대/);   // ("추천 관찰 후보"는 TOP 2 제목이라 허용)
   const full = fullReportParts([btc, near], [], now, {});
   assert.ok(full.length >= 2); assert.match(full.map(p => p.text).join('\n'), /진입 근접 TOP 3[\s\S]*상세 분석[\s\S]*추천 근거/);   // 분석 데이터는 삭제되지 않음
 });

@@ -12,7 +12,7 @@ export function mtfCandles(bar, kind) {
     const wave = Math.round(2 * Math.sin(2 * Math.PI * idx / 8) * 1e4) / 1e4;
     const drift = kind === 'up' ? idx * 0.4 : kind === 'down' ? -idx * 0.4 : 0;
     const c = 100 + drift + wave + (i === 0 ? 50 : 0); // 미확정 봉은 일부러 튀게(사용되면 결과가 바뀜)
-    rows.push([String(cur - i * step), String(c - .1), String(c + .5), String(c - .5), String(c), '1', '1', '1', i === 0 ? '0' : '1']);
+    rows.push([String(cur - i * step), String(c - .1), String(c + .5), String(c - .5), String(c), '1', '5', String(c * 5), i === 0 ? '0' : '1']);
   }
   if (kind === 'stale') return rows.slice(4); // 최근 3개 마감봉이 빠진 오래된 데이터(미확정 봉 포함 4개 제거)
   return kind === 'gap' ? rows.filter((_, i) => i !== 40) : rows;
@@ -40,7 +40,8 @@ export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, call
         for (let i = 0; i < 62; i++) { // 최신 먼저. i=0은 미확정 봉
           const t = open - i * 300000, idx = 61 - i;
           const c = breakout && i === 1 ? 102 : 100 + idx / 100 - (breakout ? 0 : 0);
-          rows.push([String(t), String(c - .2), String(c + .3), String(c - .3), String(c), '1', '1', i === 1 && breakout ? '300' : '100', i === 0 ? '0' : '1']);
+          const q = i === 1 && breakout ? 300 : 100;
+          rows.push([String(t), String(c - .2), String(c + .3), String(c - .3), String(c), '1', String(q / c), String(q), i === 0 ? '0' : '1']); // vol(계약), volCcy(기초자산 수량=q/c), volCcyQuote(USDT)
         }
         return ok(rows);
       }

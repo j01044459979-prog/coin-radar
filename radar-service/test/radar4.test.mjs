@@ -65,16 +65,12 @@ test('상세 메시지는 후보→시간대→시나리오→위험→부족 �
   assert.ok(idx.every(i => i >= 0), JSON.stringify(idx)); assert.deepEqual([...idx].sort((a, b) => a - b), idx);
 });
 // ── 차트 선택 규칙 ──
-test('차트 선택: 강한 후보 우선 · 근접 후보 · 후보 없으면 BTC 4시간 · BTC는 필터가 약할 때만 추가', () => {
-  const btcData = { BTCUSDT: { '4H': candles(83000, 8, 60, 120) } };
-  const d = { ...data, ...btcData };
+test('차트 선택(2.3): TOP 2 후보 순서대로 최대 2장, 후보가 없으면 BTC 4시간 시장 차트 1장', () => {
+  const d = { ...data, BTCUSDT: { '4H': candles(83000, 8, 60, 120) } };
   const a = chartPlan([btcRow, longRow, shortRow], d);
-  assert.deepEqual(a.map(s => [s.symbol, s.tf, s.kind]), [['SOLUSDT', '1H', 'candidate'], ['BTCUSDT', '4H', 'market']]); // strong 우선, BTC 필터 7점 이하 → BTC 추가
-  assert.match(a[0].reason, /강한 후보 1위 · 1시간봉 우선/);
-  const strongBtcOk = { ...shortRow, candidate: { ...shortRow.candidate, parts: { btc: { score: 10, max: 10 } } } };
-  assert.equal(chartPlan([btcRow, strongBtcOk], d).length, 1);
-  const b = chartPlan([btcRow, longRow], d);
-  assert.deepEqual(b.map(s => s.symbol), ['DOGEUSDT']); assert.match(b[0].reason, /근접 후보 1위/);
+  assert.deepEqual(a.map(s => [s.symbol, s.tf, s.kind, s.rank]), [['SOLUSDT', '1H', 'candidate', 1], ['DOGEUSDT', '1H', 'candidate', 2]]);   // 강한 후보(SOL) 1순위, 근접 후보(DOGE) 2순위
+  assert.match(a[0].reason, /1순위 강한 후보/); assert.match(a[1].reason, /2순위 근접 후보/);
+  assert.deepEqual(chartPlan([btcRow, longRow], d).map(s => s.symbol), ['DOGEUSDT']);   // BTC 후보(45점)는 추천 표시 기준 55점 미만이라 차트도 없음
   const c = chartPlan([{ ...btcRow, candidate: null }], d);
   assert.deepEqual(c.map(s => [s.symbol, s.tf, s.kind]), [['BTCUSDT', '4H', 'market']]); assert.match(c[0].reason, /후보 없음/);
   assert.deepEqual(chartPlan([{ ...btcRow, candidate: null }], {}), []);
@@ -89,7 +85,7 @@ test('실제 수집 결과에서 차트용 캔들이 검증을 통과한 시간�
   assert.ok(charts.BTCUSDT['5m'].length > 20); assert.equal(charts.BTCUSDT['1H'], undefined); assert.ok(charts.BTCUSDT['4H'].length >= 30); // 지연된 1시간봉은 차트에 쓰지 않음
 });
 // ── 차트 도형 ──
-const lineY = (svg, color, dash) => [...svg.matchAll(new RegExp(`<line x1="28" x2="936" y1="([\\d.]+)" y2="[\\d.]+" stroke="${color}" stroke-width="[\\d.]+"${dash ? ' stroke-dasharray' : ''}`, 'g'))].map(m => Number(m[1]));
+const lineY = (svg, color, dash) => [...svg.matchAll(new RegExp(`<line x1="28" x2="848" y1="([\\d.]+)" y2="[\\d.]+" stroke="${color}" stroke-width="[\\d.]+"${dash ? ' stroke-dasharray' : ''}`, 'g'))].map(m => Number(m[1]));
 test('롱 차트: 손절은 진입 아래(y 큼), TP1<TP2는 진입 위, 필수 요소 문구 포함', () => {
   const spec = makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', '근접 후보 1위');
   const svg = buildSvg(spec);
@@ -108,7 +104,7 @@ test('숏 차트: 손절은 진입 위(y 작음), TP는 아래, 강한 조건 �
 });
 test('진입 참고 구간 박스와 화살표, 현재가 라벨이 있고 계좌별 청산가·확정 표현은 없다', () => {
   const svg = buildSvg(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.match(svg, /<rect x="28" y="[\d.]+" width="908" height="[\d.]+" fill="#fbbf24" fill-opacity="0.13"/); // 핵심 구간 박스
+  assert.match(svg, /<rect x="28" y="[\d.]+" width="820" height="[\d.]+" fill="#fbbf24" fill-opacity="0.13"/); // 핵심 구간 박스
   assert.match(svg, /<path d="M [\d.]+ [\d.]+ Q [^"]+" fill="none" stroke="#fbbf24"/); assert.match(svg, /<polygon /);
   assert.ok(svg.includes('현재 100.8'));
   assert.doesNotMatch(svg, /청산가 \d|반드시|확정 수익|수익 보장|지금 진입|매수하세요|매도하세요/);
@@ -127,6 +123,7 @@ test('캡션은 1~2줄: 종목·방향·시간봉과 면책 문구만', () => {
   const cap = chartCaption(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
   assert.equal(cap, 'DOGEUSDT · 롱 관찰 · 1H봉\n조건부 참고 시나리오 · 매매 지시 아님');
   assert.equal(chartCaption(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x')), 'BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
+  assert.equal(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), '🥈 2순위 DOGEUSDT · 롱 관찰 · 1H봉\n조건부 참고 시나리오 · 매매 지시 아님');
 });
 // ── PNG 렌더링 ──
 png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, 용량 합리적', async () => {
@@ -138,7 +135,13 @@ png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, �
 test('글꼴 부분집합이 모든 소스 한글·기호를 포함한다(차트 글자 깨짐 방지)', () => {
   const charset = new Set(readFileSync(new URL('../fonts/charset.txt', import.meta.url), 'utf8').trim());
   const files = readdirSync(new URL('..', import.meta.url)).filter(f => f.endsWith('.mjs') && f !== 'probe-exchanges.mjs');
-  for (const f of files) for (const ch of readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')) if (ch.codePointAt(0) > 127 && !(ch.codePointAt(0) >= 0x1f000)) assert.ok(charset.has(ch), `${f}: ${ch} 가 글꼴 목록에 없음`);
+  const isEmoji = cp => (cp >= 0x2300 && cp <= 0x23ff) || (cp >= 0x2600 && cp <= 0x27bf) || (cp >= 0xfe00 && cp <= 0xfe0f) || cp >= 0x1f000;   // Telegram 텍스트 전용 이모지는 차트에 그리지 않음
+  for (const f of files) {
+    for (const ch of readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')) {
+      const cp = ch.codePointAt(0);
+      if (cp > 127 && !isEmoji(cp)) assert.ok(charset.has(ch), `${f}: ${ch} 가 글꼴 목록에 없음`);
+    }
+  }
 });
 // ── Telegram 전송 ──
 const okJson = id => new Response(JSON.stringify({ ok: true, result: { message_id: id } }), { status: 200 });
@@ -165,8 +168,8 @@ async function runHourly({ render, sendPhoto, rows = [btcRow, longRow], chartDat
 const fakeRender = async spec => Buffer.from(`png:${spec.symbol}`);
 test('정기 보고 전송: 압축 본문 → 사진 1장(2개 메시지)', async () => {
   const { log, state } = await runHourly({ render: fakeRender, sendPhoto: async () => {} });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.match(log[1][1], /^DOGEUSDT · 롱 관찰 · 1H봉/);
-  assert.equal(state.chart.items.length, 1); assert.equal(state.chart.items[0].ok, true); assert.equal(state.reportHour, Math.floor(now / 3600000));
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.match(log[1][1], /^🥇 1순위 DOGEUSDT · 롱 관찰 · 1H봉/);
+  assert.equal(state.chart.items.length, 1); assert.equal(state.chart.items[0].ok, true);   // 55점 미만 BTC 후보는 추천·차트에서 제외 assert.equal(state.reportHour, Math.floor(now / 3600000));
 });
 test('차트 렌더링 실패 시에도 텍스트 보고는 정상 전송된다', async () => {
   const { log, state } = await runHourly({ render: async () => { throw new Error('boom'); }, sendPhoto: async () => { throw new Error('no photo expected'); } });
@@ -192,7 +195,7 @@ test('같은 보고에서 이미지 중복 방지: 사진 직후 중단되어도
   const sendPhoto = async (p, c) => photos.push(c);
   let saves = 0;
   // 사진 전송 직후 저장 단계에서 프로세스가 죽는 상황을 흉내: partial.sent=1(텍스트만 확인)에서 재시작
-  state.partial = { hour: Math.floor(now / 3600000), sent: 1, v: 2 };
+  state.partial = { hour: Math.floor(now / 3600000), sent: 1, v: 3 };
   const second = await runHourly({ render: fakeRender, sendPhoto, state });
   assert.deepEqual(second.log.map(x => x[0]), ['photo']); assert.equal(photos.length, 1);   // 텍스트는 이미 보냈으므로 사진만
   assert.equal(state.reportHour, Math.floor(now / 3600000)); assert.equal(state.partial, undefined);
@@ -207,7 +210,7 @@ test('텍스트 전송 실패 시 보고는 미완료로 남고 재실행에서 
   assert.deepEqual(second.log.map(x => x[0]), ['text', 'photo']); assert.equal(photos.length, 1);
 });
 test('렌더링 실패 후 재실행에서 렌더링이 성공해도 이미 처리된 자리를 다시 보내지 않는다', async () => {
-  const state = { partial: { hour: Math.floor(now / 3600000), sent: 2, v: 2 } }; const photos = [];
+  const state = { partial: { hour: Math.floor(now / 3600000), sent: 3, v: 3 } }; const photos = [];
   const r = await runHourly({ render: fakeRender, sendPhoto: async (p, c) => photos.push(c), state });
   assert.equal(r.log.length, 0); assert.equal(photos.length, 0); assert.equal(state.reportHour, Math.floor(now / 3600000));
 });
@@ -215,7 +218,7 @@ test('강한 신규 신호: 짧은 HTML 알림 뒤 해당 종목 차트 1장, �
   const state = { reportHour: Math.floor(now / 3600000) }, log = [];
   const o = { state, collect: async () => ({ rows: [btcRow, shortRow], failures: [], charts: data }), save: async () => {}, render: fakeRender, send: async t => log.push(['text', t]), sendPhoto: async (p, c) => log.push(['photo', c]) };
   await cycle({ ...o, now });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🚨 신규 조건 포착<\/b>/); assert.match(log[1][1], /^SOLUSDT · 숏 관찰 · 1H봉/); assert.ok(log[0][1].length < 500);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🚨 신규 조건 포착<\/b>/); assert.match(log[1][1], /^SOLUSDT · 숏 관찰 · 1H봉/);   // 긴급 알림 차트는 순위 없이 해당 종목만 assert.ok(log[0][1].length < 500);
   await cycle({ ...o, now: now + 300000 });
   assert.equal(log.length, 2);
   const failing = { ...o, state: { reportHour: Math.floor(now / 3600000) }, render: async () => { throw new Error('boom'); } }; const log2 = []; failing.send = async t => log2.push(t);

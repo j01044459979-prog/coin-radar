@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { createCollector, cycle, telegramPhotoSender, telegramSender } from './service.mjs';
-import { chartCaption, chartPlan, renderChart } from './chart.mjs';
+import { buildSvg, chartCaption, chartPlan, renderChart, renderPng } from './chart.mjs';
 import { createOkxCollector } from './okx.mjs';
 import { fullReportParts, reportParts } from './report.mjs';
 import { visibleLength } from './format.mjs';
@@ -37,14 +37,20 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   }
   // 차트: 선택 규칙·시간봉 선택 이유를 로그로 남기고, 첫 차트는 확인용으로 base64를 출력한다(프리뷰 전용, 전송 없음).
   const items = [];
+  const timing = { collectMs: stats?.ms ?? null, svgMs: [], pngMs: [] };
+  // 거래대금 단위 점검(실데이터): 마지막 캔들의 volCcyQuote/volCcy(평균 체결가)가 종가 근처인지 로그로 확인한다.
+  for (const [sym, tf] of [['BTCUSDT', '1H'], ['BTCUSDT', '4H'], ['BTCUSDT', '5m']]) { const c = charts?.[sym]?.[tf]?.at(-1); if (c) console.log(`거래량 단위 점검 ${sym} ${tf}: q(USDT)=${c.q} v(기초자산)=${c.v} q/v=${c.q && c.v ? (c.q / c.v).toFixed(2) : '-'} 종가=${c.c} 고저=[${c.l}, ${c.h}]`); }
   for (const spec of chartPlan(rows, charts)) {
     if (spec.skipped) { console.log(`차트 생략: ${spec.symbol} — ${spec.skipped}`); items.push({ symbol: spec.symbol, png: null, error: spec.skipped }); continue; }
-    const t0 = Date.now();
+    const t0 = performance.now();
     try {
-      const png = await renderChart(spec);
-      console.log(`차트 생성: ${spec.symbol} ${spec.tf} (${spec.reason}) ${png.length}바이트 ${Date.now() - t0}ms\n캡션:\n${chartCaption(spec)}`);
+      const svg = buildSvg(spec), t1 = performance.now();
+      const png = await renderPng(svg), t2 = performance.now();
+      timing.svgMs.push(Math.round(t1 - t0)); timing.pngMs.push(Math.round(t2 - t1));
+      const pf = spec.profile;
+      console.log(`차트 생성: ${spec.rank ?? '-'}순위 ${spec.symbol} ${spec.tf} (${spec.reason}) PNG ${png.length}바이트 · SVG ${Math.round(t1 - t0)}ms + PNG ${Math.round(t2 - t1)}ms · 거래량 유효 ${spec.vol?.ok}/${spec.candles.length}봉 · POC ${pf ? pf.poc.mid.toPrecision(6) : '없음'} · 관찰 구간 ${pf ? pf.zones.length : 0}개\n캡션:\n${chartCaption(spec)}`);
       items.push({ symbol: spec.symbol, tf: spec.tf, kind: spec.kind, png, caption: chartCaption(spec) });
-      if (items.filter(i => i.png).length === 1) console.log(`CHART_PNG_BASE64_BEGIN\n${png.toString('base64')}\nCHART_PNG_BASE64_END`);
+      console.log(`CHART_PNG_BASE64_BEGIN ${items.filter(i => i.png).length}\n${png.toString('base64')}\nCHART_PNG_BASE64_END`);
     } catch (error) { console.log(`차트 실패(격리됨): ${spec.symbol} — ${error.message}`); items.push({ symbol: spec.symbol, png: null, error: error.message }); }
   }
   // 기본 정기 보고(실제 전송되는 형식): 압축 본문 1개 + 차트 1장. 보이는 글자 수와 HTML 원문을 함께 기록한다.
@@ -56,7 +62,7 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   const full = fullReportParts(rows, failures, now, { news: preview.news, charts: [] });
   console.log(`===== [전체 분석 · 자동 발송 안 함] 텍스트 ${full.length}건, 합계 ${full.reduce((n, p) => n + p.text.length, 0)}자 =====`);
   full.forEach((p, i) => console.log(`----- 전체 분석 ${i + 1}/${full.length} (${p.text.length}자) -----\n${p.text}`));
-  console.log(JSON.stringify({ analyzed: rows.length, failed: failures.length, failures, stats, news: preview.news ? { status: preview.news.status, items: preview.news.items?.length ?? 0, health: preview.news.health } : null }));
+  console.log(JSON.stringify({ analyzed: rows.length, failed: failures.length, failures, stats, timing, news: preview.news ? { status: preview.news.status, items: preview.news.items?.length ?? 0, health: preview.news.health } : null }));
 } else if (args.has('--telegram-test')) {
   const send = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
   await send(`리치 선물 레이더 · 연결 확인\n${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' })} KST\n이 메시지가 보이면 Telegram 전송이 정상입니다.`);

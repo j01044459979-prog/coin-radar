@@ -85,7 +85,8 @@ export function telegramPhotoSender(token, chatId, fetcher = fetch) {
   };
 }
 
-export const MAX_CHARTS = 1; // 기본 정기 보고는 1순위 후보 차트 1장만
+export const MAX_CHARTS = 2; // 기본 정기 보고: 추천 관찰 TOP 2 후보 차트 최대 2장(후보 없으면 BTC 시장 차트 1장)
+export const PARTIAL_VERSION = 3; // 전송 파트 구성(텍스트 1 + 사진 ≤2) 버전. 이전 버전의 partial은 이미 전달된 보고로 간주한다.
 
 // 차트 렌더링 격리: 개별 실패·시간 초과는 png=null로 남기고 텍스트 보고는 계속된다.
 async function withTimeout(promise, ms, label) {
@@ -143,18 +144,18 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   const top = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
   if (hourly) {
     await safeNews(news, state, now);
-    // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 이미지 → 상세)는 항상 같다.
+    // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 1순위 차트 → 2순위 차트)는 항상 같다.
     const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
     const parts = reportParts(rows, failures, now, { news: state.news, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
     // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
     const done = [];
-    // 업그레이드 호환: 이전 버전(partial.v 없음)이 이 시간대 보고를 일부 보냈다면 그 보고가 이미 전달된 것으로 보고 새 형식으로 다시 보내지 않는다.
-    const legacy = state.partial?.hour === hour && state.partial.v !== 2;
+    // 업그레이드 호환: 이전 버전(partial.v가 없거나 3 미만)이 이 시간대 보고를 일부라도 보냈다면 이미 전달된 것으로 보고 새 형식으로 다시 보내지 않는다.
+    const legacy = state.partial?.hour === hour && state.partial.v !== PARTIAL_VERSION;
     for (let i = legacy ? parts.length : state.partial?.hour === hour ? state.partial.sent : 0; i < parts.length; i++) {
       const part = parts[i];
       if (part.type === 'text') await sendText(send, part);
       else done.push({ symbol: part.symbol, tf: part.tf, ok: await sendPhotoSafe(sendPhoto, part), error: part.error ?? null });
-      state.partial = { hour, sent: i + 1, v: 2 }; await save(state);
+      state.partial = { hour, sent: i + 1, v: PARTIAL_VERSION }; await save(state);
     }
     if (items.length) state.chart = { hour, at: now, items: done.length ? done : items.map(i => ({ symbol: i.symbol, tf: i.tf, ok: false, error: i.error ?? null })) };
     delete state.partial;
