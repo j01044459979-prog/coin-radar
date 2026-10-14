@@ -63,7 +63,7 @@ test('hourly send is once per hour, signal is cooled down across saved state', a
   await cycle({ ...options, now, state });
   state = saved;
   await cycle({ ...options, now: now + 300000, state });
-  const reports = () => messages.filter(m => m.startsWith('📡')).length; // 정기 보고 1건 = 핵심 요약 + 상세(여러 메시지)
+  const reports = () => messages.filter(m => m.includes('📡 RICH')).length; // 정기 보고 1건 = 핵심 요약 + 상세(여러 메시지)
   assert.equal(reports(), 1);
   await cycle({ ...options, now: now + 3600000, state });
   assert.equal(reports(), 2);

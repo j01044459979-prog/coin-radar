@@ -2,6 +2,7 @@
 import { relevantNews } from './news.mjs';
 import { marketState } from './enrich.mjs';
 import { checkPhrases, pickNear } from './scoring.mjs';
+import { compactReport } from './compact.mjs';
 
 export const LIMIT = 3800; // Telegram 4096자 한도보다 여유
 const f = n => Number(Number(n).toPrecision(7)).toString();
@@ -160,8 +161,14 @@ export function reportMessages(rows, failures, now, ctx = {}) {
   return [summaryText(rows, failures, now), ...rest.map((m, i) => (rest.length > 1 ? `(상세 ${i + 1}/${rest.length}) ` : '') + m.replace(/^\(\d+\/\d+\) /, ''))];
 }
 
-// 전송 순서: 핵심 요약 → 차트 이미지(0~2장) → 상세. 이미지는 실패해도 건너뛰고 텍스트는 그대로 나간다.
+// 2.2 기본 정기 보고: 압축 본문 1개(HTML + 일반 텍스트 대체본) + 차트 1장. 상세 분석은 자동 발송하지 않는다.
 export function reportParts(rows, failures, now, ctx = {}) {
+  const c = compactReport(rows, failures, now, ctx);
+  return [{ type: 'text', text: c.text, plain: c.plain, html: true }, ...(ctx.charts ?? []).slice(0, 1).map(ch => ({ type: 'photo', ...ch }))];
+}
+
+// 전체 분석(2.1 형식): 핵심 요약 → 차트 → 상세. 프리뷰/점검용이며 정기 보고에는 자동 발송하지 않는다.
+export function fullReportParts(rows, failures, now, ctx = {}) {
   const texts = reportMessages(rows, failures, now, ctx);
   return [{ type: 'text', text: texts[0] }, ...(ctx.charts ?? []).map(c => ({ type: 'photo', ...c })), ...texts.slice(1).map(text => ({ type: 'text', text }))];
 }

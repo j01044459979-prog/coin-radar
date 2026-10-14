@@ -1,4 +1,5 @@
-import { reportParts, signalText } from './report.mjs';
+import { reportParts } from './report.mjs';
+import { alertReport } from './compact.mjs';
 import { candidateSpec, chartCaption, chartPlan } from './chart.mjs';
 import { needsRefresh } from './news.mjs';
 
@@ -50,14 +51,23 @@ export function createCollector(fetcher = fetch) {
 
 export function telegramSender(token, chatId, fetcher = fetch) {
   if (!token || !/^[1-9]\d*$/.test(chatId || '')) throw new Error('개인 Telegram token/chat ID 설정 필요');
-  return async text => {
+  // html=true이면 parse_mode HTML(<b>, <a href>만 사용). 동적 문자열은 호출 쪽에서 이스케이프한다.
+  return async (text, { html = false } = {}) => {
     if (text.length > 4000) throw new Error('Telegram 메시지 길이 초과');
+    const body = { chat_id: chatId, text, link_preview_options: { is_disabled: true }, ...(html ? { parse_mode: 'HTML' } : {}) };
     const result = await jsonRequest(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, link_preview_options: { is_disabled: true } }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     }, fetcher);
     if (!result.ok || !result.result?.message_id) throw new Error('Telegram 전송 미확인');
   };
+}
+
+// HTML 본문 전송. Telegram이 서식을 거부(HTTP 400)하면 같은 내용을 일반 텍스트로 다시 보내 데이터가 사라지지 않게 한다.
+// 400 이외의 오류(네트워크·429·5xx)는 그대로 던져 기존 재시도·중복 방지 경로를 따른다.
+export async function sendText(send, part) {
+  if (!part.html) return send(part.text);
+  try { return await send(part.text, { html: true }); }
+  catch (error) { if (error.status === 400 && part.plain) return send(part.plain); throw error; }
 }
 
 // sendPhoto: 차트 PNG 업로드. 성공(message_id) 확인 후에만 true 취급. 토큰은 오류 메시지에 노출되지 않는다.
@@ -74,6 +84,8 @@ export function telegramPhotoSender(token, chatId, fetcher = fetch) {
     if (!result.ok || !result.result?.message_id) throw new Error('Telegram 사진 전송 미확인');
   };
 }
+
+export const MAX_CHARTS = 1; // 기본 정기 보고는 1순위 후보 차트 1장만
 
 // 차트 렌더링 격리: 개별 실패·시간 초과는 png=null로 남기고 텍스트 보고는 계속된다.
 async function withTimeout(promise, ms, label) {
@@ -132,15 +144,17 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   if (hourly) {
     await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 이미지 → 상세)는 항상 같다.
-    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
+    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
     const parts = reportParts(rows, failures, now, { news: state.news, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
     // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
     const done = [];
-    for (let i = state.partial?.hour === hour ? state.partial.sent : 0; i < parts.length; i++) {
+    // 업그레이드 호환: 이전 버전(partial.v 없음)이 이 시간대 보고를 일부 보냈다면 그 보고가 이미 전달된 것으로 보고 새 형식으로 다시 보내지 않는다.
+    const legacy = state.partial?.hour === hour && state.partial.v !== 2;
+    for (let i = legacy ? parts.length : state.partial?.hour === hour ? state.partial.sent : 0; i < parts.length; i++) {
       const part = parts[i];
-      if (part.type === 'text') await send(part.text);
+      if (part.type === 'text') await sendText(send, part);
       else done.push({ symbol: part.symbol, tf: part.tf, ok: await sendPhotoSafe(sendPhoto, part), error: part.error ?? null });
-      state.partial = { hour, sent: i + 1 }; await save(state);
+      state.partial = { hour, sent: i + 1, v: 2 }; await save(state);
     }
     if (items.length) state.chart = { hour, at: now, items: done.length ? done : items.map(i => ({ symbol: i.symbol, tf: i.tf, ok: false, error: i.error ?? null })) };
     delete state.partial;
@@ -151,7 +165,8 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     for (const row of top) {
       const key = `${row.symbol}:${row.direction}`;
       if (now - (state.sent[key] || 0) < 3600000) continue;
-      await send(`🚨 신규 조건 포착 · 규칙 기반 분석 (${row.source ?? '거래소'})\n${signalText(row)}\n수집: ${new Date(now).toISOString()}\n위험: BTC 역방향 급변 또는 기준선 이탈 시 무효`);
+      const alert = alertReport(row, now);
+      await sendText(send, { text: alert.text, plain: alert.plain, html: true });
       state.sent[key] = now; await save(state);
       // 긴급 알림: 간결 텍스트 뒤에 해당 종목 차트 1장(실패하면 생략)
       if (render && chartData) {
