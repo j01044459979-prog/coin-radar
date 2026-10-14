@@ -12,7 +12,7 @@ on:
         options: [once, telegram-test, preview]
         default: once
   push:
-    branches: [claude/coin-radar-auto-alerts-fzsnyl, feature/radar-2-0, feature/radar-2-1]
+    branches: [claude/coin-radar-auto-alerts-fzsnyl, 'feature/**']
     paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js, worker/src/intel/**, radar-service/package-lock.json]
 permissions:
   contents: read
