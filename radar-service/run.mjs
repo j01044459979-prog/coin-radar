@@ -28,6 +28,13 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   const { rows, failures, stats, charts } = await collect(now);
   const preview = {};
   try { await refreshNews(preview, now); } catch (error) { console.log(`뉴스 수집 실패(격리됨): ${error.message}`); }
+  const sc = stats?.scan;
+  if (sc) {
+    console.log(`SCAN 전체 적격 ${sc.eligible} / 정밀 대상 ${sc.targets} / 분석 성공 ${sc.analyzed} / 실패 ${sc.failed} / 시간부족 건너뜀 ${sc.skipped} / 제한응답 ${JSON.stringify(sc.stopped)}`);
+    for (const [g, v] of Object.entries(sc.groups)) console.log(`SCAN 그룹 ${g}(${v.length}): ${v.join(', ')}`);
+    console.log(`SCAN 유동성 기준 ${sc.minTurnover} USDT 미만 제외 ${sc.liquidityExcluded}종목 · 24h 거래대금 분포 ${JSON.stringify(sc.turnoverPct)}`);
+    console.log(`SCAN 순환 ${JSON.stringify(sc.rotation)} · API 호출 ${stats.calls} · 수집 ${stats.ms}ms · 상위 시간대 ${stats.mtfSymbols.length}종목`);
+  }
   const u = stats?.universe;
   if (u) {
     console.log(`감시 종목(${u.selected.length}/${u.eligible} 적격): ${u.selected.join(', ')}`);
@@ -54,7 +61,7 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
     } catch (error) { console.log(`차트 실패(격리됨): ${spec.symbol} — ${error.message}`); items.push({ symbol: spec.symbol, png: null, error: error.message }); }
   }
   // 기본 정기 보고(실제 전송되는 형식): 압축 본문 1개 + 차트 1장. 보이는 글자 수와 HTML 원문을 함께 기록한다.
-  const parts = reportParts(rows, failures, now, { news: preview.news, charts: items });
+  const parts = reportParts(rows, failures, now, { news: preview.news, scan: stats?.scan ?? null, charts: items });
   parts.forEach((p, i) => console.log(p.type === 'text'
     ? `===== [기본 보고] 메시지 ${i + 1}/${parts.length} 텍스트 (보이는 글자 ${visibleLength(p.text)}자, HTML ${p.text.length}자) =====\n${p.plain}\n----- HTML 원문 -----\n${p.text}`
     : `===== [기본 보고] 메시지 ${i + 1}/${parts.length} 사진 ${p.symbol} ${p.tf ?? ''} ${p.png ? '(PNG)' : `(생략: ${p.error})`} =====\n캡션: ${p.caption ?? ''}`));

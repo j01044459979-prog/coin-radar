@@ -123,7 +123,7 @@ async function safeNews(news, state, now) {
 export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000 }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
-  try { result = await collect(now); }
+  try { result = await collect(now, { rotation: state.rotation }); }
   catch (error) {
     state.lastError = error.message;
     state.lastAttempt = now;
@@ -138,6 +138,8 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   const { rows, failures, stats, charts: chartData } = result;
   state.lastAttempt = now; state.lastSuccess = now; state.lastError = null; state.retryAt = 0;
   state.rows = rows.map(r => ({ symbol: r.symbol, direction: r.direction, strong: r.strong, price: r.price, score: r.candidate?.score ?? null }));
+  if (result.rotation) state.rotation = result.rotation; // 순환 위치·종목별 마지막 정밀 분석 시각(캐시 유실 시 안전하게 재초기화)
+  if (result.backoffMs) state.retryAt = now + result.backoffMs; // 수집 도중 한도 응답을 받았으면 다음 수집을 늦춘다
   state.failures = failures; state.stats = stats ?? null; state.sent ||= {};
   const hour = Math.floor(now / 3600000);
   const hourly = state.reportHour !== hour;
@@ -146,7 +148,7 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 1순위 차트 → 2순위 차트)는 항상 같다.
     const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
-    const parts = reportParts(rows, failures, now, { news: state.news, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
+    const parts = reportParts(rows, failures, now, { news: state.news, scan: stats?.scan ?? null, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
     // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
     const done = [];
     // 업그레이드 호환: 이전 버전(partial.v가 없거나 3 미만)이 이 시간대 보고를 일부라도 보냈다면 이미 전달된 것으로 보고 새 형식으로 다시 보내지 않는다.

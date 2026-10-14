@@ -26,13 +26,14 @@ export function instrumentList(universe) {
     { instId: 'OLDCOIN-USDT-SWAP', state: 'suspend', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' }] : [];
   return [...crypto, ...extra, { instId: 'BTC-USD-SWAP', state: 'live', ctType: 'inverse', settleCcy: 'BTC', instCategory: '1' }];
 }
-export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {}, universe, instruments } = {}) {
+export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {}, universe, instruments, tickers, hook } = {}) {
   return async url => {
     calls.push(url);
+    const hooked = hook && hook(url, calls.length); if (hooked) return hooked;
     const u = new URL(url); const id = u.searchParams.get('instId');
     switch (u.pathname.replace('/api/v5', '')) {
       case '/public/instruments': return ok(instruments ?? instrumentList(universe));
-      case '/market/tickers': return ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', volCcy24h: x.instCategory === '1' ? '1000' : '900000' })));
+      case '/market/tickers': return tickers ? ok(tickers) : ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', open24h: '98', volCcy24h: x.instCategory === '1' ? '100000' : '900000' })));
       case '/market/candles': {
         const bar = u.searchParams.get('bar');
         if (bar !== '5m') { if (mtf[bar] === 'fail') return new Response('', { status: 500 }); return ok(mtfCandles(bar, mtf[bar] ?? 'up')); }

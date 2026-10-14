@@ -75,6 +75,7 @@ function render(m) {
   put(bold('📡 RICH FUTURES RADAR'), '📡 RICH FUTURES RADAR');
   put(escHtml(`${m.time} · ${m.state}`));
   put(escHtml(m.tops.length ? `OKX USDT 선물 · 추천 관찰 후보 TOP ${m.tops.length}` : 'OKX USDT 선물'));
+  for (const l of m.scanLines) put(escHtml(l));
   gap();
   if (m.tops.length) {
     m.tops.forEach((t, i) => {
@@ -108,6 +109,13 @@ function render(m) {
   return { text: html.join('\n'), plain: plain.join('\n') };
 }
 
+// 탐색 범위 요약: 전체 시세 탐색(티커)과 정밀 분석(5분봉·OI·펀딩 수집 성공)을 구분해 실제 수치로 표시한다.
+export function scanLines(scan) {
+  if (!scan) return [];
+  const fail = scan.failed ? ` (실패 ${scan.failed})` : '';
+  return [`🌐 전체 시세 탐색 ${scan.eligible}종목 / 🔬 정밀 분석 ${scan.analyzed}종목${fail}`, `🎯 추천 기준 ${RECOMMEND_MIN_SCORE}점 이상`];
+}
+
 function candidateModel({ row, rank }, opt) {
   const c = row.candidate, p = c.plan;
   const price = [`현재가 ${fmtPrice(row.price)}`];
@@ -124,13 +132,14 @@ function model(rows, failures, now, ctx, opt) {
   const strongCount = picks.filter(p => p.tier === 'strong').length;
   const m = { time: kstLabel(now), state: `시장 ${marketState(btc?.mtf)}`, tops: picks.map(p => candidateModel(p, opt)), noTop: [], news: [], titleMax: opt.titleMax,
     verdict: strongCount ? `✅ 강한 관찰 조건 포착 ${strongCount}건 · 재확인 후 판단` : picks.length ? '⏳ 현재 확정 진입 신호 없음' : '⏳ 대기',
+    scanLines: scanLines(ctx.scan),
     missing: failures.length ? `※ 수집 실패 ${failures.length}종목 (해당 종목 제외)` : null };
   if (!picks.length) {
     // 추천 표시 기준(55점) 미달과 내부 감시 후보 유무를 구분해 알린다(0건이 '아무것도 없음'으로 읽히지 않게).
     const watching = pickNear(rows, rows.length).length;
     m.watching = watching ? `내부 감시 중인 근접 후보 ${watching}건 (${RECOMMEND_MIN_SCORE}점 미만 · 표시 안 함)` : null;
     m.noTop = btc ? [`BTC ${fmtPrice(btc.price)} · 5분 ${btc.trend}`, `15분 ${btc.mtf?.['15m']?.arrow ?? '?'} / 1시간 ${btc.mtf?.['1H']?.arrow ?? '?'} / 4시간 ${btc.mtf?.['4H']?.arrow ?? '?'}`] : ['BTC 데이터 미확인'];
-    m.verdict = `⏳ 현재 추천 표시 기준(${RECOMMEND_MIN_SCORE}점)을 충족한 후보 없음`;
+    m.verdict = ctx.scan ? `⏳ 이번 정밀 분석 대상에서 ${RECOMMEND_MIN_SCORE}점 이상 후보 없음` : `⏳ 현재 추천 표시 기준(${RECOMMEND_MIN_SCORE}점)을 충족한 후보 없음`;
   }
   m.news = relatedNews(picks[0]?.row ?? null, ctx.news, now, opt.news);
   return m;

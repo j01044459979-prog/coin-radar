@@ -22,7 +22,7 @@ test('OKX report states the exchange, is not Binance, and contains numbers for i
 });
 test('OKX failure code or HTTP block raises an error instead of inventing data', async () => {
   const bad = async () => new Response(JSON.stringify({ code: '50011', msg: 'rate limit', data: [] }), { status: 200 });
-  await assert.rejects(createOkxCollector(bad, { gapMs: 0 })(now), /응답 오류/);
+  await assert.rejects(createOkxCollector(bad, { gapMs: 0 })(now), /응답 오류|한도 초과/);
   await assert.rejects(createOkxCollector(async () => new Response('', { status: 403 }), { gapMs: 0 })(now), e => e.status === 403);
 });
 test('a symbol with stale OI is skipped and reported as failure, others continue', async () => {
