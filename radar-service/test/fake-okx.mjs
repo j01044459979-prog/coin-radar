@@ -26,13 +26,15 @@ export function instrumentList(universe) {
     { instId: 'OLDCOIN-USDT-SWAP', state: 'suspend', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' }] : [];
   return [...crypto, ...extra, { instId: 'BTC-USD-SWAP', state: 'live', ctType: 'inverse', settleCcy: 'BTC', instCategory: '1' }];
 }
-export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {}, universe, instruments } = {}) {
+export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, calls = [], mtf = {}, universe, instruments, tickers, hook } = {}) {
+  const t0 = Date.now(); const drift = () => Date.now() - t0; // 실제 경과만큼 거래소 시각도 흐른다(느린 수집 재현용)
   return async url => {
     calls.push(url);
+    const hooked = hook && hook(url, calls.length); if (hooked) return hooked;
     const u = new URL(url); const id = u.searchParams.get('instId');
     switch (u.pathname.replace('/api/v5', '')) {
       case '/public/instruments': return ok(instruments ?? instrumentList(universe));
-      case '/market/tickers': return ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', volCcy24h: x.instCategory === '1' ? '1000' : '900000' })));
+      case '/market/tickers': return tickers ? ok(tickers) : ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', open24h: '98', volCcy24h: x.instCategory === '1' ? '100000' : '900000' })));
       case '/market/candles': {
         const bar = u.searchParams.get('bar');
         if (bar !== '5m') { if (mtf[bar] === 'fail') return new Response('', { status: 500 }); return ok(mtfCandles(bar, mtf[bar] ?? 'up')); }
@@ -45,8 +47,8 @@ export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, call
         }
         return ok(rows);
       }
-      case '/public/mark-price': return ok([{ instId: id, instType: 'SWAP', markPx: '101.2', ts: String(now - 1000) }]);
-      case '/public/open-interest': return ok([{ instId: id, oi: '1', oiCcy: String(oiNow), ts: String(now - 1000) }]);
+      case '/public/mark-price': return ok([{ instId: id, instType: 'SWAP', markPx: '101.2', ts: String(now - 1000 + drift()) }]);
+      case '/public/open-interest': return ok([{ instId: id, oi: '1', oiCcy: String(oiNow), ts: String(now - 1000 + drift()) }]);
       case '/public/funding-rate': return ok([{ instId: id, fundingRate: funding, ts: String(now) }]);
       case '/rubik/stat/contracts/open-interest-history':
         return ok(Array.from({ length: 13 }, (_, i) => [String(open - 300000 - i * 300000), '1', i === 2 ? '100' : '100.5', '10000']));
