@@ -70,7 +70,7 @@ test('차트 선택(2.3): TOP 2 후보 순서대로 최대 2장, 후보가 없�
   const a = chartPlan([btcRow, longRow, shortRow], d);
   assert.deepEqual(a.map(s => [s.symbol, s.tf, s.kind, s.rank]), [['SOLUSDT', '1H', 'candidate', 1], ['DOGEUSDT', '1H', 'candidate', 2]]);   // 강한 후보(SOL) 1순위, 근접 후보(DOGE) 2순위
   assert.match(a[0].reason, /1순위 강한 후보/); assert.match(a[1].reason, /2순위 근접 후보/);
-  assert.deepEqual(chartPlan([btcRow, longRow], d).map(s => s.symbol).sort(), ['BTCUSDT', 'DOGEUSDT']);   // 근접 후보 2개(둘 다 유효)
+  assert.deepEqual(chartPlan([btcRow, longRow], d).map(s => s.symbol), ['DOGEUSDT']);   // BTC 후보(45점)는 추천 표시 기준 55점 미만이라 차트도 없음
   const c = chartPlan([{ ...btcRow, candidate: null }], d);
   assert.deepEqual(c.map(s => [s.symbol, s.tf, s.kind]), [['BTCUSDT', '4H', 'market']]); assert.match(c[0].reason, /후보 없음/);
   assert.deepEqual(chartPlan([{ ...btcRow, candidate: null }], {}), []);
@@ -169,7 +169,7 @@ const fakeRender = async spec => Buffer.from(`png:${spec.symbol}`);
 test('정기 보고 전송: 압축 본문 → 사진 1장(2개 메시지)', async () => {
   const { log, state } = await runHourly({ render: fakeRender, sendPhoto: async () => {} });
   assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.match(log[1][1], /^🥇 1순위 DOGEUSDT · 롱 관찰 · 1H봉/);
-  assert.equal(state.chart.items.length, 2); assert.equal(state.chart.items[0].ok, true); assert.equal(state.chart.items[1].ok, false);   // 2순위(BTC)는 캔들이 없어 건너뜀 assert.equal(state.reportHour, Math.floor(now / 3600000));
+  assert.equal(state.chart.items.length, 1); assert.equal(state.chart.items[0].ok, true);   // 55점 미만 BTC 후보는 추천·차트에서 제외 assert.equal(state.reportHour, Math.floor(now / 3600000));
 });
 test('차트 렌더링 실패 시에도 텍스트 보고는 정상 전송된다', async () => {
   const { log, state } = await runHourly({ render: async () => { throw new Error('boom'); }, sendPhoto: async () => { throw new Error('no photo expected'); } });

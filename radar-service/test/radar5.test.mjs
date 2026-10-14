@@ -14,7 +14,7 @@ function row(sym, dir, strong, price, over = {}, unmet) {
     atr: price * 0.0035, atrPct: 0.35, volume: 1.2, oi15: 0.4, funding: 0.01, change15: 0.2, source: 'OKX USDT 무기한(SWAP)', ...over };
   const mtf = { '15m': { dir: 'UP', arrow: '↑' }, '1H': { dir: 'DOWN', arrow: '↓' }, '4H': { dir: 'FLAT', arrow: '→' } };
   const plan = planOf(r, dir, null);
-  return { ...r, mtf, grade: strong ? '공격형' : null, candidate: { dir, score: strong ? 88.2 : 44.1, plan, dist: { level: long ? r.high : r.low, pct: 1.2, atrUnits: 1.2, broken: false },
+  return { ...r, mtf, grade: strong ? '공격형' : null, candidate: { dir, score: strong ? 88.2 : 60.1, plan, dist: { level: long ? r.high : r.low, pct: 1.2, atrUnits: 1.2, broken: false },
     unmet: strong ? [] : unmet ?? ['고점 돌파 확정 필요', '거래대금 1.20배 → 2배 필요', '15분 OI 0.40% → +1% 필요'], blockers: [], missing: [], met: [], mtfConflict: long, risk: riskOf(r, dir, mtf, plan, { change15: 0.2 }), parts: { btc: { score: 7, max: 10 } } } };
 }
 const btc = { symbol: 'BTCUSDT', price: 83150.4, trend: '상승', mtf: { '15m': { arrow: '↑', dir: 'UP' }, '1H': { arrow: '→', dir: 'FLAT' }, '4H': { arrow: '→', dir: 'FLAT' } }, candidate: null, source: 'OKX USDT 무기한(SWAP)' };
@@ -68,8 +68,8 @@ test('유효 후보가 1개면 1개만, 0개면 후보 없음. 점수 낮음·�
 });
 test('후보 없음: 임의의 진입 가격을 만들지 않고 BTC 요약과 대기만 표시', () => {
   const t = compactReport([btc], [], now, {}).plain;
-  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|목표/); assert.match(t, /대기 · 조건을 갖춘 종목 없음/);
-  assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*대기 · 데이터 확인 필요[\s\S]*수집 실패 1종목/);
+  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|목표/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
+  assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*추천 표시 기준\(55점\)을 충족한 후보 없음[\s\S]*수집 실패 1종목/);
 });
 test('시나리오를 계산할 수 없으면 계산 불가로 표시', () => {
   const r = { ...A, candidate: { ...A.candidate, plan: null } };

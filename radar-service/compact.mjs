@@ -2,7 +2,7 @@
 // 상세 분석(근접 TOP 3·점수 근거·뉴스 목록 등)은 계산은 그대로 하되 여기서는 출력하지 않는다(--preview의 full 보고에서 확인).
 import { bold, clip, escHtml, fmtPrice, htmlToPlain, link, safeHttpUrl, visibleLength } from './format.mjs';
 import { marketState } from './enrich.mjs';
-import { pickTop2 } from './scoring.mjs';
+import { pickNear, pickTop2, RECOMMEND_MIN_SCORE } from './scoring.mjs';
 import { relevantNews } from './news.mjs';
 
 export const COMPACT_MAX = 800;   // 기본 보고 본문(보이는 글자) 상한. 2.3: 후보 2개 비교형이라 800자(후보 1개·0개는 훨씬 짧음)
@@ -93,6 +93,7 @@ function render(m) {
     gap();
   }
   put(escHtml(m.verdict));
+  if (m.watching) put(escHtml(m.watching));
   if (m.missing) put(escHtml(m.missing));
   if (m.news.length) {
     gap();
@@ -119,13 +120,17 @@ function candidateModel({ row, rank }, opt) {
 function model(rows, failures, now, ctx, opt) {
   const btc = rows.find(r => r.symbol === 'BTCUSDT');
   const picks = pickTop2(rows);
-  const strongCount = rows.filter(r => r.strong && r.candidate && !(r.candidate.blockers?.length)).length;
+  // 판단 줄의 강한 신호 건수는 이 보고에 실제로 표시되는 후보만 센다(55점 미만 강한 신호는 5분 긴급 알림 경로에서 별도로 처리됨).
+  const strongCount = picks.filter(p => p.tier === 'strong').length;
   const m = { time: kstLabel(now), state: `시장 ${marketState(btc?.mtf)}`, tops: picks.map(p => candidateModel(p, opt)), noTop: [], news: [], titleMax: opt.titleMax,
     verdict: strongCount ? `✅ 강한 관찰 조건 포착 ${strongCount}건 · 재확인 후 판단` : picks.length ? '⏳ 현재 확정 진입 신호 없음' : '⏳ 대기',
     missing: failures.length ? `※ 수집 실패 ${failures.length}종목 (해당 종목 제외)` : null };
   if (!picks.length) {
+    // 추천 표시 기준(55점) 미달과 내부 감시 후보 유무를 구분해 알린다(0건이 '아무것도 없음'으로 읽히지 않게).
+    const watching = pickNear(rows, rows.length).length;
+    m.watching = watching ? `내부 감시 중인 근접 후보 ${watching}건 (${RECOMMEND_MIN_SCORE}점 미만 · 표시 안 함)` : null;
     m.noTop = btc ? [`BTC ${fmtPrice(btc.price)} · 5분 ${btc.trend}`, `15분 ${btc.mtf?.['15m']?.arrow ?? '?'} / 1시간 ${btc.mtf?.['1H']?.arrow ?? '?'} / 4시간 ${btc.mtf?.['4H']?.arrow ?? '?'}`] : ['BTC 데이터 미확인'];
-    m.verdict = btc ? '⏳ 대기 · 조건을 갖춘 종목 없음' : '⏳ 대기 · 데이터 확인 필요';
+    m.verdict = `⏳ 현재 추천 표시 기준(${RECOMMEND_MIN_SCORE}점)을 충족한 후보 없음`;
   }
   m.news = relatedNews(picks[0]?.row ?? null, ctx.news, now, opt.news);
   return m;
