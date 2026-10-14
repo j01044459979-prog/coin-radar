@@ -1,7 +1,7 @@
 // Telegram 한국어 보고서. 순수 문자열 조립 — 전송/상태는 service.mjs가 담당한다.
 import { relevantNews } from './news.mjs';
 import { marketState } from './enrich.mjs';
-import { pickNear } from './scoring.mjs';
+import { checkPhrases, pickNear } from './scoring.mjs';
 
 export const LIMIT = 3800; // Telegram 4096자 한도보다 여유
 const f = n => Number(Number(n).toPrecision(7)).toString();
@@ -73,19 +73,22 @@ const pickNearRows = rows => pickNear(rows, 3);
 function detailBlock(row) {
   const c = row.candidate;
   const top = Object.entries(c.parts).filter(([, p]) => p.score > 0).sort((a, b) => b[1].score / b[1].max - a[1].score / a[1].max).slice(0, 3);
-  const caution = c.risk.factors.filter(x => !x.startsWith('레버리지') && !x.startsWith('특별한') && !x.startsWith('위험 수준은')).slice(0, 2);
-  const tfLines = ['15m', '1H', '4H'].map(tf => {
-    const t = row.mtf?.[tf];
-    return t ? `  ${tf === '15m' ? '15분' : tf === '1H' ? '1시간' : '4시간'} ${t.arrow} ${t.label} · ${t.basis}${t.lastClosedAt ? ` · 마지막 확정봉 ${kstShort(t.lastClosedAt)}` : ''}` : `  ${tf} 미확인`;
-  });
+  const skip = x => x.startsWith('레버리지') || x.startsWith('특별한') || x.startsWith('위험 수준은');
+  const warn = c.risk.factors.filter(x => !skip(x));
+  const higher = ['1H', '4H'].map(tf => row.mtf?.[tf]).filter(t => t && t.dir !== 'UNKNOWN' && c.mtfConflict && ((c.dir === 'LONG' && t.dir === 'DOWN') || (c.dir === 'SHORT' && t.dir === 'UP')));
   return [
+    // 1) 후보명·방향·점수
     `■ ${row.symbol} · ${dirKo(c.dir)} 관찰 · ${row.strong ? `강한 조건 충족${row.grade ? ` (${row.grade})` : ''}` : '조건 미완성(근접 관찰)'} · 점수 ${c.score}/100`,
-    `다중 시간대: ${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`, ...tfLines,
+    // 2) 다중 시간대
+    `다중 시간대: ${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`,
+    ...higher.map(t => `  ${t.tf === '1H' ? '1시간' : '4시간'} ${t.arrow} ${t.label} · ${t.basis}`),
+    // 3) 진입·손절·TP
     ...planLines(c.plan),
-    `위험 수준: ${c.risk.level} (상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음)`, ...c.risk.factors.map(x => `- ${x}`),
-    `추천 근거 TOP ${top.length}: ${top.map(([k, p]) => `${PART_LABEL[k]} ${p.score.toFixed(1)}/${p.max}(${p.note})`).join(' · ') || '없음'}`,
-    `주의할 점: ${caution.join(' / ') || '없음'}`,
+    // 4) 위험
+    `위험 수준: ${c.risk.level} (상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음)`, ...warn.map(x => `- ${x}`),
+    // 5) 부족한 조건
     `미충족 조건: ${c.unmet.join(' / ') || '없음'}`,
+    `추천 근거: ${top.map(([k, p]) => `${PART_LABEL[k]} ${p.score.toFixed(1)}/${p.max}`).join(' · ') || '없음'}`,
     c.missing.length ? `데이터 누락(점수 미부여): ${c.missing.join(', ')}` : null,
     `※ 점수는 조건 충족도이며 승률이 아님. 가격 ${kstMin(row.priceAt)} 기준`,
   ].filter(Boolean).join('\n');
@@ -116,28 +119,51 @@ export function pack(blocks, limit = LIMIT) {
   return out.map((m, i) => (out.length > 1 ? `(${i + 1}/${out.length}) ` : '') + m);
 }
 
-export function reportMessages(rows, failures, now, ctx = {}) {
+const strongRows = rows => rows.filter(r => r.strong).sort((a, b) => (b.candidate?.score ?? 0) - (a.candidate?.score ?? 0) || b.volume - a.volume);
+
+// 첫 메시지: 모바일에서 한눈에 읽히는 핵심 요약(비어 있지 않은 줄 15줄 이내)
+export function summaryText(rows, failures, now) {
   const source = rows.find(r => r.source)?.source ?? '데이터 출처 미확인';
   const btc = rows.find(r => r.symbol === 'BTCUSDT');
+  const strong = strongRows(rows), near = pickNear(rows, 3);
+  const top = strong[0] ?? near[0];
   const count = d => rows.filter(r => (r.candidate?.dir ?? r.direction) === d).length;
-  const strong = rows.filter(r => r.strong).sort((a, b) => (b.candidate?.score ?? 0) - (a.candidate?.score ?? 0) || b.volume - a.volume).slice(0, 2);
+  const lines = ['📡 RICH FUTURES RADAR', `데이터: ${source} (Binance 아님)`, `분석시각: ${kstMin(now)} · 시장 상태: ${marketState(btc?.mtf)}`, '', '[핵심 요약]'];
+  if (top) {
+    // 점수·시나리오가 없는 행(구버전 호환)도 깨지지 않게 기본값을 둔다.
+    const c = top.candidate ?? { dir: top.direction, score: '-', plan: null, risk: { level: '확인 불가' }, mtfConflict: false, unmet: [] }, p = c.plan, sg = c.dir === 'LONG' ? ['-', '+'] : ['+', '-'];
+    lines.push(`- 1순위 후보: ${top.symbol} ${dirKo(c.dir)} 관찰 (${top.strong ? '강한 관찰 조건 포착' : '조건 미완성'} · 점수 ${c.score})`);
+    if (p) lines.push(`- 핵심 가격: ${f(p.entry)} (${p.conditional ? '조건부 진입 참고' : '진입 참고·현재가 기준'})`, `- 손절 참고: ${f(p.stop)} (${sg[0]}${p.stopPct.toFixed(2)}%)`, `- 목표: ${f(p.tp1)} / ${f(p.tp2)}`);
+    else lines.push('- 진입·손절·목표: 계산 불가');
+    lines.push(`- 체크 포인트: ${checkPhrases(top, c.dir).join(' · ') || '없음'}`, `- 위험: ${c.risk.level}${c.mtfConflict ? ' · 상위 시간대 역행' : ''}`);
+  } else lines.push('- 1순위 후보: 없음 (대기)');
+  lines.push('', '[시장]', btc ? `- BTC ${f(btc.price)} · 5분 ${btc.trend} · ${mtfLine(btc)}` : '- BTC 데이터 미확인 · 강한 조건 판단 대기',
+    `- 강한 조건 ${strong.length} · 근접 후보 ${near.length} · 롱 ${count('LONG')} / 숏 ${count('SHORT')} (${rows.length}종목${failures.length ? ` · 수집 실패 ${failures.length}` : ''})`,
+    '', `[요약 판단] ${strong.length ? '강한 관찰 조건 포착' : near.length ? '조건부 관찰' : '대기'}`,
+    '※ 진입·손절·목표는 조건부 참고값 · 매매 지시 아님');
+  return lines.join('\n');
+}
+
+// 반환: Telegram 한 건당 LIMIT 이하인 메시지 배열. [0]=핵심 요약, 이후=상세(필요 시 여러 건)
+export function reportMessages(rows, failures, now, ctx = {}) {
+  const btc = rows.find(r => r.symbol === 'BTCUSDT');
+  const strong = strongRows(rows).slice(0, 2);
   const near = pickNearRows(rows);
-  const state = marketState(btc?.mtf);
-  const header = `📡 RICH FUTURES RADAR 2.0 · 정기 분석\n데이터: ${source} (Binance 아님)\n분석시각: ${kstMin(now)}\n시장 상태: ${state}`;
-  const summary = '[시장 요약]\n' + (btc
-    ? `BTC ${f(btc.price)} USDT · 5분 추세 ${btc.trend} · 15분 ${btc.change15.toFixed(2)}% · OI ${btc.oi15.toFixed(2)}% · 펀딩 ${btc.funding.toFixed(4)}% · 변동성 ATR ${btc.atrPct.toFixed(2)}% · 거래대금 ${btc.volume.toFixed(2)}배\nBTC ${mtfLine(btc)}`
-    : 'BTC 데이터 미확인 · 강한 조건 판단 대기') +
-    `\n롱 관찰 ${count('LONG')} · 숏 관찰 ${count('SHORT')} · 정상 ${rows.length}종목 / 실패 ${failures.length}종목`;
   const strongBlock = '[강한 조건 후보]\n' + (strong.length ? strong.map(r => signalText(r, { compact: true })).join('\n\n') : '현재 확정 조건 없음 · 검증된 강한 조건 없음');
   const detailRows = [...strong, ...near].filter(r => r.candidate).slice(0, 2);
   const detail = detailRows.length ? '[상세 분석]\n' + detailRows.map(detailBlock).join('\n\n') : null;
   const top = detailRows[0];
-  const verdict = '[요약 판단]\n' + (strong.length ? '강한 관찰 조건 포착 — 진입·손절·목표는 조건부 참고값이며 매매 지시가 아님. 무효화 참고선과 BTC 방향을 함께 확인' : near.length ? '조건부 관찰 — 강한 조건은 아직 미완성' : '대기') +
-    (top && !top.strong ? `\n다음 확인 조건: ${top.candidate.unmet.slice(0, 2).join(' / ') || '없음'}` : '') +
-    (failures.length ? `\n데이터 누락: ${failures.length}종목 수집 실패` : '') +
-    (ctx.stats ? '' : '') +
-    `\n${GRADE_NOTE}. 규칙 기반 관찰이며 수익 확률을 뜻하지 않습니다. 자동 주문 없음.`;
-  return pack([`${header}\n\n${summary}`, strongBlock, nearBlock(rows), detail, newsBlock(rows, ctx.news, now), verdict]);
+  const footer = '[참고]\n' + (top && !top.strong ? `다음 확인 조건: ${top.candidate.unmet.slice(0, 2).join(' / ') || '없음'}\n` : '') +
+    (failures.length ? `데이터 누락: ${failures.length}종목 수집 실패\n` : '') +
+    `${GRADE_NOTE}. 규칙 기반 관찰이며 수익 확률을 뜻하지 않습니다. 자동 주문 없음.${btc ? '' : ' (BTC 데이터 미확인)'}`;
+  const rest = pack([strongBlock, nearBlock(rows), detail, newsBlock(rows, ctx.news, now), footer]);
+  return [summaryText(rows, failures, now), ...rest.map((m, i) => (rest.length > 1 ? `(상세 ${i + 1}/${rest.length}) ` : '') + m.replace(/^\(\d+\/\d+\) /, ''))];
+}
+
+// 전송 순서: 핵심 요약 → 차트 이미지(0~2장) → 상세. 이미지는 실패해도 건너뛰고 텍스트는 그대로 나간다.
+export function reportParts(rows, failures, now, ctx = {}) {
+  const texts = reportMessages(rows, failures, now, ctx);
+  return [{ type: 'text', text: texts[0] }, ...(ctx.charts ?? []).map(c => ({ type: 'photo', ...c })), ...texts.slice(1).map(text => ({ type: 'text', text }))];
 }
 
 export const reportText = (rows, failures, now, ctx) => reportMessages(rows, failures, now, ctx).join('\n\n');

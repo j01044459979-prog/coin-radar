@@ -109,7 +109,7 @@ test('강한 조건 문구: 즉시 진입이 아니라 강한 관찰 조건 포�
   const text = reportMessages(rows, failures, now).join('\n');
   assert.doesNotMatch(text, /즉시 진입/); assert.match(text, /강한 관찰 조건 포착/); assert.match(text, /조건부 참고값/);
   assert.match(text, /위험 수준: 낮음 \(상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음\)/);
-  assert.match(text, /선물거래 자체가 저위험이라는 뜻이 아님/);
+  assert.match(text, /선물거래 자체의 저위험을 뜻하지 않음/);
   const alert = signalText(rows.find(r => r.strong));
   assert.match(alert, /조건부 참고값/); assert.match(alert, /선물거래 자체의 저위험을 뜻하지 않음/); assert.doesNotMatch(alert, /즉시 진입/);
 });
