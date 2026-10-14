@@ -3,6 +3,7 @@ import { analyze, applyBtcFilter } from './analysis.mjs';
 import { enrich, preliminary } from './enrich.mjs';
 import { TF_MS, trendOf } from './indicators.mjs';
 import { jsonRequest } from './service.mjs';
+import { parseCandleVolume } from './volume.mjs';
 import { selectUniverse, MAX_SYMBOLS } from './universe.mjs';
 
 export const SOURCE = { name: 'OKX', label: 'OKX USDT 무기한(SWAP)', url: 'https://www.okx.com/api/v5' };
@@ -25,7 +26,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
     for (const tf of ['15m', '1H', '4H']) {
       try {
         const rows = okData(await get(`/market/candles?instId=${instId}&bar=${tf}&limit=100`), `${tf} 캔들`);
-        const candles = rows.filter(r => r[8] === '1').reverse().map(r => ({ t: Number(r[0]), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), end: Number(r[0]) + TF_MS[tf] - 1 }));
+        const candles = rows.filter(r => r[8] === '1').reverse().map(r => { const h = Number(r[2]), l = Number(r[3]); return { t: Number(r[0]), o: Number(r[1]), h, l, c: Number(r[4]), end: Number(r[0]) + TF_MS[tf] - 1, ...parseCandleVolume(r, l, h) }; });
         out[tf] = candles.some(c => !(c.o > 0 && c.h >= Math.max(c.o, c.c, c.l) && c.l > 0 && c.l <= Math.min(c.o, c.c))) ? trendOf(null, tf, now, '비정상 캔들') : trendOf(candles, tf, now);
         if (keep && out[tf].dir !== 'UNKNOWN') keep[tf] = candles.slice(-100); // 검증(최신·연속·정상 OHLC)을 통과한 캔들만 차트에 사용
       } catch (error) {
@@ -54,8 +55,8 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, max = MAX_SYM
         const history = okData(await get(`/rubik/stat/contracts/open-interest-history?instId=${instId}&period=5m&limit=13`), 'OI 이력');
         if (!mark || !oi || !funding || mark.instId !== instId || oi.instId !== instId || funding.instId !== instId) throw new Error('응답 종목 불일치');
         // 확정(confirm=1) 5분봉만 사용, 오래된 순 정렬. 인덱스: ts,o,h,l,c,vol,volCcy,volCcyQuote(USDT),confirm
-        const klines = candles.filter(r => r[8] === '1').reverse().map(r => [r[0], r[1], r[2], r[3], r[4], r[5], Number(r[0]) + 299999, r[7]]);
-        raw5[symbol] = klines.map(k => ({ t: Number(k[0]), o: Number(k[1]), h: Number(k[2]), l: Number(k[3]), c: Number(k[4]), end: Number(k[6]) })).slice(-70);
+        const klines = candles.filter(r => r[8] === '1').reverse().map(r => [r[0], r[1], r[2], r[3], r[4], r[5], Number(r[0]) + 299999, r[7], r[6]]); // [8]=volCcy(기초자산 수량): 거래대금 단위 점검용
+        raw5[symbol] = klines.map(k => ({ t: Number(k[0]), o: Number(k[1]), h: Number(k[2]), l: Number(k[3]), c: Number(k[4]), end: Number(k[6]), ...parseCandleVolume([k[0], k[1], k[2], k[3], k[4], k[5], k[8], k[7]], Number(k[3]), Number(k[2])) })).slice(-70);
         const raw = {
           klines,
           premium: { symbol, markPrice: mark.markPx, lastFundingRate: funding.fundingRate, time: mark.ts },
