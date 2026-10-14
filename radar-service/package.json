@@ -1,0 +1,10 @@
+{
+  "name": "rich-radar-service",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RICH FUTURES RADAR service (OKX public data, Telegram). 차트 PNG 렌더링에만 @resvg/resvg-js(MPL-2.0)를 사용한다.",
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}
