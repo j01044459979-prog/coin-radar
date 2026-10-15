@@ -1,4 +1,4 @@
-// RICH STRATEGY RADAR 3.0 — independent, opt-in indicator engine.
+// RICH STRATEGY RADAR 3.0 - independent, opt-in indicator engine.
 // No TradingView source code is copied; the calculations use standard public formulas.
 // All inputs MUST be closed, chronological candles. This module does not send orders or alerts.
 // OHLC objects: { t?, o, h, l, c, q? (quote turnover), v? (base volume) }.
@@ -14,25 +14,25 @@ const last = xs => xs[xs.length - 1];
 const safe = n => Number.isFinite(n) ? n : null;
 
 export function validateClosedCandles(candles, intervalMs = 300000) {
-  if (!Array.isArray(candles) || candles.length < 2) throw new Error('최소 2개의 확정 캔들이 필요합니다');
-  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) throw new Error('캔들 간격 오류');
+  if (!Array.isArray(candles) || candles.length < 2) throw new Error('At least 2 confirmed candles required');
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) throw new Error('Invalid candle interval');
   let lastT = null;
   for (const [i, x] of candles.entries()) {
     if (![x?.o, x?.h, x?.l, x?.c].every(v => typeof v === 'number' && Number.isFinite(v))) {
-      throw new Error('비정상 OHLC: ' + i);
+      throw new Error('Invalid OHLC: ' + i);
     }
     if (x.l <= 0 || x.h < Math.max(x.o, x.c, x.l) || x.l > Math.min(x.o, x.c)) {
-      throw new Error('비정상 캔들 범위: ' + i);
+      throw new Error('Invalid OHLC range: ' + i);
     }
     if (!Number.isSafeInteger(x.t) || x.t < 0 || x.t % intervalMs !== 0) {
-      throw new Error('캔들 시각 누락 또는 정렬 오류: ' + i);
+      throw new Error('Invalid candle timestamp or alignment: ' + i);
     }
     if (lastT !== null && x.t - lastT !== intervalMs) {
-      throw new Error('캔들 누락·중복·역전: ' + i);
+      throw new Error('Missing/duplicate/out-of-order candle: ' + i);
     }
     lastT = x.t;
     if (x.confirm !== '1' && x.confirm !== 1 && x.confirm !== true) {
-      throw new Error('미확정 캔들 입력 금지: ' + i);
+      throw new Error('Unconfirmed candle rejected: ' + i);
     }
   }
   return true;
@@ -140,7 +140,7 @@ const vol = x => Number.isFinite(x.q) && x.q > 0 ? x.q : Number.isFinite(x.v) &&
 export function buildStrategySeries(candles, config = {}) {
   validateClosedCandles(candles);
   const p = { ...DEFAULTS, ...config };
-  if (!(p.stopAtr > 0 && p.targetR > 0 && p.volumeFactor > 0)) throw new Error('전략 설정 오류');
+  if (!(p.stopAtr > 0 && p.targetR > 0 && p.volumeFactor > 0)) throw new Error('Invalid strategy configuration');
   const closes = candles.map(x => x.c);
   const ema20 = emaSeries(closes, 20), ema50 = emaSeries(closes, 50);
   const atr = atrSeries(candles, p.atrPeriod), utAtr = atrSeries(candles, p.utPeriod);
@@ -149,7 +149,7 @@ export function buildStrategySeries(candles, config = {}) {
   const ut = atrTrailSeries(candles, utAtr, p.utFactor);
   return candles.map((c, i) => {
     const basic = { index: i, time: c.t ?? null, price: c.c, signal: 'WAIT',
-      setup: null, regime: 'UNKNOWN', reason: '지표 준비 중',
+      setup: null, regime: 'UNKNOWN', reason: 'Indicator warm-up',
       indicators: null, risk: null, blockers: [] };
     const prev = i - 1;
     if (i < Math.max(55, p.donchianPeriod + 1, p.bbPeriod + 1) ||
@@ -182,8 +182,8 @@ export function buildStrategySeries(candles, config = {}) {
     else if (regime === 'RANGE' && bounceLong) { signal = 'LONG'; setup = 'RANGE_REVERSION'; }
     else if (regime === 'RANGE' && bounceShort) { signal = 'SHORT'; setup = 'RANGE_REVERSION'; }
     const atrPct = a / c.c * 100, blockers = [];
-    if (atrPct > p.maxAtrPercent) blockers.push('5분 ATR 변동성 상한 초과');
-    if (signal !== 'WAIT' && !(c.c > 0 && a > 0)) blockers.push('손절 거리 계산 불가');
+    if (atrPct > p.maxAtrPercent) blockers.push('5m ATR volatility exceeds cap');
+    if (signal !== 'WAIT' && !(c.c > 0 && a > 0)) blockers.push('Cannot compute stop distance');
     if (blockers.length) { signal = 'WAIT'; setup = null; }
     const stopDistance = p.stopAtr * a;
     const risk = signal === 'WAIT' ? null : {
@@ -192,7 +192,7 @@ export function buildStrategySeries(candles, config = {}) {
       stopPercent: stopDistance / c.c * 100, rewardRisk: p.targetR,
     };
     return { index: i, time: c.t ?? null, price: c.c, signal, setup, regime,
-      reason: blockers.length ? blockers.join(' / ') : signal !== 'WAIT' ? '확정봉 신호: 다음 봉부터 관찰' : '독립 조건 미충족',
+      reason: blockers.length ? blockers.join(' / ') : signal !== 'WAIT' ? 'Closed-bar signal: observe from next bar' : 'Independent conditions not met',
       indicators: { supertrend: st[i].direction, atrTrail: ut[i].direction,
         atrTrailFlip: ut[i].flip, emaGapAtr: emaGap, atrPercent: atrPct, rsi: rsi[i],
         bollinger: bb[i], donchianHigh: high, donchianLow: low, volumeRatio: safe(volumeRatio),
