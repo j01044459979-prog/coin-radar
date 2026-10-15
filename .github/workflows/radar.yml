@@ -130,3 +130,9 @@ jobs:
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
           lookup-only: true
           fail-on-cache-miss: true
+      # 이상 상태(캐시 확인 불가·오래된 캐시·손상 복구)가 3시간 넘게 이어지면(시간당 최대 1회) 이 실행을 실패로 표시해 GitHub 실패 알림을 유도한다.
+      - name: Prolonged degradation alert
+        if: always() && steps.gate.outputs.alert == 'true'
+        run: |
+          echo "::error title=레이더 이상 상태 장기화::Gate 단계 로그와 실행 요약(Summary)을 확인하세요."
+          exit 1

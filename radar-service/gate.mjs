@@ -49,17 +49,39 @@ export function judgeCache({ restoredKey, caches, ref, expectedRef = 'refs/heads
 }
 
 // 상태 연속성이 의심될 때 Telegram 전송을 그 시간대에 한해 억제할지 결정한다(중복 전송보다 1회 생략이 안전).
-//  - 손상 복구, 오래된 캐시(stale), 캐시가 있는데 복원 실패(cold-with-caches)
-//  - 확인 불가(unverified): 복원된 상태가 '직전 슬롯'까지 처리한 것으로 이어지지 않으면(lastSlot !== 현재 슬롯 - 1, 상태 없음 포함) 한 실행이라도 뒤처진 상태일 수 있으므로 억제.
-//    직전 슬롯과 정확히 이어지면 최신 상태로 보고 진행한다(API 일시 장애로 알림이 막히는 것을 피함).
+//  - 손상 복구, 오래된 캐시(stale), 캐시가 있는데 복원 실패(cold-with-caches): 확실한 이상 신호 → 감지될 때마다 그 시간대 억제(fail-closed)
+//    (억제한 실행이 새 최신 캐시를 저장하므로 보통 한 번으로 해소된다)
+//  - 확인 불가(unverified, 캐시 API 장애): 직전 슬롯과 이어지는 상태면 진행. 이어지지 않으면 억제하되 **장애 한 건당 1시간만**(fail-open):
+//    확인 불가는 '이상 증거'가 아니라 '정보 부족'이므로, 같은 장애가 계속돼도 두 번째 시간대부터는 정기 보고를 재개한다
+//    (장시간 알림 누락 방지 — 대신 이때 오래된 캐시가 복원되면 정기 보고 1회 중복이 가능, 아래 ALERT로 알림).
 export const QUIET_STATUSES = new Set(['stale', 'cold-with-caches']);
-export function quietReason({ cacheStatus, recovered, state = {}, slot }) {
+export const ALERT_HOURS = 3;   // 같은 이상 상태가 이 시간(UTC 시 단위) 이상 이어지면 실행을 실패로 표시해 GitHub 알림을 유도(시간당 최대 1회)
+export function quietReason({ cacheStatus, recovered, state = {}, slot, degraded = state?.degraded }) {
   if (recovered) return 'corrupt-state';
   if (QUIET_STATUSES.has(cacheStatus)) return `cache-${cacheStatus}`;
   if (cacheStatus === 'unverified') {
     const last = Number(state?.lastSlot);
     const continuous = Number.isFinite(last) && Number.isFinite(Number(slot)) && Number(slot) - last === 1;
-    return continuous ? null : 'cache-unverified';
+    if (continuous) return null;
+    if (degraded?.kind === 'unverified' && degraded.quietedHours >= 1) return null; // 이미 한 시간 억제했음 → 재개(fail-open)
+    return 'cache-unverified';
   }
   return null;
+}
+
+// 게이트 전체 평가(CLI·테스트 공용): 실행 여부 + 억제(quiet) + 이상 상태 추적(state.degraded) + 경고 문구.
+// state를 직접 갱신한다. failOpen=false는 이전 정책(unverified 무기한 억제)을 재현하는 테스트용.
+export function evaluate({ source, scheduler, state, now, slot, cacheStatus, recovered = false, failOpen = true }) {
+  const d = decide({ source, scheduler, state, now, slot });
+  const hour = Math.floor(now / 3600000);
+  const out = { ...d, quiet: null, alert: null, newHour: false, degradedHours: 0, kind: null };
+  const kind = recovered ? 'corrupt-state' : ['unverified', 'stale', 'cold-with-caches'].includes(cacheStatus) ? cacheStatus : null;
+  if (!kind) { delete state.degraded; return out; }
+  const deg = state.degraded?.kind === kind ? state.degraded : { kind, since: now, hours: 0, quietedHours: 0, lastHour: null };
+  if (deg.lastHour !== hour) { deg.hours += 1; deg.lastHour = hour; out.newHour = true; }
+  const reason = quietReason({ cacheStatus, recovered, state, slot: d.slot, degraded: failOpen ? deg : { kind: null } });
+  if (reason && state.quiet?.hour !== hour) { state.quiet = { reason, hour, at: now }; deg.quietedHours += 1; out.quiet = reason; }
+  state.degraded = deg; out.kind = kind; out.degradedHours = deg.hours;
+  if (out.newHour && deg.hours >= ALERT_HOURS) out.alert = `${kind} 상태가 ${deg.hours}시간째 이어지고 있습니다(시작 ${new Date(deg.since).toISOString()}). 캐시 확인 API·저장 상태를 점검하세요.`;
+  return out;
 }

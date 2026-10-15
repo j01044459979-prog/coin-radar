@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
-import { decide, quietReason, slotOfTime } from './gate.mjs';
+import { evaluate, slotOfTime } from './gate.mjs';
 import { createCollector, cycle, telegramPhotoSender, telegramSender } from './service.mjs';
 import { buildSvg, chartCaption, chartPlan, renderChart, renderPng } from './chart.mjs';
 import { createOkxCollector } from './okx.mjs';
@@ -33,18 +33,20 @@ const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 
 if (args.has('--gate')) {
-  // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false.
+  // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false, alert=true|false.
   const now = Date.now();
-  const d = decide({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now, slot: process.env.RADAR_SLOT });
+  const before = JSON.stringify([state.quiet, state.degraded]);
+  const d = evaluate({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now, slot: process.env.RADAR_SLOT, cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow });
   console.log(`GATE ${d.run ? '실행' : '건너뜀'} · 출처=${process.env.RADAR_SOURCE_EVENT} · 슬롯=${d.slot} · 스케줄러=${d.mode} · 직전 시도 ${d.ageMs === null ? '없음' : Math.round(d.ageMs / 1000) + '초 전'} · ${d.reason} · 복원된 상태 seq=${state.seq ?? '없음'} savedAt=${state.savedAt ? new Date(state.savedAt).toISOString() : '없음'} · 캐시 판정=${process.env.RADAR_CACHE_STATUS || '없음'}`);
-  // 상태 연속성이 의심되면(손상 복구·오래된 캐시 복원) 이번 시간대 Telegram 전송을 억제한다: 중복 전송보다 1회 생략이 안전하다.
-  const reason = quietReason({ cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow, state, slot: d.slot });
-  if (reason && state.quiet?.hour !== Math.floor(now / 3600000)) {
-    state.quiet = { reason, hour: Math.floor(now / 3600000), at: now };
-    await save(state);
-    console.log(`::warning title=Telegram 전송 억제::${reason}: 이번 시간대(UTC 기준 ${state.quiet.hour}) 정기 보고·긴급 알림을 보내지 않고 상태만 복구합니다.`);
+  // 이상 상태(캐시 확인 불가·오래된 캐시·손상 복구)는 로그와 요약에서 바로 보이게 남긴다.
+  if (d.kind) {
+    console.log(`::warning title=레이더 상태 연속성 경고 (${d.kind})::${d.kind} 상태 ${d.degradedHours}시간째${d.quiet ? ` · 이번 시간대 Telegram 전송 억제(${d.quiet})` : ' · 전송은 정상 진행'}`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `### ⚠️ 레이더 상태 연속성 경고\n- 종류: \`${d.kind}\` · 지속 ${d.degradedHours}시간\n- Telegram: ${d.quiet ? `이번 시간대 전송 억제(\`${d.quiet}\`)` : '정상 진행'}\n- 조치: 캐시 확인 API 장애면 GitHub 상태를 확인하세요. 3시간 넘게 이어지면 이 실행이 실패로 표시됩니다.\n`).catch(() => {});
   }
-  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `run=${d.run}\n`);
+  if (d.quiet) console.log(`::warning title=Telegram 전송 억제::${d.quiet}: 이번 시간대(UTC 기준 ${state.quiet.hour}) 정기 보고·긴급 알림을 보내지 않고 상태만 복구합니다.`);
+  if (d.alert) console.log(`::error title=레이더 이상 상태 장기화::${d.alert}`);
+  if (JSON.stringify([state.quiet, state.degraded]) !== before) await save(state);
+  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `run=${d.run}\nalert=${Boolean(d.alert)}\n`);
 } else if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   if (args.has('--once')) console.log('Telegram 비밀값 미설정: 수집·분석만 실행하고 전송/상태 저장은 하지 않습니다.');
   const now = Date.now();
