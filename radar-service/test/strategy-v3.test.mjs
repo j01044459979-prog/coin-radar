@@ -93,3 +93,23 @@ test('데이터 부족과 잘못된 테스트 입력은 명시적으로 거부',
   assert.throws(() => backtestStrategy(upwardBars(80)), /최소 200개/);
   assert.throws(() => backtestStrategy(upwardBars(220), { trainFraction: 1 }), /설정 오류/);
 });
+
+test('5분봉 누락·시각 비정렬·확정 정보 누락은 거래 신호를 차단', () => {
+  const c = upwardBars(121);
+  const gap = c.filter((_, i) => i !== 80);
+  assert.throws(() => buildStrategySeries(gap), /캔들 누락/);
+  const unconfirmed = c.map(x => ({ ...x }));
+  delete unconfirmed[60].confirm;
+  assert.throws(() => buildStrategySeries(unconfirmed), /미확정/);
+});
+
+test('시가가 손절을 뛰어넘으면 유리한 손절가가 아닌 불리한 시가로 처리', () => {
+  assert.deepEqual(conservativeBarExit(
+    { direction: 'LONG', stop: 95, target: 110 },
+    { o: 92, h: 103, l: 90, c: 100 }
+  ), { type: 'STOP_GAP', price: 92 });
+  assert.deepEqual(conservativeBarExit(
+    { direction: 'SHORT', stop: 105, target: 90 },
+    { o: 108, h: 110, l: 99, c: 102 }
+  ), { type: 'STOP_GAP', price: 108 });
+});
