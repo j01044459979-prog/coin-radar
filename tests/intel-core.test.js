@@ -177,3 +177,94 @@ test('빈 목록 안내: 수집 준비 중 / 출처 오류 / 필터 결과 없�
   assert.equal(I.emptyText({ hasEvents: false, sources: S('ok') }).title, '아직 수집된 정보가 없습니다');
   assert.equal(I.emptyText({ hasEvents: true, sources: S('ok') }).title, '선택한 조건에 맞는 정보가 없습니다');
 });
+
+// ── Phase 6B: Telegram / 커뮤니티 표시 로직 ──
+const st = (count, ratio, state) => ({ count, ratio, state });
+const att = (o = {}) => ({
+  kind: 'telegram', symbol: 'SOL', score: 82, partial: false, channels_1h: 3, last_at: NOW - 4 * MIN, verification: 'unverified', clusters: [],
+  stats: { '15m': st(2, null, 'insufficient'), '1h': st(12, 3.4, 'ok'), '6h': st(14, null, 'insufficient'), '24h': st(31, null, 'count_only') }, ...o,
+});
+
+test('관심도 창 문구: 배수 / 데이터 축적 중 / 새로 등장 / 개수만', () => {
+  assert.equal(I.windowText(st(12, 3.4, 'ok')), '12건 · 평균 대비 3.4배');
+  assert.equal(I.windowText(st(2, null, 'insufficient')), '2건 · 데이터 축적 중');
+  assert.equal(I.windowText(st(5, null, 'new')), '5건 · 새로 등장');
+  assert.equal(I.windowText(st(31, null, 'count_only')), '31건');
+  assert.equal(I.windowText(null), '');
+  assert.equal(I.bestRatio(att()), 3.4);
+  assert.equal(I.bestRatio(att({ stats: { '15m': st(1, null, 'insufficient'), '1h': st(1, null, 'insufficient'), '6h': st(1, null, 'insufficient') } })), null);
+});
+
+test('소셜 카드: 소셜 관심도 점수는 정보 중요도와 분리, 검증 배지, 연결 이벤트, 동시 채널 수', () => {
+  const html = I.socialCardHtml(att({ verification: 'official', clusters: [{ id: 1, title: 'Upbit SOL 관련 공지', url: 'https://upbit.com/service_center/notice?id=1', verification: 'official' }] }), { rows: [], note: '' }, NOW);
+  assert.match(html, /공식 확인/);
+  assert.match(html, /소셜 관심도 <b class="iatt">82<\/b>\/100/);
+  assert.doesNotMatch(html, /정보 중요도/);
+  assert.match(html, /3개 채널\(1시간\)/);
+  assert.match(html, /연결 이벤트 · <a href="https:\/\/upbit\.com\/service_center\/notice\?id=1" target="_blank" rel="noopener noreferrer">Upbit SOL 관련 공지<\/a>/);
+  assert.match(html, /마지막 언급 4분 전/);
+  assert.match(I.socialCardHtml(att(), {}, NOW), /미확인/);
+  assert.match(I.socialCardHtml(att({ partial: true }), {}, NOW), /일부 요소 수집 중/);
+  assert.match(I.socialCardHtml(att({ kind: 'community' }), {}, NOW), /국내 커뮤니티/);
+  assert.doesNotMatch(I.socialCardHtml(att({ kind: 'community' }), {}, NOW), /개 채널/); // 커뮤니티는 채널 수 없음
+});
+
+test('소셜 카드 시장 반응: 실제 값 있을 때만, 없으면 안내', () => {
+  const rows = I.reactionRows({ price15: 2.1, ratio: 4.2, oi15: 3.0, fundingPct: 0.006 });
+  const html = I.socialCardHtml(att(), { rows, note: '', symbol: 'SOL' }, NOW);
+  assert.match(html, /시장 반응 · SOL 기준/);
+  assert.match(html, /\+0\.0060%/);
+  const none = I.socialCardHtml(att(), { rows: [], note: '수집 중' }, NOW);
+  assert.match(none, /시장 반응 · 수집 중/);
+  assert.doesNotMatch(none, /fgrid"><div><span>가격/);
+});
+
+test('소셜 보안: 심볼/채널/excerpt/제목/클러스터 제목의 스크립트와 위험 URL 이스케이프', () => {
+  const evil = '<img src=x onerror=alert(1)><script>alert(2)</script>"\'&';
+  const card = I.socialCardHtml(att({ symbol: evil, clusters: [{ title: evil, url: 'javascript:alert(3)' }], kind: evil, verification: evil }), { rows: [], note: evil, symbol: evil }, NOW);
+  assert.doesNotMatch(card, /<img|<script/i);
+  assert.doesNotMatch(card, /javascript:/);
+  const msg = I.socialMessageHtml({ id: 1, kind: 'telegram', channel: evil, url: 'javascript:alert(1)', excerpt: evil, symbols: [evil], verification: evil, published_at: NOW, collected_at: NOW }, NOW);
+  assert.doesNotMatch(msg, /<img|<script|javascript:|<a /i);
+  const ok = I.socialMessageHtml({ id: 2, kind: 'community', channel: 'Coinpan', url: 'https://coinpan.com/free/1', title: '제목', excerpt: '', symbols: ['XRP'], verification: 'unverified', published_at: null, collected_at: NOW - 3 * MIN }, NOW);
+  assert.match(ok, /게시 시간 미확인 · 수집 3분 전/);
+  assert.match(ok, /target="_blank" rel="noopener noreferrer">원문 보기/);
+  const long = I.socialMessageHtml({ id: 3, kind: 'telegram', channel: 'c', url: 'https://t.me/c/1', excerpt: '가'.repeat(500), symbols: [], verification: 'unverified', published_at: NOW, collected_at: NOW }, NOW);
+  assert.ok(long.includes('가'.repeat(139) + '…'));
+});
+
+test('소셜 신호 판정: 공식 연결·동시 언급·급증·시장 이상 동시만 통과, 노이즈는 제외, 정렬', () => {
+  const list = [
+    att({ symbol: 'SOL', verification: 'official' }), // 공식 연결 + 급증(3.4배)
+    att({ symbol: 'DOGE', channels_1h: 2, stats: { '15m': st(1, null, 'insufficient'), '1h': st(3, null, 'insufficient'), '6h': st(4, null, 'insufficient') }, score: 41 }), // 2개 채널 동시
+    att({ kind: 'community', symbol: 'XRP', channels_1h: 1, score: 74, stats: { '15m': st(8, 3.1, 'ok'), '1h': st(14, 2.2, 'ok'), '6h': st(20, null, 'insufficient') } }), // 커뮤니티 급증
+    att({ symbol: 'ZZZ', channels_1h: 1, score: 9, stats: { '15m': st(0, null, 'insufficient'), '1h': st(1, null, 'insufficient'), '6h': st(1, null, 'insufficient') } }), // 노이즈
+    att({ symbol: 'ADA', channels_1h: 1, stats: { '15m': st(1, 1.2, 'ok'), '1h': st(2, 1.4, 'ok'), '6h': st(3, 1.1, 'ok') }, score: 30 }), // 배수 낮음 → 제외
+    att({ symbol: 'NEW', channels_1h: 1, stats: { '15m': st(0, null, 'none'), '1h': st(4, null, 'new'), '6h': st(4, null, 'new') }, score: 50 }), // 새로 등장
+  ];
+  const sig = I.socialSignals(list, NOW, new Set(['XRP']));
+  assert.deepEqual(sig.map((s) => s.symbol), ['SOL', 'XRP', 'NEW', 'DOGE']);
+  assert.equal(sig[0].text, 'SOL · Telegram 3.4x');
+  assert.deepEqual(sig[0].reasons, ['linked_official', 'multi_channel', 'surge']);
+  assert.equal(sig[1].text, 'XRP · 커뮤니티 3.1x');
+  assert.deepEqual(sig[1].reasons, ['surge', 'market']); // 시장 이상과 동시
+  assert.equal(sig[2].text, 'NEW · Telegram 새로 등장');
+  assert.equal(sig[3].text, 'DOGE · Telegram 2개 채널 동시 언급');
+  assert.deepEqual(I.socialSignals([], NOW), []);
+  assert.ok(Object.keys(I.REASON_LABEL).length === 4);
+});
+
+test('이벤트 카드: 소스별 집계와 관측 순서 (게시 시각을 아는 것만, 인과관계 표현 없음)', () => {
+  const e = ev({ counts: { official: 1, news: 2, telegram: 3, community: 0 }, timeline: { first_seen_at: NOW, official_seen_at: NOW - 8 * MIN, social_seen_at: NOW - 5 * MIN, community_seen_at: null } });
+  assert.equal(I.countsText(e), '공식 1 · 뉴스 2 · Telegram 3');
+  assert.equal(I.countsText(ev()), '');
+  assert.match(I.observeOrder(e), /^공식 \d\d:\d\d → Telegram \d\d:\d\d$/);
+  assert.equal(I.observeOrder(ev({ timeline: { official_seen_at: NOW - MIN, social_seen_at: null, community_seen_at: null } })), ''); // 1개뿐이면 순서 없음
+  assert.equal(I.observeOrder(ev({ timeline: { official_seen_at: NOW, social_seen_at: NOW - 5 * MIN, community_seen_at: NOW - MIN } })).startsWith('Telegram'), true); // 시간순 정렬
+  const html = I.cardHtml(e, { rows: [] }, NOW);
+  assert.match(html, /<span class="ichip icounts">공식 1 · 뉴스 2 · Telegram 3<\/span>/);
+  assert.match(html, /관측 순서 공식 \d\d:\d\d → Telegram/);
+  assert.match(html, /title="먼저 관측된 순서일 뿐 인과관계가 아닙니다"/);
+  assert.doesNotMatch(html, /때문에|원인|영향으로/); // 인과 표현 금지
+  assert.doesNotMatch(I.cardHtml(ev(), { rows: [] }, NOW), /관측 순서|icounts/);
+});

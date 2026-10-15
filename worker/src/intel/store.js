@@ -1,6 +1,8 @@
 // Crypto Intelligence D1 저장소 (binding: DB). 같은 SQL: migrations/0002_intelligence.sql
 // 모든 시각은 epoch milliseconds(UTC) 정수로 저장합니다. 값은 항상 bind 로만 전달합니다 (SQL 문자열 조립 없음).
 
+import { ensureSocialSchema, resetSocialSchemaFlagForTests } from './social-store.js';
+
 export const RETENTION = { itemsDays: 30, clustersDays: 60 };
 const DAY = 86400000;
 
@@ -82,14 +84,36 @@ export const INTEL_SCHEMA = [
   )`,
 ];
 
+// 스키마 버전: 올리면 다음 실행에서 한 번만 전체 준비(CREATE IF NOT EXISTS + ALTER)를 다시 수행합니다.
+// Cron 실행은 대개 새 인스턴스라 메모리 플래그만으로는 매번 14개 CREATE 문을 보내게 되므로, D1 에 버전을 기록해 건너뜁니다.
+export const SCHEMA_VERSION = 3; // 1 = 6A, 2 = 6A 운영 수정(intel_meta), 3 = 6B(social_*, 클러스터 컬럼)
+
 let ready = false;
-export async function ensureIntelSchema(db) {
-  if (ready) return;
-  await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
-  ready = true;
+let pending = null;
+export function ensureIntelSchema(db) {
+  if (ready) return Promise.resolve();
+  if (!pending) {
+    pending = (async () => {
+      // 평상시: CREATE intel_meta(없을 때만) + 버전 조회 — 2개 문장으로 끝
+      const [, ver] = await db.batch([
+        db.prepare(`CREATE TABLE IF NOT EXISTS intel_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`),
+        db.prepare(`SELECT value FROM intel_meta WHERE key = 'schema_version'`),
+      ]);
+      const have = ver && ver.results && ver.results[0] ? Number(ver.results[0].value) : 0;
+      if (!(have >= SCHEMA_VERSION)) {
+        await db.batch(INTEL_SCHEMA.map((s) => db.prepare(s)));
+        await ensureSocialSchema(db); // Phase 6B: 소셜 테이블 + 클러스터 컬럼 (이미 있으면 건너뜀)
+        await setMeta(db, 'schema_version', SCHEMA_VERSION, Date.now());
+      }
+      ready = true;
+    })().finally(() => { pending = null; });
+  }
+  return pending;
 }
 export function resetIntelSchemaFlagForTests() {
   ready = false;
+  pending = null;
+  resetSocialSchemaFlagForTests();
 }
 
 export async function loadHealth(db) {
@@ -136,8 +160,18 @@ const parseJson = (s, d) => {
   }
 };
 
-export async function loadRecentClusters(db, now, limit = 300) {
-  const r = await db.prepare(`SELECT * FROM event_clusters WHERE last_time >= ? ORDER BY last_time DESC LIMIT ?`).bind(now - 48 * 3600000, limit).all();
+// 새 항목을 클러스터에 붙일 때만 필요 (24시간 창 + 여유). 평상시 실행에서는 호출하지 않습니다.
+export async function loadRecentClusters(db, now, limit = 150) {
+  const r = await db.prepare(`SELECT * FROM event_clusters WHERE last_time >= ? ORDER BY last_time DESC LIMIT ?`).bind(now - 30 * 3600000, limit).all();
+  return r.results.map(rowToCluster);
+}
+
+// 시세 반응을 갱신할 '젊은' 클러스터: 최근 1시간 안의 이벤트 중 코인이 있는 것만 (작은 쿼리)
+export async function loadYoungClusters(db, now, limit = 10) {
+  const r = await db
+    .prepare(`SELECT * FROM event_clusters WHERE symbols != '[]' AND ((published_known = 1 AND event_time >= ?) OR (published_known = 0 AND first_seen_at >= ?)) ORDER BY importance DESC LIMIT ?`)
+    .bind(now - 60 * 60000, now - 60 * 60000, limit)
+    .all();
   return r.results.map(rowToCluster);
 }
 
@@ -146,16 +180,19 @@ export function rowToCluster(r) {
     id: r.id, title: r.title, url: r.url, category: r.category, symbols: parseJson(r.symbols, []), importanceBase: r.importance_base, reactionBonus: r.reaction_bonus,
     importance: r.importance, verification: r.verification, source: r.source, sourceType: r.source_type, sources: parseJson(r.sources, []), itemCount: r.item_count,
     sourceCount: r.source_count, publishedKnown: !!r.published_known, eventTime: r.event_time, lastTime: r.last_time, firstSeenAt: r.first_seen_at, updatedAt: r.updated_at,
+    officialCount: r.official_count || 0, newsCount: r.news_count || 0, telegramCount: r.telegram_count || 0, communityCount: r.community_count || 0,
+    officialSeenAt: r.official_seen_at ?? null, socialSeenAt: r.social_seen_at ?? null, communitySeenAt: r.community_seen_at ?? null,
   };
 }
 
-const clusterArgs = (c) => [c.title, c.url, c.category, JSON.stringify(c.symbols), c.importanceBase, c.reactionBonus, c.importance, c.verification, c.source, c.sourceType, JSON.stringify(c.sources), c.itemCount, c.sourceCount, c.publishedKnown ? 1 : 0, c.eventTime, c.lastTime, c.firstSeenAt, c.updatedAt];
+const clusterArgs = (c) => [c.title, c.url, c.category, JSON.stringify(c.symbols), c.importanceBase, c.reactionBonus, c.importance, c.verification, c.source, c.sourceType, JSON.stringify(c.sources), c.itemCount, c.sourceCount, c.publishedKnown ? 1 : 0, c.eventTime, c.lastTime, c.firstSeenAt, c.updatedAt, c.officialCount || 0, c.newsCount || 0, c.telegramCount || 0, c.communityCount || 0, c.officialSeenAt ?? null, c.socialSeenAt ?? null, c.communitySeenAt ?? null];
 
 export async function insertCluster(db, c) {
   const r = await db
     .prepare(
-      `INSERT INTO event_clusters (title, url, category, symbols, importance_base, reaction_bonus, importance, verification, source, source_type, sources, item_count, source_count, published_known, event_time, last_time, first_seen_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO event_clusters (title, url, category, symbols, importance_base, reaction_bonus, importance, verification, source, source_type, sources, item_count, source_count, published_known, event_time, last_time, first_seen_at, updated_at,
+         official_count, news_count, telegram_count, community_count, official_seen_at, social_seen_at, community_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(...clusterArgs(c))
     .run();
@@ -166,7 +203,8 @@ export async function updateCluster(db, c) {
   await db
     .prepare(
       `UPDATE event_clusters SET title = ?, url = ?, category = ?, symbols = ?, importance_base = ?, reaction_bonus = ?, importance = ?, verification = ?, source = ?, source_type = ?, sources = ?,
-         item_count = ?, source_count = ?, published_known = ?, event_time = ?, last_time = ?, first_seen_at = ?, updated_at = ? WHERE id = ?`,
+         item_count = ?, source_count = ?, published_known = ?, event_time = ?, last_time = ?, first_seen_at = ?, updated_at = ?,
+         official_count = ?, news_count = ?, telegram_count = ?, community_count = ?, official_seen_at = ?, social_seen_at = ?, community_seen_at = ? WHERE id = ?`,
     )
     .bind(...clusterArgs(c), c.id)
     .run();

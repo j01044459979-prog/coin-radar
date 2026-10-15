@@ -9,7 +9,7 @@ export const CATEGORY_LABEL = {
 };
 
 const RULES = {
-  delisting: /delist|removal of|will remove|cease (trading|support)|상장\s*폐지|거래\s*지원\s*종료|거래\s*종료/i,
+  delisting: /delist|removal of|will remove|cease (trading|support)|상장\s*폐지|상폐|거래\s*지원\s*종료|거래\s*종료/i,
   warning: /유의\s*종목|투자\s*유의|유의\s*촉구|monitoring tag|caution/i,
   listing: /will list|\bto list\b|new listing|lists?\b.*\b(on|with)\b|listing|상장|디지털\s*자산\s*추가|마켓\s*추가|신규\s*거래\s*지원/i,
   airdrop: /airdrop|hodler|에어\s*드[랍롭]/i,

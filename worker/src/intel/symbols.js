@@ -6,6 +6,8 @@
 //  2) 일반 단어와 겹치는 티커(ONE, AI, IN, US ...)는 문맥이 명확할 때만: (ONE) · $ONE · ONE/USDT · ONEUSDT · "ONE token/coin"
 //  3) 일반 금융 약어(ETF, SEC, USD ...)는 코인으로 보지 않음
 
+import { LOWER_TICKERS, matchShortKo } from './aliases.js';
+
 // name: 영문/한글 이름 alias (단어 경계, 대소문자 무시). tickers 는 심볼과 같은 문자열.
 export const CORE = {
   BTC: ['Bitcoin', '비트코인'], ETH: ['Ethereum', '이더리움'], XRP: ['Ripple', '리플'], SOL: ['Solana', '솔라나'],
@@ -62,7 +64,8 @@ let defaultDict = null;
 const getDefault = () => (defaultDict ||= buildDictionary());
 
 // 제목에서 심볼 배열 반환 (등장 순서, 중복 없음, 최대 6개)
-export function detectSymbols(title, dict = getDefault()) {
+// options.social = true: Telegram/커뮤니티용 — 소문자 주요 티커(btc, sol …)와 한글 줄임말(비트, 이더, 솔 …)도 인식 (aliases.js)
+export function detectSymbols(title, dict = getDefault(), options = {}) {
   if (typeof title !== 'string' || !title) return [];
   const found = new Map(); // symbol → 첫 등장 위치
   const add = (sym, pos) => { if (!found.has(sym)) found.set(sym, pos); };
@@ -111,6 +114,23 @@ export function detectSymbols(title, dict = getDefault()) {
           const sym = dict.ko.get(t.slice(i, i + len));
           if (sym) add(sym, run.index + i);
         }
+      }
+    }
+  }
+  // 5) 소셜 전용: 소문자 티커 / 한글 줄임말 / $캐시태그 (오탐 방지 규칙은 aliases.js)
+  if (options.social) {
+    for (const m of title.matchAll(/(?<![A-Za-z0-9])\$?([a-z]{2,5})(?![A-Za-z0-9])/g)) {
+      const up = m[1].toUpperCase();
+      if (LOWER_TICKERS.has(m[1]) && dict.tickers.has(up)) add(up, m.index);
+    }
+    for (const m of title.matchAll(/\$([A-Za-z]{2,10})(?![A-Za-z0-9])/g)) {
+      const up = m[1].toUpperCase();
+      if (dict.tickers.has(up) && !NOT_COINS.has(up)) add(up, m.index);
+    }
+    if (/[\u3131-\uD79D]/.test(title)) {
+      for (const run of title.matchAll(/[\u3131-\uD79D]+/g)) {
+        const sym = matchShortKo(run[0], title);
+        if (sym) add(sym, run.index);
       }
     }
   }

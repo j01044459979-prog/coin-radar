@@ -35,6 +35,15 @@ crons = ["* * * * *", "*/2 * * * *"]
 # MONITOR_MARKETS: 감시할 Upbit KRW 종목 수 (24H 거래대금 상위). 최대 20.
 [vars]
 MONITOR_MARKETS = "15"
+# 선택 설정 (필요할 때만 Cloudflare 대시보드 Variables 또는 여기에 추가. 비밀값 아님. docs/INTELLIGENCE.md · docs/SOCIAL-INTELLIGENCE.md):
+#   INTEL_DISABLED = "coindesk,tg-emperorcoin"   # 특정 정보 출처 끄기
+#   INTEL_ENABLE   = "coinpan"                   # 기본 비활성 출처 켜기 (이용조건/robots 확인 후)
+#   COINPAN_BOARDS = "https://coinpan.com/..."   # Coinpan 게시판 RSS/목록 URL (coinpan.com 호스트만)
+#   INTEL_BUDGET   = "4"                         # 정보 수집 실행당 CPU 예산 (유료 플랜이면 올릴 수 있음, 최대 20)
+
+# 배포 식별: Cloudflare 가 배포(버전)마다 id/timestamp 를 env.CF_VERSION_METADATA 로 넣어줍니다 → /api/health 의 deployment 에 표시.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
 
 # D1 데이터베이스 연결 (production 전용). 코드에서는 env.DB 로 사용합니다.
 # database_id 는 비밀번호가 아니며 공개 저장소에 있어도 됩니다 (접근은 Cloudflare 계정 권한으로 보호).

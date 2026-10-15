@@ -4,7 +4,7 @@
   'use strict';
 
   // 화면 버전. index.html 의 APP_VERSION, <script src="...?v="> 값과 항상 같아야 합니다 (테스트로 확인).
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
 
   // Binance 공식 공개 주소 (API Key 불필요, 시세 조회 전용)
   const BINANCE_WS_HOSTS = ['wss://stream.binance.com:9443', 'wss://data-stream.binance.vision'];
