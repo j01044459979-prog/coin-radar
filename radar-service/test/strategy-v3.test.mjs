@@ -41,10 +41,10 @@ test('미확정 봉 및 비정상 OHLC는 분석을 차단', () => {
   const c = upwardBars(120);
   const badConfirm = c.map(x => ({ ...x }));
   badConfirm[119].confirm = '0';
-  assert.throws(() => validateClosedCandles(badConfirm), /미확정/);
+  assert.throws(() => validateClosedCandles(badConfirm), /Unconfirmed/);
   const badOHLC = c.map(x => ({ ...x }));
   badOHLC[119].l = badOHLC[119].h + 1;
-  assert.throws(() => buildStrategySeries(badOHLC), /비정상/);
+  assert.throws(() => buildStrategySeries(badOHLC), /Invalid/);
 });
 
 test('ATR 방향 지표 두 개가 일치해도 독립 투표 2표로 간주하지 않음', () => {
@@ -90,17 +90,17 @@ test('보유 구간을 분리한 OOS 성과에 경계 횡단 거래가 섞이지
 });
 
 test('데이터 부족과 잘못된 테스트 입력은 명시적으로 거부', () => {
-  assert.throws(() => backtestStrategy(upwardBars(80)), /최소 200개/);
-  assert.throws(() => backtestStrategy(upwardBars(220), { trainFraction: 1 }), /설정 오류/);
+  assert.throws(() => backtestStrategy(upwardBars(80)), /At least 200/);
+  assert.throws(() => backtestStrategy(upwardBars(220), { trainFraction: 1 }), /configuration/);
 });
 
 test('5분봉 누락·시각 비정렬·확정 정보 누락은 거래 신호를 차단', () => {
   const c = upwardBars(121);
   const gap = c.filter((_, i) => i !== 80);
-  assert.throws(() => buildStrategySeries(gap), /캔들 누락/);
+  assert.throws(() => buildStrategySeries(gap), /Missing\/duplicate/);
   const unconfirmed = c.map(x => ({ ...x }));
   delete unconfirmed[60].confirm;
-  assert.throws(() => buildStrategySeries(unconfirmed), /미확정/);
+  assert.throws(() => buildStrategySeries(unconfirmed), /Unconfirmed/);
 });
 
 test('시가가 손절을 뛰어넘으면 유리한 손절가가 아닌 불리한 시가로 처리', () => {
