@@ -37,3 +37,22 @@ JSON은 확정봉 목록 또는 `{ "candles": [...] }` 형태. 각 원소는 `{ 
 - TradingView Supertrend 정의: https://www.tradingview.com/support/solutions/43000634738-supertrend/
 - TradingView Pine 백테스트 주의: https://www.tradingview.com/pine-script-docs/faq/strategies/
 - OKX 공식 API: https://www.okx.com/docs-v5/en/
+## P1 implementation (2026-10-15)
+- `history-v3.mjs` collects official OKX USDT-SWAP 5m historical candles with **after (older-than)** cursor pagination and bounded request rate. Page size is conservatively capped at 100 bars.
+- Rejects incorrect instrument IDs, HTTP 403/451 (without bypass), missing or unconfirmed candles, invalid OHLC, non-UTC-aligned timestamps, duplicate or incomplete page coverage.
+- Every research request requires 100% coverage of the requested [from,to) interval. If unavailable or the API blocks data, reports an error and does not calculate performance.
+- `research-v3.mjs` runs BTC/ETH/SOL as separate datasets, split 70/30 in temporal order. Its `RESEARCH_ONLY` or `INSUFFICIENT_SAMPLE` status is never a live trade approval. Default output has no raw candle data or secrets.
+- Feature-branch-only read-only workflow `.github/workflows/radar3-research.yml` runs public OKX 90-day research; no schedule, main merge, live recommendation, order placement, Telegram, or API keys.
+- Unit tests `history-v3.test.mjs` and `research-v3.test.mjs` verify pagination, gap rejection, API limit behavior, partial-data labeling, and no invented missing metrics.
+- Baseline 2.4 historical OI/funding remains unavailable in the research corpus, so claims of superiority over 2.4 must NOT be made.
+- The current 90-day analysis is preliminary. Next: 180-365 day rolling/walk-forward, volatility regime coverage, historical funding sensitivity, realistic mark-price/liquidation risk, matched baseline, paper forward tracking.
+
+Read-only run command:
+```sh
+node radar-service/research-v3.mjs --days=90 --symbols=BTC,ETH,SOL
+```
+
+Optional explicit local raw-data export (do not commit huge candle files):
+```sh
+node radar-service/research-v3.mjs --days=180 --symbols=BTC,ETH,SOL --out-dir=/tmp/radar3
+```
