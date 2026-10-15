@@ -12,9 +12,12 @@ export const BACKTEST_DEFAULTS = Object.freeze({
 export function conservativeBarExit(position, candle) {
   const { direction, stop, target } = position;
   if (direction === 'LONG') {
+    // Stop-market gap: opening below stop must fill at the WORSE open, never at a fictitious stop price.
+    if (candle.o < stop) return { type: 'STOP_GAP', price: candle.o };
     if (candle.l <= stop) return { type: 'STOP', price: stop };
     if (candle.h >= target) return { type: 'TARGET', price: target };
   } else {
+    if (candle.o > stop) return { type: 'STOP_GAP', price: candle.o };
     if (candle.h >= stop) return { type: 'STOP', price: stop };
     if (candle.l <= target) return { type: 'TARGET', price: target };
   }
