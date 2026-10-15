@@ -41,6 +41,30 @@ function slim(x) {
     netReturnPercent1x: x.netReturnPercent1x, maxClosedTradeDrawdownPercent: x.maxClosedTradeDrawdownPercent,
   };
 }
+// Diagnostic grouping, not a new selection criterion. Never optimize parameters against OOS.
+function diagnosticBreakdown(trades, splitIndex) {
+  if (!Array.isArray(trades) || !Number.isInteger(splitIndex)) return null;
+  const holdout = trades.filter(t => t.entryIndex >= splitIndex);
+  const summarize = (key) => {
+    const buckets = {};
+    for (const t of holdout) {
+      const name = String(t[key] ?? 'UNKNOWN');
+      const group = buckets[name] ??= { trades: 0, wins: 0, netPercentSum: 0,
+        grossPositiveSum: 0, grossNegativeAbsSum: 0 };
+      group.trades++;
+      if (t.netPercent > 0) { group.wins++; group.grossPositiveSum += t.netPercent; }
+      else group.grossNegativeAbsSum += -t.netPercent;
+      group.netPercentSum += t.netPercent;
+    }
+    return Object.fromEntries(Object.entries(buckets).map(([name, v]) => [name, {
+      trades: v.trades, winRatePercent: 100 * v.wins / v.trades,
+      averageNetTradePercent: v.netPercentSum / v.trades,
+      profitFactor: v.grossNegativeAbsSum > 0 ? v.grossPositiveSum / v.grossNegativeAbsSum : null,
+    }]));
+  };
+  return { bySetup: summarize('setup'), byDirection: summarize('direction'),
+    byOutcome: summarize('outcome') };
+}
 export async function runResearch(argv = [], deps = {}) {
   const input = parseArgs(argv);
   const collect = deps.collect ?? collectOkxHistory;
@@ -74,6 +98,8 @@ export async function runResearch(argv = [], deps = {}) {
         bars: result.quality.actual, pages: result.fetchedPages, coveragePercent: result.quality.coveragePercent,
         inSample: slim(bt.inSample), outOfSample: slim(bt.outOfSample),
         boundaryTradesExcluded: bt.boundaryTradesExcluded, resultState: state,
+        holdoutTradesPerDay: oos.trades / (input.days * 0.3),
+        diagnosticHoldoutBreakdown: diagnosticBreakdown(bt.trades, bt.spec?.splitIndex),
         validationGate: { minimumDays: 90, minimumOosTrades: 30,
           positiveOosReturnRequired: true, minimumOosProfitFactor: 1.2, maxOosDrawdownPercent: 10,
           passed: passGate, liveApproved: false },
