@@ -1,4 +1,4 @@
-// RICH STRATEGY RADAR 3.0 — conservative next-bar execution backtest.
+// RICH STRATEGY RADAR 3.0 - conservative next-bar execution backtest.
 // Research tool ONLY: not an exchange simulator, not a live execution engine.
 // Funding, liquidation, market impact and order-book depth are NOT simulated.
 import { buildStrategySeries, validateClosedCandles } from './strategies-v3.mjs';
@@ -40,7 +40,7 @@ function summarize(trades) {
     trades: trades.length,
     winRatePercent: trades.length ? win / trades.length * 100 : null,
     profitFactor: losses > 0 ? gains / losses : gains > 0 ? null : null,
-    profitFactorNote: losses === 0 ? '손실 거래 없음: 유효한 무한 PF로 간주 금지' : null,
+    profitFactorNote: losses === 0 ? 'No losing trades; do not infer an infinite profit factor' : null,
     netReturnPercent1x: (equity - 1) * 100,
     averageNetTradePercent: trades.length ? totalNetPct / trades.length : null,
     averageR: trades.length ? rTotal / trades.length : null,
@@ -49,12 +49,12 @@ function summarize(trades) {
 }
 export function backtestStrategy(candles, config = {}, strategyConfig = {}) {
   validateClosedCandles(candles);
-  if (candles.length < 200) throw new Error('백테스트는 최소 200개 확정봉이 필요합니다. 실전 평가는 수개월 이상 필요합니다');
+  if (candles.length < 200) throw new Error('At least 200 confirmed candles required; robust evaluation needs several months');
   const p = { ...BACKTEST_DEFAULTS, ...config };
   if (p.feeBpsEachSide < 0 || p.slippageBpsEachSide < 0 || p.feeBpsEachSide >= 100 ||
       p.slippageBpsEachSide >= 100 || !Number.isInteger(p.maxHoldBars) || p.maxHoldBars < 1 ||
       !Number.isInteger(p.cooldownBars) || p.cooldownBars < 0 ||
-      p.trainFraction < 0.5 || p.trainFraction > 0.9) throw new Error('백테스트 설정 오류');
+      p.trainFraction < 0.5 || p.trainFraction > 0.9) throw new Error('Invalid backtest configuration');
   const signals = buildStrategySeries(candles, strategyConfig);
   const slip = p.slippageBpsEachSide / 10000, feePctRoundTrip = p.feeBpsEachSide * 2 / 100;
   const trades = [];
@@ -120,6 +120,6 @@ export function backtestStrategy(candles, config = {}, strategyConfig = {}) {
     inSample: summarize(train),
     outOfSample: summarize(test),
     boundaryTradesExcluded, trades,
-    warning: '검증 전 연구 결과. 과최적화/미래정보 누출 방지 필요. 펀딩·강제청산·오더북·시세차 등 미반영. 과거 성과는 미래 결과를 보장하지 않습니다.',
+    warning: 'Research only. No funding, liquidation, order-book impact or exchange basis. Historical results are not predictive.',
   };
 }
