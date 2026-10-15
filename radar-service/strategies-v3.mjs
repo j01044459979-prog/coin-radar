@@ -13,9 +13,10 @@ const average = xs => xs.reduce((n, x) => n + x, 0) / xs.length;
 const last = xs => xs[xs.length - 1];
 const safe = n => Number.isFinite(n) ? n : null;
 
-export function validateClosedCandles(candles) {
+export function validateClosedCandles(candles, intervalMs = 300000) {
   if (!Array.isArray(candles) || candles.length < 2) throw new Error('최소 2개의 확정 캔들이 필요합니다');
-  let lastT = -Infinity;
+  if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) throw new Error('캔들 간격 오류');
+  let lastT = null;
   for (const [i, x] of candles.entries()) {
     if (![x?.o, x?.h, x?.l, x?.c].every(v => typeof v === 'number' && Number.isFinite(v))) {
       throw new Error('비정상 OHLC: ' + i);
@@ -23,11 +24,14 @@ export function validateClosedCandles(candles) {
     if (x.l <= 0 || x.h < Math.max(x.o, x.c, x.l) || x.l > Math.min(x.o, x.c)) {
       throw new Error('비정상 캔들 범위: ' + i);
     }
-    if (x.t !== undefined) {
-      if (!Number.isFinite(x.t) || x.t <= lastT) throw new Error('캔들 시각 역전 또는 중복: ' + i);
-      lastT = x.t;
+    if (!Number.isSafeInteger(x.t) || x.t < 0 || x.t % intervalMs !== 0) {
+      throw new Error('캔들 시각 누락 또는 정렬 오류: ' + i);
     }
-    if (x.confirm !== undefined && x.confirm !== '1' && x.confirm !== 1 && x.confirm !== true) {
+    if (lastT !== null && x.t - lastT !== intervalMs) {
+      throw new Error('캔들 누락·중복·역전: ' + i);
+    }
+    lastT = x.t;
+    if (x.confirm !== '1' && x.confirm !== 1 && x.confirm !== true) {
       throw new Error('미확정 캔들 입력 금지: ' + i);
     }
   }
@@ -96,7 +100,7 @@ function supertrendSeries(c, atr, factor) {
     const basicUpper = mid + factor * atr[i], basicLower = mid - factor * atr[i];
     if (upper === null) {
       upper = basicUpper; lower = basicLower;
-      direction = c[i].c >= mid ? 'UP' : 'DOWN';
+      direction = 'DOWN'; // TradingView SuperTrend initialization before first crossing.
     } else {
       const prevUpper = upper, prevLower = lower;
       upper = basicUpper < prevUpper || c[i - 1].c > prevUpper ? basicUpper : prevUpper;
