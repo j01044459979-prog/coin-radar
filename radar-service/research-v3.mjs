@@ -60,16 +60,28 @@ export async function runResearch(argv = [], deps = {}) {
     try {
       const result = await collect({ instId, from: input.from, to: input.to });
       const bt = test(result.candles);
-      const validTrades = bt.outOfSample.trades;
-      const state = input.days < 90 || validTrades < 30 ? 'INSUFFICIENT_SAMPLE' : 'RESEARCH_ONLY';
+      const oos = bt.outOfSample;
+      const enoughSamples = input.days >= 90 && oos.trades >= 30;
+      // A pre-declared minimum acceptance gate. Even passing this does NOT authorize live use.
+      // Negative out-of-sample performance must never be surfaced as a tradable recommendation.
+      const passGate = enoughSamples && oos.netReturnPercent1x > 0 &&
+        Number.isFinite(oos.profitFactor) && oos.profitFactor >= 1.2 &&
+        oos.maxClosedTradeDrawdownPercent <= 10;
+      const state = !enoughSamples ? 'INSUFFICIENT_SAMPLE'
+        : passGate ? 'RESEARCH_ONLY' : 'FAILED_VALIDATION';
       report.symbols[symbol] = {
         source: result.source, market: result.market, instId,
         bars: result.quality.actual, pages: result.fetchedPages, coveragePercent: result.quality.coveragePercent,
         inSample: slim(bt.inSample), outOfSample: slim(bt.outOfSample),
         boundaryTradesExcluded: bt.boundaryTradesExcluded, resultState: state,
+        validationGate: { minimumDays: 90, minimumOosTrades: 30,
+          positiveOosReturnRequired: true, minimumOosProfitFactor: 1.2, maxOosDrawdownPercent: 10,
+          passed: passGate, liveApproved: false },
         note: state === 'INSUFFICIENT_SAMPLE'
           ? 'Need at least 90 days AND 30 OOS trades for preliminary comparison. Never an automatic live approval.'
-          : 'Still requires baseline matched-period comparison, longer walk-forward and forward paper tracking.',
+          : state === 'FAILED_VALIDATION'
+            ? 'REJECTED: out-of-sample risk/return gate failed. Never turn on live recommendations.'
+            : 'Research gate passed, NOT live approval. Needs independent data, matched baseline, walk-forward and forward tracking.',
       };
       if (input.outDir) {
         const path = join(input.outDir, 'okx-' + symbol.toLowerCase() + '-5m-' + input.days + 'd.json');
