@@ -66,3 +66,22 @@ test('negative OOS performance is explicitly FAILED_VALIDATION and never approve
   assert.equal(report.symbols.BTC.validationGate.liveApproved, false);
   assert.match(report.symbols.BTC.note, /REJECTED/);
 });
+
+test('holdout diagnostics group by setup and direction without reclassifying train trades', async () => {
+  const rows = [
+    { entryIndex: 500, exitIndex: 501, setup: 'TRAIN_ONLY', direction: 'LONG', outcome: 'TIME', netPercent: 3 },
+    { entryIndex: 800, exitIndex: 801, setup: 'TREND_BREAKOUT', direction: 'LONG', outcome: 'STOP', netPercent: -0.4 },
+    { entryIndex: 820, exitIndex: 821, setup: 'RANGE_REVERSION', direction: 'SHORT', outcome: 'TARGET', netPercent: 0.6 },
+  ];
+  const report = await runResearch(['--days=90', '--symbols=BTC', fixed], {
+    collect: async () => sample,
+    test: () => ({ spec: { splitIndex: 700 }, trades: rows,
+      inSample: stats(1), outOfSample: stats(2), boundaryTradesExcluded: 0 }),
+  });
+  const d = report.symbols.BTC.diagnosticHoldoutBreakdown;
+  assert.equal(d.bySetup.TREND_BREAKOUT.trades, 1);
+  assert.equal(d.bySetup.RANGE_REVERSION.trades, 1);
+  assert.equal(d.bySetup.TRAIN_ONLY, undefined);
+  assert.equal(d.byDirection.SHORT.winRatePercent, 100);
+  assert.equal(report.symbols.BTC.resultState, 'INSUFFICIENT_SAMPLE');
+});
