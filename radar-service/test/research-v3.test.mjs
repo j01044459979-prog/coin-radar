@@ -51,7 +51,7 @@ test('sufficient history and trade count still outputs RESEARCH_ONLY and no read
       boundaryTradesExcluded: 0 }),
   });
   assert.equal(report.symbols.BTC.resultState, 'RESEARCH_ONLY');
-  assert.match(report.symbols.BTC.note, /forward paper/);
+  assert.match(report.symbols.BTC.note, /forward tracking/);
 });
 
 test('negative OOS performance is explicitly FAILED_VALIDATION and never approved for live use', async () => {
