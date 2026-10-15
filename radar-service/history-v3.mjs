@@ -123,7 +123,7 @@ export async function collectOkxHistory({
     if (pages > 0 && gapMs > 0) await pause(gapMs);
     const page = await fetchPage(url.toString(), { fetcher, pause, maxRetries, timeoutMs });
     pages++;
-    if (!page.length) throw new Error('History ended before requested start: ' + cursor);
+    if (!page.length) throw new Error('Incomplete historical coverage: history ended before requested start: ' + cursor);
     const oldest = page[page.length - 1].t;
     if (oldest >= cursor || oldest >= priorOldest) throw new Error('History cursor did not move backward');
     priorOldest = oldest;
