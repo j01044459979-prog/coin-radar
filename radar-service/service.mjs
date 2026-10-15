@@ -151,6 +151,17 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   const hour = Math.floor(now / 3600000);
   const hourly = state.reportHour !== hour;
   const top = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
+  // 억제 시간대(quiet): 상태 연속성이 의심될 때(손상 복구·오래된 캐시 복원) 이전 전송 기록을 알 수 없으므로 이 시간대에는 아무것도 보내지 않고
+  // 현재 상태(보고 시각·강한 신호 쿨다운)만 기록한다. 다음 시간대부터 정상 재개. 중복 전송보다 1회 생략이 안전하다.
+  if (state.quiet && state.quiet.hour !== hour) delete state.quiet;
+  if (state.quiet) {
+    state.reportHour = hour; delete state.partial;
+    for (const row of top) state.sent[`${row.symbol}:${row.direction}`] = now;
+    state.suppressed = { at: now, hour, reason: state.quiet.reason, strong: top.length };
+    state.sent = Object.fromEntries(Object.entries(state.sent).filter(([, at]) => now - at < 86400000));
+    await save(state);
+    return { ok: true, quiet: state.quiet.reason, analyzed: rows.length, failed: failures.length };
+  }
   if (hourly) {
     await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 1순위 차트 → 2순위 차트)는 항상 같다.

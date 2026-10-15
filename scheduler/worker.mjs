@@ -23,7 +23,9 @@ async function gh(fetchImpl, token, method, path, body) {
 
 // 최근 실행 중 이 슬롯 것이 있는지 / 대기 중인 실행이 있는지 확인한다.
 async function inspect(fetchImpl, c, slot, now) {
-  const res = await gh(fetchImpl, c.token, 'GET', `/repos/${c.repo}/actions/workflows/${c.workflow}/runs?branch=${encodeURIComponent(c.ref)}&per_page=20`);
+  // 최근 30분 이내 실행만 최대 50개 조회(반영 지연·목록 길이 제한이 있을 수 있으므로 이 확인은 '최선의 중복 방지'이고, 최종 멱등성은 워크플로 Gate(state.lastSlot)가 보장한다)
+  const since = new Date(now - 1800000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const res = await gh(fetchImpl, c.token, 'GET', `/repos/${c.repo}/actions/workflows/${c.workflow}/runs?branch=${encodeURIComponent(c.ref)}&per_page=50&created=${encodeURIComponent('>=' + since)}`);
   if (!res.ok) return { error: res.status };
   const runs = (await res.json()).workflow_runs ?? [];
   const sameSlot = runs.some(r => String(r.display_title || '').includes(`slot ${slot} `) || String(r.display_title || '').endsWith(`slot ${slot}`));

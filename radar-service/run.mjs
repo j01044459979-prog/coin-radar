@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
-import { decide } from './gate.mjs';
+import { decide, quietReason, slotOfTime } from './gate.mjs';
 import { createCollector, cycle, telegramPhotoSender, telegramSender } from './service.mjs';
 import { buildSvg, chartCaption, chartPlan, renderChart, renderPng } from './chart.mjs';
 import { createOkxCollector } from './okx.mjs';
@@ -11,15 +11,15 @@ import { refreshNews } from './news.mjs';
 const args = new Set(process.argv.slice(2));
 const directory = process.env.RADAR_STATE_DIR || '/data';
 await mkdir(directory, { recursive: true, mode: 0o700 });
-let state = {};
+let state = {}, recoveredNow = false;
 try { state = JSON.parse(await readFile(`${directory}/state.json`, 'utf8')); if (!state || typeof state !== 'object' || Array.isArray(state)) throw new SyntaxError('state is not an object'); }
 catch (error) {
   if (error.code !== 'ENOENT') {
     // 손상된 상태가 가장 최근 캐시로 남아 레이더 전체를 영구 정지시키지 않도록: 원본은 보존하고 새 상태로 시작한다(정기 보고 1회 중복 가능).
     const kept = `state.corrupt-${Date.now()}.json`;
     await rename(`${directory}/state.json`, `${directory}/${kept}`).catch(() => {});
-    state = { recovery: { reason: 'corrupt-state', keptAs: kept, at: Date.now() } };
-    console.log(`::warning title=레이더 상태 손상::상태 파일을 읽지 못해 새 상태로 시작합니다(원본 ${kept} 보존). 이번 시간대 정기 보고가 1회 중복될 수 있습니다.`);
+    state = { recovery: { reason: 'corrupt-state', keptAs: kept, at: Date.now() } }; recoveredNow = true;
+    console.log(`::warning title=레이더 상태 손상::상태 파일을 읽지 못해 새 상태로 시작합니다(원본 ${kept} 보존). 중복 전송을 막기 위해 이번 시간대 Telegram 전송은 생략하고 다음 시간대부터 재개합니다.`);
   }
 }
 const save = async data => {
@@ -34,8 +34,16 @@ const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TE
 
 if (args.has('--gate')) {
   // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false.
-  const d = decide({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now: Date.now() });
-  console.log(`GATE ${d.run ? '실행' : '건너뜀'} · 출처=${process.env.RADAR_SOURCE_EVENT} · 스케줄러=${d.mode} · 직전 시도 ${d.ageMs === null ? '없음' : Math.round(d.ageMs / 1000) + '초 전'} · ${d.reason} · 복원된 상태 seq=${state.seq ?? '없음'} savedAt=${state.savedAt ? new Date(state.savedAt).toISOString() : '없음'}`);
+  const now = Date.now();
+  const d = decide({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now, slot: process.env.RADAR_SLOT });
+  console.log(`GATE ${d.run ? '실행' : '건너뜀'} · 출처=${process.env.RADAR_SOURCE_EVENT} · 슬롯=${d.slot} · 스케줄러=${d.mode} · 직전 시도 ${d.ageMs === null ? '없음' : Math.round(d.ageMs / 1000) + '초 전'} · ${d.reason} · 복원된 상태 seq=${state.seq ?? '없음'} savedAt=${state.savedAt ? new Date(state.savedAt).toISOString() : '없음'} · 캐시 판정=${process.env.RADAR_CACHE_STATUS || '없음'}`);
+  // 상태 연속성이 의심되면(손상 복구·오래된 캐시 복원) 이번 시간대 Telegram 전송을 억제한다: 중복 전송보다 1회 생략이 안전하다.
+  const reason = quietReason({ cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow });
+  if (reason && state.quiet?.hour !== Math.floor(now / 3600000)) {
+    state.quiet = { reason, hour: Math.floor(now / 3600000), at: now };
+    await save(state);
+    console.log(`::warning title=Telegram 전송 억제::${reason}: 이번 시간대(UTC 기준 ${state.quiet.hour}) 정기 보고·긴급 알림을 보내지 않고 상태만 복구합니다.`);
+  }
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `run=${d.run}\n`);
 } else if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   if (args.has('--once')) console.log('Telegram 비밀값 미설정: 수집·분석만 실행하고 전송/상태 저장은 하지 않습니다.');
@@ -94,6 +102,10 @@ if (args.has('--gate')) {
   const sendPhoto = telegramPhotoSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
   const render = renderChart;
   if (args.has('--once')) {
+    // 슬롯 멱등성: 이 슬롯을 처리했다고 먼저 기록한다(같은 슬롯의 중복 실행·늦게 도착한 이전 슬롯 실행은 게이트가 건너뜀).
+    const slot = Number(process.env.RADAR_SLOT);
+    state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
+    await save(state);
     console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
   } else {
     let stopped = false;

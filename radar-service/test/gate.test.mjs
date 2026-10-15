@@ -63,7 +63,10 @@ test('--gate: 손상된 상태 파일은 보존하고 새 상태로 시작한다
   writeFileSync(join(dir, 's', 'state.json'), '{broken');
   const r = runGate(dir, { RADAR_SOURCE_EVENT: 'github-schedule' });
   assert.match(r.out, /run=true/); assert.match(r.log, /::warning title=레이더 상태 손상/);
-  assert.ok(readdirSync(join(dir, 's')).some(f => f.startsWith('state.corrupt-'))); assert.equal(existsSync(join(dir, 's', 'state.json')), false);
+  assert.ok(readdirSync(join(dir, 's')).some(f => f.startsWith('state.corrupt-')));
+  // 새 상태가 기록되고, 이번 시간대 Telegram 전송 억제(quiet)가 걸린다
+  const fresh = JSON.parse(readFileSync(join(dir, 's', 'state.json'), 'utf8'));
+  assert.equal(fresh.quiet.reason, 'corrupt-state'); assert.equal(fresh.quiet.hour, Math.floor(Date.now() / 3600000)); assert.match(r.log, /Telegram 전송 억제/);
 });
 
 // ── 워크플로 구조 점검 ──
