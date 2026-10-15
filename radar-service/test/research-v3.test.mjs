@@ -53,3 +53,16 @@ test('sufficient history and trade count still outputs RESEARCH_ONLY and no read
   assert.equal(report.symbols.BTC.resultState, 'RESEARCH_ONLY');
   assert.match(report.symbols.BTC.note, /forward paper/);
 });
+
+test('negative OOS performance is explicitly FAILED_VALIDATION and never approved for live use', async () => {
+  const losing = { ...stats(80), profitFactor: 0.4, netReturnPercent1x: -27,
+    maxClosedTradeDrawdownPercent: 29 };
+  const report = await runResearch(['--days=90', '--symbols=BTC', fixed], {
+    collect: async () => sample,
+    test: () => ({ inSample: stats(100), outOfSample: losing, boundaryTradesExcluded: 0 }),
+  });
+  assert.equal(report.symbols.BTC.resultState, 'FAILED_VALIDATION');
+  assert.equal(report.symbols.BTC.validationGate.passed, false);
+  assert.equal(report.symbols.BTC.validationGate.liveApproved, false);
+  assert.match(report.symbols.BTC.note, /REJECTED/);
+});
