@@ -1,11 +1,11 @@
 # RICH STRATEGY RADAR 3.0 — 연구용 프로토타입
 
-상태: **개발 브랜치 전용 / 실전 보고 OFF / 자동 주문 OFF**.
+상태: **개발 브랜치 전용 / 실전 보고 OFF / 자동 주문 OFF**. 5분봉 확정·연속성은 입력 단계에서 강제 검증.
 
 ## 구현
 - `radar-service/strategies-v3.mjs`: SuperTrend(ATR14×3), UT 스타일 ATR trailing stop(독립 자체 구현), Donchian 직전 20봉 돌파 + 거래대금 1.5배, RSI14+볼린저20(2σ) 반전, EMA20/50 추세·횡보 구분.
 - SuperTrend와 ATR 트레일은 상관된 같은 ATR 근거를 사용하므로 **추세 근거 1개로 묶고**, 돌파/거래대금은 별도 근거로 다룬다. 세 지표 단순 다수결 금지.
-- `radar-service/strategy-backtest-v3.mjs`: 다음 봉 시가 진입, 같은 봉 손절·익절 충족시 손절 우선, 수수료 6bp/side, 슬리피지 3bp/side, 최대 24봉 보유, 포지션 중첩 방지.
+- `radar-service/strategy-backtest-v3.mjs`: 다음 봉 시가 진입, 같은 봉 손절·익절 충족시 손절 우선, 손절가 갭 통과시 불리한 시가로 체결, 수수료 6bp/side, 슬리피지 3bp/side, 최대 24봉 보유, 포지션 중첩 방지.
 - 결과에 전체/전반 70%/후반 30% 구간의 거래 수, 비용 반영 성과, profit factor, 승률, 거래 종료시점 낙폭을 구분 표시. 분할 경계에 걸친 거래는 두 개별 구간에서 제외.
 - `radar-service/strategy-backtest-cli-v3.mjs`: 사전에 수집한 확정봉 JSON을 입력받아 오프라인 통계 출력(거래 키/비밀값 불필요).
 - `radar-service/test/strategy-v3.test.mjs`: 신호 타당성, 미래봉 추가로 과거 신호가 달라지지 않는지, 거래 비용과 분할 검증.
@@ -28,7 +28,7 @@ JSON은 확정봉 목록 또는 `{ "candles": [...] }` 형태. 각 원소는 `{ 
 
 ## 제한 사항
 - 이 코드는 TradingView의 독점/공개 Pine 소스 복사본이 아니다. SuperTrend는 공개 지표 정의를 자체 구현했으며 ATR 트레일도 독립 구현한 'UT 스타일'이지 공식 UT Bot Alerts와 동일함을 보장하지 않는다.
-- `buildStrategySeries`는 confirm=1, 증가하는 시각 등을 확인하지만 **5분봉 연속성 검증은 별도 수집기 구현까지 미완료**다.
+- `buildStrategySeries`는 confirm=1, 증가하는 시각 등을 확인하지만 5분봉 연속성·시각 정렬·확정 여부 검증다.
 - 수수료/슬리피지는 임의의 보수적 기본 가정일 뿐 현재 사용자의 실제 VIP 수수료가 아니다. 강제청산, 레버리지, 포지션 마진, 펀딩, 호가 갭, 진입 불가, 차익거래 여건은 계산하지 않는다.
 - 과거 수익과 전략 점수는 미래 수익 확률을 의미하지 않는다.
 - 기존 `run.mjs`, `okx.mjs`, `report.mjs`, `service.mjs`, GitHub Actions schedule, Telegram 비밀값은 수정하지 않음.
