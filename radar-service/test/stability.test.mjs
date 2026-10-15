@@ -163,13 +163,25 @@ test('[3] judgeCache: 복원 키가 가장 최근이면 ok, 더 새 캐시가 �
   assert.deepEqual(judgeCache({ restoredKey: '', caches, ref: 'refs/heads/main' }), { status: 'cold-with-caches', newest: 'radar-state-3-1' });
   assert.equal(judgeCache({ restoredKey: '', caches: [], ref: 'refs/heads/main' }).status, 'cold');      // 최초 실행: 정상 전송
   assert.equal(judgeCache({ restoredKey: 'radar-state-9-1', caches: [], ref: 'refs/heads/main' }).status, 'unverified');
+  // 목록 반영 지연: 복원한 캐시가 목록에 아직 없으면 stale로 단정하지 않는다(더 오래된 캐시로 되돌려 복원하는 사고 방지)
+  assert.equal(judgeCache({ restoredKey: 'radar-state-4-1', caches, ref: 'refs/heads/main' }).status, 'unverified');
+  // 생성 시각이 같은 캐시는 최신으로 본다
+  assert.equal(judgeCache({ restoredKey: 'radar-state-5-1', caches: [c('radar-state-5-1', 20), c('radar-state-6-1', 20)], ref: 'refs/heads/main' }).status, 'ok');
   assert.equal(judgeCache({ restoredKey: 'a', caches: null, ref: 'refs/heads/main' }).status, 'unverified');   // API 실패
   assert.equal(judgeCache({ restoredKey: 'a', caches, ref: 'refs/heads/feature/x' }).status, 'skipped');
 });
-test('[3][5] quietReason: 손상 복구·stale·cold-with-caches만 억제, 최초 실행/unverified/ok는 억제하지 않음', () => {
+test('[3][5] quietReason: 손상 복구·stale·cold-with-caches는 억제, ok/cold/skipped는 억제하지 않음', () => {
   assert.equal(quietReason({ recovered: true }), 'corrupt-state');
   assert.equal(quietReason({ cacheStatus: 'stale' }), 'cache-stale'); assert.equal(quietReason({ cacheStatus: 'cold-with-caches' }), 'cache-cold-with-caches');
-  for (const s of ['ok', 'cold', 'unverified', 'skipped', undefined]) assert.equal(quietReason({ cacheStatus: s }), null, String(s));
+  for (const s of ['ok', 'cold', 'skipped', undefined]) assert.equal(quietReason({ cacheStatus: s }), null, String(s));
+});
+test('[A] unverified(캐시 API 실패): 상태가 직전 슬롯과 정확히 이어질 때만 진행, 한 실행이라도 뒤처졌거나 상태가 없으면 억제', () => {
+  const q = (lastSlot, slot = 100) => quietReason({ cacheStatus: 'unverified', state: lastSlot === undefined ? {} : { lastSlot }, slot });
+  assert.equal(q(99), null);                       // 직전 슬롯까지 처리 → 최신 상태로 판단
+  assert.equal(q(98), 'cache-unverified');          // 한 슬롯 뒤처짐(= 직전 실행 캐시를 못 받은 오래된 상태일 수 있음)
+  assert.equal(q(100), 'cache-unverified');         // 같은 슬롯(중복)이거나 시계 이상
+  assert.equal(q(undefined), 'cache-unverified');   // 상태 없음(캐시 유실과 최초 실행을 구분 불가)
+  assert.equal(quietReason({ cacheStatus: 'unverified', state: { lastSlot: 99 }, slot: undefined }), 'cache-unverified');
 });
 test('[3][5] --gate CLI: 캐시 판정 stale이면 quiet 기록, ok면 기록 없음, 기능 브랜치 확인 스크립트는 네트워크 없이 skipped', () => {
   const run = (cacheStatus, preset) => {
@@ -179,7 +191,9 @@ test('[3][5] --gate CLI: 캐시 판정 stale이면 quiet 기록, ok면 기록 �
     execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, RADAR_SOURCE_EVENT: 'cloudflare', RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slotOfTime(Date.now())), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
     return JSON.parse(readFileSync(join(dir, 's', 'state.json'), 'utf8'));
   };
-  assert.equal(run('stale').quiet.reason, 'cache-stale'); assert.equal(run('ok').quiet, undefined); assert.equal(run('unverified').quiet, undefined);
+  assert.equal(run('stale').quiet.reason, 'cache-stale'); assert.equal(run('ok').quiet, undefined);
+  assert.equal(run('unverified').quiet.reason, 'cache-unverified');                                              // lastSlot=1은 현재 슬롯과 이어지지 않음
+  assert.equal(run('unverified', { lastAttempt: Date.now() - 300000, lastSlot: slotOfTime(Date.now()) - 1 }).quiet, undefined); // 직전 슬롯과 이어짐 → 진행
   const dir = mkdtempSync(join(tmpdir(), 'cc-')); const out = join(dir, 'o'); writeFileSync(out, '');
   execFileSync(process.execPath, [new URL('../cache-check.mjs', import.meta.url).pathname], { env: { ...process.env, GITHUB_REF: 'refs/heads/feature/x', GITHUB_OUTPUT: out, GITHUB_REPOSITORY: 'a/b', GITHUB_TOKEN: 'x' }, encoding: 'utf8' });
   assert.match(readFileSync(out, 'utf8'), /status=skipped/);
@@ -201,4 +215,76 @@ test('워크플로: 캐시 최신성 확인 → 최신 캐시 재복원 → 게�
   assert.equal((wf.match(/RADAR_SLOT:/g) || []).length, 2);                                // Gate와 Run radar
   assert.match(wf, /RADAR_CACHE_STATUS: .*restore_newest\.outputs\.cache-hit/);
   assert.match(wf, /id: cachecheck\n\s+continue-on-error: true/);                         // 확인 실패가 레이더를 멈추지 않음
+});
+
+// ── 캐시 확인 API 실패/재복원 실패 시나리오: 오래된 상태로 Telegram 중복이 나가는가 ──
+import { checkCaches } from '../cache-check.mjs';
+const envMain = { GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'a/b', GITHUB_TOKEN: 'secret-token', RESTORED_KEY: 'radar-state-2-1' };
+const listOk = (...caches) => json({ actions_caches: caches });
+const seq = (...responses) => { let i = 0; const f = async () => { const r = responses[Math.min(i++, responses.length - 1)]; if (r instanceof Error) throw r; return r.clone ? r.clone() : r; }; f.calls = () => i; return f; };
+
+test('[A] checkCaches: API 일시 오류는 최대 3회 재시도하고 성공하면 판정, 끝내 실패하면 unverified', async () => {
+  const waits = [];
+  const caches = [c('radar-state-1-1', 0), c('radar-state-2-1', 5)];
+  const ok = seq(new Response('', { status: 502 }), new TypeError('net'), listOk(...caches));
+  const r1 = await checkCaches({ env: envMain, fetchImpl: ok, wait: async ms => waits.push(ms) });
+  assert.equal(r1.status, 'ok'); assert.equal(r1.attempts, 3); assert.deepEqual(waits, [2000, 4000]);
+  const bad = seq(new Response('', { status: 500 }));
+  const r2 = await checkCaches({ env: envMain, fetchImpl: bad, wait: async () => {} });
+  assert.deepEqual([r2.status, r2.attempts, bad.calls()], ['unverified', 3, 3]);
+  const net = seq(new TypeError('network'));
+  assert.equal((await checkCaches({ env: envMain, fetchImpl: net, wait: async () => {} })).status, 'unverified');
+});
+test('[A] checkCaches: 429 Retry-After 반영(최대 10초), 권한 오류(401/404)는 재시도하지 않음, 본문 이상은 unverified', async () => {
+  const waits = [];
+  const rl = seq(new Response('', { status: 429, headers: { 'retry-after': '7' } }), listOk(c('radar-state-2-1', 5)));
+  assert.equal((await checkCaches({ env: envMain, fetchImpl: rl, wait: async ms => waits.push(ms) })).status, 'ok'); assert.deepEqual(waits, [7000]);
+  for (const status of [401, 404]) { const f = seq(new Response('', { status })); const r = await checkCaches({ env: envMain, fetchImpl: f, wait: async () => {} }); assert.deepEqual([r.status, f.calls()], ['unverified', 1], String(status)); }
+  assert.equal((await checkCaches({ env: envMain, fetchImpl: seq(json({})), wait: async () => {} })).status, 'unverified');   // actions_caches 없음
+  const f = seq(listOk()); assert.equal((await checkCaches({ env: { ...envMain, GITHUB_REF: 'refs/heads/feature/x' }, fetchImpl: f })).status, 'skipped'); assert.equal(f.calls(), 0);
+});
+test('[A] 토큰은 Authorization 헤더로만 전달되고 출력에 포함되지 않는다', async () => {
+  let seen; const f = async (url, opt) => { seen = { url, opt }; return listOk(c('radar-state-2-1', 5)); };
+  const r = await checkCaches({ env: envMain, fetchImpl: f });
+  assert.equal(seen.opt.headers.Authorization, 'Bearer secret-token'); assert.doesNotMatch(seen.url, /secret/); assert.doesNotMatch(JSON.stringify(r), /secret/);
+  assert.match(seen.url, /key=radar-state-/); assert.match(seen.url, /ref=refs%2Fheads%2Fmain/);
+});
+
+// 게이트 CLI → 상태 파일 → cycle: 실제 경로 전체로 중복 전송 여부를 확인
+function viaGate({ cacheStatus, preset, source = 'cloudflare', slot }) {
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-')); execFileSync('mkdir', ['-p', join(dir, 's')]);
+  writeFileSync(join(dir, 's', 'state.json'), JSON.stringify(preset)); const out = join(dir, 'o'); writeFileSync(out, '');
+  execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, RADAR_SOURCE_EVENT: source, RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slot), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
+  return JSON.parse(readFileSync(join(dir, 's', 'state.json'), 'utf8'));
+}
+const hr = hourOf(T0);
+test('[A][B] 캐시 API 실패(unverified) + 한 실행 뒤처진 오래된 상태: 게이트가 억제를 걸어 정기 보고·알림 중복이 0건', async () => {
+  const slotNow = slotOfTime(Date.now()) + 50;
+  const state = viaGate({ cacheStatus: 'unverified', slot: slotNow, preset: { reportHour: hr - 1, sent: {}, lastSlot: slotNow - 2, lastAttempt: Date.now() - 600000 } });
+  assert.equal(state.quiet.reason, 'cache-unverified'); state.quiet.hour = hr;      // 모의 거래소 시각(T0)의 시간대에 맞춤
+  const r = await runCycle(state); assert.equal(r.sent.length + r.photos.length, 0);
+});
+test('[A][B] 최신 캐시 재복원 실패(stale 유지): 억제로 중복 0건, 억제 후 상태는 현재 시간대로 복구', async () => {
+  const slotNow = slotOfTime(Date.now()) + 50;
+  const state = viaGate({ cacheStatus: 'stale', slot: slotNow, preset: { reportHour: hr - 1, sent: {}, lastSlot: slotNow - 2, lastAttempt: Date.now() - 600000 } });
+  state.quiet.hour = hr; const r = await runCycle(state);
+  assert.equal(r.sent.length, 0); assert.equal(state.reportHour, hr);
+});
+test('[A][B] 최신 캐시 재복원 성공(ok) 또는 unverified지만 직전 슬롯과 이어지는 상태: 억제 없이 정상, 같은 시간대 재전송 없음', async () => {
+  const slotNow = slotOfTime(Date.now()) + 50;
+  for (const cacheStatus of ['ok', 'unverified']) {
+    const state = viaGate({ cacheStatus, slot: slotNow, preset: { reportHour: hr, sent: {}, lastSlot: slotNow - 1, lastAttempt: Date.now() - 300000 } });
+    assert.equal(state.quiet, undefined, cacheStatus);
+    const r = await runCycle(state); assert.equal(r.sent.filter(t => /RICH FUTURES RADAR/.test(t)).length, 0, cacheStatus);      // 이미 이 시간대 보고 완료
+  }
+});
+
+// ── actions/cache/restore@v4 출력 의미에 맞는 워크플로 표현식 ──
+test('워크플로: cache-hit은 정확 일치(\'true\')일 때만 최신 복원 성공으로 보고, 키 기반 재복원은 restore-keys 없이 정확한 키만 쓴다', () => {
+  const block = wf.slice(wf.indexOf('name: Restore newest cache'), wf.indexOf('name: Gate'));
+  assert.doesNotMatch(block, /restore-keys/); assert.match(block, /key: \$\{\{ steps\.cachecheck\.outputs\.newest \}\}/);
+  assert.match(block, /if: steps\.cachecheck\.outputs\.status == 'stale' \|\| steps\.cachecheck\.outputs\.status == 'cold-with-caches'/);
+  assert.match(wf, /RADAR_CACHE_STATUS: \$\{\{ \(steps\.restore_newest\.outputs\.cache-hit == 'true' && 'ok'\) \|\| steps\.cachecheck\.outputs\.status \|\| 'unverified' \}\}/);
+  assert.match(wf, /RESTORED_KEY: \$\{\{ steps\.restore\.outputs\.cache-matched-key \}\}/);         // 접두어 복원은 matched-key로 판단(cache-hit은 'false')
+  assert.doesNotMatch(wf, /steps\.restore\.outputs\.cache-hit/);
 });

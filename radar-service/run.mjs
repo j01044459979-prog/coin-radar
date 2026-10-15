@@ -38,7 +38,7 @@ if (args.has('--gate')) {
   const d = decide({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now, slot: process.env.RADAR_SLOT });
   console.log(`GATE ${d.run ? '실행' : '건너뜀'} · 출처=${process.env.RADAR_SOURCE_EVENT} · 슬롯=${d.slot} · 스케줄러=${d.mode} · 직전 시도 ${d.ageMs === null ? '없음' : Math.round(d.ageMs / 1000) + '초 전'} · ${d.reason} · 복원된 상태 seq=${state.seq ?? '없음'} savedAt=${state.savedAt ? new Date(state.savedAt).toISOString() : '없음'} · 캐시 판정=${process.env.RADAR_CACHE_STATUS || '없음'}`);
   // 상태 연속성이 의심되면(손상 복구·오래된 캐시 복원) 이번 시간대 Telegram 전송을 억제한다: 중복 전송보다 1회 생략이 안전하다.
-  const reason = quietReason({ cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow });
+  const reason = quietReason({ cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow, state, slot: d.slot });
   if (reason && state.quiet?.hour !== Math.floor(now / 3600000)) {
     state.quiet = { reason, hour: Math.floor(now / 3600000), at: now };
     await save(state);
