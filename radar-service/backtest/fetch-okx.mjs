@@ -1,7 +1,7 @@
 // OKX 공개 API(키 없음)에서 USDT 무기한 1시간봉 과거 데이터를 내려받는다. 읽기 전용. 결과는 gzip JSON 하나.
 //  node radar-service/backtest/fetch-okx.mjs --days 365 --symbols 25 --out data.json.gz
 import { gzipSync } from 'node:zlib';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { scanMarket } from '../universe.mjs';
 
@@ -36,23 +36,27 @@ export async function fetchHistory(instId, bars, { fetchImpl = fetch, wait = pau
   return arr;
 }
 
-export async function main({ days = 365, symbols = 25, out = 'data.json.gz', fetchImpl = fetch, wait = pause } = {}) {
+export async function main({ days = 365, symbols = 25, out = 'data.json.gz', idsFile = null, fetchImpl = fetch, wait = pause } = {}) {
   const instruments = await getJson(`${BASE}/public/instruments?instType=SWAP`, fetchImpl, wait);
   const tickers = await getJson(`${BASE}/market/tickers?instType=SWAP`, fetchImpl, wait);
   const market = scanMarket({ instruments, tickers });
-  const top = market.eligible.filter(e => e.turnover >= 5e6).sort((a, b) => b.turnover - a.turnover).slice(0, symbols).map(e => e.instId);
+  // 재현성: idsFile이 있으면 그 종목 목록을 그대로 쓴다(현재 거래대금 순위가 바뀌어도 같은 데이터셋). 없으면 현재 거래대금 상위로 선정하고 목록을 출력한다.
+  const pinned = idsFile && existsSync(idsFile) ? JSON.parse(readFileSync(idsFile, 'utf8')).ids : null;
+  const top = pinned ?? market.eligible.filter(e => e.turnover >= 5e6).sort((a, b) => b.turnover - a.turnover).slice(0, symbols).map(e => e.instId);
   const ids = [...new Set(['BTC-USDT-SWAP', ...top])];
-  const candles = {}, notes = [];
+  console.log(`IDS ${JSON.stringify({ ids, pinned: Boolean(pinned) })}`);
+  const candles = {}, notes = [], specs = {};
+  for (const id of ids) { const x = instruments.find(i => i.instId === id); if (x) specs[id] = { tickSz: Number(x.tickSz), lotSz: Number(x.lotSz), minSz: Number(x.minSz), ctVal: Number(x.ctVal), listTime: Number(x.listTime) || null }; }
   for (const id of ids) {
     try { const rows = await fetchHistory(id, days * 24, { fetchImpl, wait }); candles[id] = rows; console.log(`${id}: ${rows.length}봉 (${rows.length ? new Date(rows[0][0]).toISOString().slice(0, 10) : '-'} ~ ${rows.length ? new Date(rows.at(-1)[0]).toISOString().slice(0, 10) : '-'})`); }
     catch (error) { notes.push(`${id}: ${error.message}`); console.log(`${id}: 실패 ${error.message}`); if (error.status) break; }
   }
-  const data = { meta: { fetchedAt: Date.now(), bar: '1H', source: 'OKX /market/history-candles', days, universe: 'fetch 시점 24h 거래대금 상위(생존 편향 있음)', notes }, candles };
+  const data = { meta: { fetchedAt: Date.now(), bar: '1H', source: 'OKX /market/history-candles', days, universe: 'fetch 시점 24h 거래대금 상위(생존 편향 있음)', notes }, specs, candles };
   if (out) writeFileSync(out, gzipSync(JSON.stringify(data)));
   return data;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
-  await main({ days: Number(arg('days', 365)), symbols: Number(arg('symbols', 25)), out: arg('out', 'data.json.gz') });
+  await main({ days: Number(arg('days', 365)), symbols: Number(arg('symbols', 25)), out: arg('out', 'data.json.gz'), idsFile: arg('ids-file', null) });
 }

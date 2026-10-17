@@ -13,9 +13,10 @@ export function seriesA(c) {
   return { st: supertrend(c, A_SETTINGS.supertrend.period, A_SETTINGS.supertrend.multiplier), e200: ema(closes, A_SETTINGS.ema), rsi: rsi(closes, A_SETTINGS.rsi), macd: macd(closes, A_SETTINGS.macd.fast, A_SETTINGS.macd.slow, A_SETTINGS.macd.signal) };
 }
 
-export function scoreA(c, s, i) {
+// opts.maxAge(연구용 H2): 설정하면 Supertrend 전환 후 경과 봉 수가 maxAge를 넘는 '오래된 추세'의 신규 진입을 차단 사유로 표시한다(점수 계산은 변경 없음).
+export function scoreA(c, s, i, opts = {}) {
   const x = c[i], st = s.st, e = s.e200[i], r = s.rsi[i], h = s.macd.hist[i], hp = s.macd.hist[i - 1], ml = s.macd.line[i];
-  if (i < WARMUP_A || ![e, r, h, hp, ml, st.dir[i], st.line[i]].every(Number.isFinite)) return { dir: null, score: 0, parts: {}, reasons: ['지표 계산에 필요한 캔들 부족'], settings: A_SETTINGS };
+  if (i < WARMUP_A || ![e, r, h, hp, ml, st.dir[i], st.line[i]].every(Number.isFinite)) return { dir: null, score: 0, parts: {}, reasons: ['지표 계산에 필요한 캔들 부족'], blockers: [], settings: A_SETTINGS };
   const dir = st.dir[i] === 1 ? 'LONG' : 'SHORT', d = dir === 'LONG' ? 1 : -1;
   const parts = {}, reasons = [];
   // 1) Supertrend 30: 방향(기준) + 전환 후 경과 봉 수(신선도). 오래된 추세일수록 늦은 진입으로 감점
@@ -33,7 +34,11 @@ export function scoreA(c, s, i) {
   parts.rsi = { score: rsiPts, max: 20, note: `RSI(${A_SETTINGS.rsi}) ${r.toFixed(1)}${rr > 75 ? ' 과열' : rr > 68 ? ' 다소 과열' : rr < 40 ? ' 약세' : ''}` };
   const score = Math.round(Object.values(parts).reduce((a, p) => a + p.score, 0) * 10) / 10;
   reasons.push(...Object.values(parts).map(p => p.note));
-  return { dir, score, parts, reasons, settings: A_SETTINGS, supertrendLine: st.line[i], atr: st.atr[i], age };
+  // 진단용 수치 특징(점수 계산에 쓰이지 않음)
+  const features = { age, e200DistPct: (x.c / e - 1) * 100 * d, e200DistAtr: (x.c - e) * d / st.atr[i], rsiDir: rr, histAligned: histOk, histExpanding: expanding, macdLineAligned: lineOk };
+  const blockers = [];
+  if (Number.isFinite(opts.maxAge) && age > opts.maxAge) blockers.push(`오래된 추세(Supertrend 전환 후 ${age + 1}봉 > ${opts.maxAge + 1}봉)`);
+  return { dir, score, parts, reasons, blockers, features, settings: A_SETTINGS, supertrendLine: st.line[i], atr: st.atr[i], age };
 }
 
 // 전략 A의 자체 손절·목표: 손절=Supertrend 라인(0.8~3 ATR 범위로 제한), 목표=2R. 진입 기준가 ref(보통 신호봉 종가)를 받는다.
