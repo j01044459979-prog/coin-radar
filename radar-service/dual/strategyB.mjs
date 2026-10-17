@@ -57,7 +57,8 @@ function nearestAhead(c, i, dir, entry, lastIdx) {
   return best;
 }
 
-export function scoreB(c, s, i, btcCtx) {
+// opts.requireRetest(연구용 H1): 재테스트 완료를 필수 조건으로 만든다(미완료면 차단 사유). 점수 계산은 변경 없음.
+export function scoreB(c, s, i, btcCtx, opts = {}) {
   const empty = reason => ({ dir: null, score: 0, parts: {}, blockers: [], reasons: [reason], settings: B_SETTINGS });
   const a = s.atr[i];
   if (i < WARMUP_B || !Number.isFinite(a) || !(a > 0)) return empty('지표 계산에 필요한 캔들 부족');
@@ -107,8 +108,10 @@ export function scoreB(c, s, i, btcCtx) {
   parts.chase = { score: volPts + chasePts, max: 10, note: `ATR ${atrPct.toFixed(2)}% · 레벨 이격 ${ext2.toFixed(2)} ATR` };
   if (atrPct > B_SETTINGS.maxAtrPct) blockers.push(`과도한 변동성(ATR ${atrPct.toFixed(1)}%)`);
   if (ext2 > B_SETTINGS.chaseAtr) blockers.push(`급등·급락 추격 제한(레벨에서 ${ext2.toFixed(1)} ATR 이격)`);
+  if (opts.requireRetest && !st.retest) blockers.push('재테스트 미완료(필수 조건)');
   const score = Math.round(Object.values(parts).reduce((q, p) => q + p.score, 0) * 10) / 10;
+  const features = { structureType: st.retest ? 'retest' : st.fresh ? 'fresh' : 'extended', breakoutAge: st.age, rv, t24, btcDir: btcCtx?.dir ?? null, btcAlign: !btcCtx?.usable ? 'none' : btcCtx.dir === dir ? 'same' : btcCtx.dir === 'FLAT' ? 'flat' : 'opposite', stopAtr, room: Number.isFinite(room) ? room : null, atrPct, extension: ext2, level: st.level };
   reasons.push(...Object.values(parts).map(p => p.note));
   const plan = risk > 0 ? { dir, entry, stop, tp: entry + d * B_SETTINGS.minRR * risk, rr: B_SETTINGS.minRR, stopAtr, ahead, room, level: st.level, basis: '레벨/재테스트 극값 바깥 0.3 ATR 손절, 2R 목표' } : null;
-  return { dir, score, parts, blockers, reasons, plan, settings: B_SETTINGS, atr: a, atrPct, level: st.level, retest: st.retest };
+  return { dir, score, parts, blockers, reasons, plan, features, settings: B_SETTINGS, atr: a, atrPct, level: st.level, retest: st.retest };
 }

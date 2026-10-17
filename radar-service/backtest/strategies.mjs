@@ -43,22 +43,44 @@ export function randomBaseline(c, seed, prob = 0.004) {
   };
 }
 
+// 가설 변형(단일 변경점)을 이미 계산된 원시 점수 위에 적용한다 — 점수는 한 번만 계산하고 차단 사유만 추가하므로 변형 간 다른 점은 정확히 그 변경점뿐이다.
+//  opts.A.maxAge(H2): Supertrend 전환 후 경과 봉 수(age) > maxAge 이면 A 신규 진입 차단 · opts.B.requireRetest(H1): 재테스트 미완료 B 신호 차단
+export function applyOpts(a, b, opts = {}) {
+  let a2 = a, b2 = b;
+  if (Number.isFinite(opts.A?.maxAge) && a.dir && a.features && a.features.age > opts.A.maxAge) a2 = { ...a, blockers: [...(a.blockers ?? []), `오래된 추세(Supertrend 전환 후 ${a.features.age + 1}봉 > ${opts.A.maxAge + 1}봉)`] };
+  if (opts.B?.requireRetest && b.dir && b.features && b.features.structureType !== 'retest') b2 = { ...b, blockers: [...b.blockers, '재테스트 미완료(필수 조건)'] };
+  return [a2, b2];
+}
+
 // A, B, A+B 전략 함수 생성. 동일 신호 계산을 공유한다(신호는 i 마감 후 0..i 데이터만 사용).
-export function dualStrategies(c, btc, btcIdx, rules = DUAL_RULES) {
+// opts는 기본 변형에만 적용되고, variant(opts)로 같은 점수 캐시를 공유하는 다른 변형 묶음을 만들 수 있다.
+export function dualStrategies(c, btc, btcIdx, rules = DUAL_RULES, opts = {}) {
   const sA = seriesA(c), sB = seriesB(c), sBtc = seriesBtc(btc);
-  const cache = new Map();
-  const evalAt = i => {
-    if (cache.has(i)) return cache.get(i);
+  const raw = new Map();
+  const rawAt = i => {
+    if (raw.has(i)) return raw.get(i);
     const j = btcIdx.get(c[i].t), ctx = j === undefined ? { usable: false } : btcContext(btc, sBtc, j);
-    const a = scoreA(c, sA, i), b = scoreB(c, sB, i, ctx), gate = marketGate(ctx);
-    const out = { a, b, ctx, gate, cls: classify(a, b, gate, rules) };
-    cache.set(i, out); return out;
+    const out = { a: scoreA(c, sA, i), b: scoreB(c, sB, i, ctx), ctx, gate: marketGate(ctx) };
+    raw.set(i, out); return out;
   };
-  const wrap = (pick) => i => { const e = evalAt(i); return pick(e, i); };
-  return {
-    evalAt,
-    A: wrap((e, i) => { if (!e.a.dir || e.a.score < rules.priorityMin) return null; const p = planA(c, e.a, c[i].c); return p ? { dir: p.dir, stop: p.stop, tp: p.tp, meta: { strategy: 'A', scoreA: e.a.score } } : null; }),
-    B: wrap(e => { if (!e.b.dir || e.b.score < rules.priorityMin || e.b.blockers.length || !e.b.plan) return null; return { dir: e.b.dir, stop: e.b.plan.stop, tp: e.b.plan.tp, meta: { strategy: 'B', scoreB: e.b.score } }; }),
-    AB: wrap(e => { if (e.cls.verdict !== 'PRIORITY' || !e.b.plan) return null; return { dir: e.cls.dir, stop: e.b.plan.stop, tp: e.b.plan.tp, meta: { strategy: 'A+B', scoreA: e.a.score, scoreB: e.b.score } }; }),
+  const make = o => {
+    const evalAt = i => { const r = rawAt(i), [a, b] = applyOpts(r.a, r.b, o); return { a, b, ctx: r.ctx, gate: r.gate, cls: classify(a, b, r.gate, rules) }; };
+    const wrap = pick => i => pick(evalAt(i), i);
+    const aSig = (e, i) => { const p = planA(c, e.a, c[i].c); return p ? { dir: p.dir, stop: p.stop, tp: p.tp } : null; };
+    return {
+      evalAt,
+      A: wrap((e, i) => { if (!e.a.dir || e.a.score < rules.priorityMin || e.a.blockers?.length) return null; const p = aSig(e, i); return p ? { ...p, meta: { strategy: 'A', sa: e.a.score, fa: e.a.features } } : null; }),
+      B: wrap(e => { if (!e.b.dir || e.b.score < rules.priorityMin || e.b.blockers.length || !e.b.plan) return null; return { dir: e.b.dir, stop: e.b.plan.stop, tp: e.b.plan.tp, meta: { strategy: 'B', sb: e.b.score, fb: e.b.features } }; }),
+      AB: wrap(e => { if (e.cls.verdict !== 'PRIORITY' || !e.b.plan) return null; return { dir: e.cls.dir, stop: e.b.plan.stop, tp: e.b.plan.tp, meta: { strategy: 'A+B', sa: e.a.score, sb: e.b.score, fa: e.a.features, fb: e.b.features } }; }),
+      // 진단용 원시 신호(임계값·차단 사유를 적용하기 전 후보): 점수 구간·차단 사유별 품질을 보려는 것이며 '전략'이 아니다.
+      Araw: wrap((e, i) => { if (!e.a.dir || e.a.score < 50) return null; const p = aSig(e, i); return p ? { ...p, meta: { strategy: 'Araw', sa: e.a.score, fa: e.a.features } } : null; }),
+      Braw: wrap(e => { if (!e.b.dir || e.b.score < 50 || !e.b.plan) return null; return { dir: e.b.dir, stop: e.b.plan.stop, tp: e.b.plan.tp, meta: { strategy: 'Braw', sb: e.b.score, fb: e.b.features, blockers: e.b.blockers } }; }),
+    };
   };
+  return { ...make(opts), variant: make, rawAt };
+}
+
+// 시장 국면 제한(H3): 신호 시점의 국면이 allowed에 없으면 신호를 버린다. regimeFn(t) → '상승장'|'하락장'|'횡보장'|null
+export function restrictRegime(fn, allowed, regimeAt, c) {
+  return i => { const r = regimeAt(c[i].t); if (!r || !allowed.has(r)) return null; return fn(i); };
 }

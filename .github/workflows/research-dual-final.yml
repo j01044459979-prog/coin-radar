@@ -1,0 +1,36 @@
+name: research-dual-final
+# 듀얼 전략 3.0 연구의 최종 테스트(읽기 전용, 1회용). 'research/dual-final' 브랜치를 처음 푸시할 때만 실행된다.
+# 규칙 해시가 FROZEN_HASH와 다르면 중단한다. 이 브랜치에는 다시 푸시하지 않는다(재평가 금지).
+on:
+  push:
+    branches: ['research/dual-final']
+permissions:
+  contents: read
+concurrency:
+  group: research-dual-final
+  cancel-in-progress: false
+jobs:
+  final:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/dual*.test.mjs radar-service/test/research.test.mjs
+      - name: Fetch 3 years of OKX 1H history (same pinned candidates)
+        run: node radar-service/backtest/fetch-okx.mjs --days 1095 --symbols 32 --ids-file radar-service/backtest/CANDIDATES.json --out "$RUNNER_TEMP/data.json.gz"
+      - name: Final test (frozen rules, evaluated once)
+        run: |
+          HASH="$(cat radar-service/backtest/FROZEN_HASH)"
+          node radar-service/backtest/research-cli.mjs "$RUNNER_TEMP/data.json.gz" --final --expect-hash "$HASH" --out "$RUNNER_TEMP/final.json" | tee "$RUNNER_TEMP/final-report.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: research-dual-final
+          path: |
+            ${{ runner.temp }}/final-report.md
+            ${{ runner.temp }}/final.json
+          retention-days: 90

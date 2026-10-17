@@ -1,0 +1,49 @@
+name: research-dual
+# 듀얼 전략 3.0 연구(읽기 전용): 3년치 OKX 1시간봉으로 손실 원인 분해 · 엔진 검증 · 가설 H1/H2/H3 · 사전 등록 기준 판정.
+# 최종 테스트 구간은 이 워크플로에서 평가하지 않는다(별도 research-dual-final 워크플로가 규칙 고정 후 1회만 평가).
+# Telegram·비밀값·쓰기 권한 없음. 운영 레이더와 무관.
+on:
+  push:
+    branches: ['research/dual-strategy-diagnostics']
+    paths: [.github/workflows/research-dual.yml, radar-service/backtest/**, radar-service/dual/**]
+permissions:
+  contents: read
+concurrency:
+  group: research-dual
+  cancel-in-progress: true
+jobs:
+  research:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/dual*.test.mjs radar-service/test/research.test.mjs
+      - name: Restore dataset cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/data.json.gz
+          key: dual-research-data-v1-${{ hashFiles('radar-service/backtest/CANDIDATES.json') }}
+      - name: Fetch 3 years of OKX 1H history (read-only public API)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: node radar-service/backtest/fetch-okx.mjs --days 1095 --symbols 32 --ids-file radar-service/backtest/CANDIDATES.json --out "$RUNNER_TEMP/data.json.gz"
+      - name: Save dataset cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/data.json.gz
+          key: dual-research-data-v1-${{ hashFiles('radar-service/backtest/CANDIDATES.json') }}
+      - name: Research (development + validation + already-seen; final test excluded)
+        run: node radar-service/backtest/research-cli.mjs "$RUNNER_TEMP/data.json.gz" --out "$RUNNER_TEMP/research.json" | tee "$RUNNER_TEMP/report.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: research-dual
+          path: |
+            ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/research.json
+          retention-days: 30
