@@ -1,3 +1,5 @@
+import { updateOutcomes, makeRecord, appendRecords, summarize } from './dual/reclog.mjs';
+import { dualReport as dualReportText } from './dual/report.mjs';
 import { reportParts } from './report.mjs';
 import { alertReport } from './compact.mjs';
 import { candidateSpec, chartCaption, chartPlan } from './chart.mjs';
@@ -125,7 +127,7 @@ async function safeNews(news, state, now) {
   finally { clearTimeout(timer); }
 }
 
-export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000 }) {
+export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000, dualReport = false, log = () => {} }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now, { rotation: state.rotation }); }
@@ -148,6 +150,16 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
   if (result.backoffMs) state.retryAt = now + result.backoffMs;
   state.lastLimit = result.limit ? { at: now, ...result.limit, waitMs: result.backoffMs || 0 } : null;
   state.failures = failures; state.stats = stats ?? null; state.sent ||= {};
+  // 듀얼 전략(옵션): 추천/관심 판정을 성과 추적 로그에 남기고 이전 기록의 결과를 갱신한다(RADAR_DUAL=1일 때만 result.dual 존재)
+  const dual = result.dual ?? null;
+  if (dual) {
+    const rec = Array.isArray(state.recLog) ? state.recLog : [];
+    updateOutcomes(rec, dual.candles ?? {});
+    const fresh = dual.items.filter(x => ['PRIORITY', 'INTEREST'].includes(x.cls.verdict) && x.plan).map(x => makeRecord(x, now));
+    const { log: merged, added } = appendRecords(rec, fresh);
+    state.recLog = merged; state.dualSummary = { at: now, evaluated: dual.evaluated, ...summarize(merged) };
+    for (const r of added) log(`RECLOG ${JSON.stringify(r)}`);
+  }
   const hour = Math.floor(now / 3600000);
   const hourly = state.reportHour !== hour;
   const top = rows.filter(r => r.strong).sort((a, b) => b.volume - a.volume).slice(0, 2);
@@ -163,10 +175,12 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     return { ok: true, quiet: state.quiet.reason, analyzed: rows.length, failed: failures.length };
   }
   if (hourly) {
-    await safeNews(news, state, now);
+    if (!(dualReport && dual)) await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 1순위 차트 → 2순위 차트)는 항상 같다.
-    const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
-    const parts = reportParts(rows, failures, now, { news: state.news, scan: stats?.scan ?? null, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
+    const useDual = Boolean(dualReport && dual);                  // 듀얼 보고는 텍스트 1건(기존 차트·뉴스 경로 미사용)
+    const items = !useDual && render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
+    const parts = useDual ? (() => { const d = dualReportText(dual, now, stats?.scan ?? null); return [{ type: 'text', text: d.text, plain: d.plain, html: true }]; })()
+      : reportParts(rows, failures, now, { news: state.news, scan: stats?.scan ?? null, charts: items.filter(i => !i.skipped && (i.png || i.error)) });
     // 파트별로 전송 확인·저장한다. 중간 실패 시 다음 실행이 이미 처리한 파트(이미지 포함)를 건너뛰어 중복 전송을 막는다.
     const done = [];
     // 업그레이드 호환: 이전 버전(partial.v가 없거나 3 미만)이 이 시간대 보고를 일부라도 보냈다면 이미 전달된 것으로 보고 새 형식으로 다시 보내지 않는다.

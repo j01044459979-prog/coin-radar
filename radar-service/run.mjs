@@ -4,6 +4,7 @@ import { createCollector, cycle, telegramPhotoSender, telegramSender } from './s
 import { buildSvg, chartCaption, chartPlan, renderChart, renderPng } from './chart.mjs';
 import { createOkxCollector } from './okx.mjs';
 import { fullReportParts, reportParts } from './report.mjs';
+import { dualReport } from './dual/report.mjs';
 import { visibleLength } from './format.mjs';
 import { refreshNews } from './news.mjs';
 
@@ -28,7 +29,7 @@ const save = async data => {
   await rename(`${directory}/state.tmp`, `${directory}/state.json`);
 };
 // 기본 출처는 OKX. Binance 선택은 접근 가능한 네트워크에서만 쓰며 다른 거래소 가격을 대신 쓰지 않는다.
-const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : createOkxCollector();
+const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : createOkxCollector(fetch, { dual: process.env.RADAR_DUAL === '1' });
 const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 
@@ -50,7 +51,7 @@ if (args.has('--gate')) {
 } else if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   if (args.has('--once')) console.log('Telegram 비밀값 미설정: 수집·분석만 실행하고 전송/상태 저장은 하지 않습니다.');
   const now = Date.now();
-  const { rows, failures, stats, charts } = await collect(now);
+  const { rows, failures, stats, charts, dual } = await collect(now);
   const preview = {};
   try { await refreshNews(preview, now); } catch (error) { console.log(`뉴스 수집 실패(격리됨): ${error.message}`); }
   const sc = stats?.scan;
@@ -59,6 +60,13 @@ if (args.has('--gate')) {
     for (const [g, v] of Object.entries(sc.groups)) console.log(`SCAN 그룹 ${g}(${v.length}): ${v.join(', ')}`);
     console.log(`SCAN 유동성 기준 ${sc.minTurnover} USDT 미만 제외 ${sc.liquidityExcluded}종목 · 24h 거래대금 분포 ${JSON.stringify(sc.turnoverPct)}`);
     console.log(`SCAN 순환 ${JSON.stringify(sc.rotation)} · API 호출 ${stats.calls} · 수집 ${stats.ms}ms · 상위 시간대 ${stats.mtfSymbols.length}종목`);
+  }
+  if (dual) {
+    const rep = dualReport(dual, now, sc);
+    console.log(`DUAL 평가 ${dual.evaluated}종목 · 제외 ${dual.skipped.length} · 시장 필터 ${dual.gate.ok ? '통과' : dual.gate.reason} · BTC 1H ${dual.btc.dir ?? '-'} ATR ${dual.btc.atrPct?.toFixed?.(2) ?? '-'}%`);
+    for (const it of dual.items) console.log(`DUAL ${it.symbol.padEnd(12)} A ${String(it.a.score).padStart(5)} ${it.a.dir ?? '-'} | B ${String(it.b.score).padStart(5)} ${it.b.dir ?? '-'}${it.b.blockers?.length ? ` [차단 ${it.b.blockers.length}]` : ''} → ${it.cls.verdict}${it.cls.dir ? ' ' + it.cls.dir : ''}`);
+    for (const s of dual.skipped) console.log(`DUAL 제외 ${s.symbol}: ${s.reason}`);
+    console.log(`===== [듀얼 전략 보고서 미리보기 · 전송 안 함] 보이는 글자 ${rep.visible}자 =====\n${rep.plain}`);
   }
   const u = stats?.universe;
   if (u) {
@@ -108,14 +116,14 @@ if (args.has('--gate')) {
     const slot = Number(process.env.RADAR_SLOT);
     state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
     await save(state);
-    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
+    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto, dualReport: process.env.RADAR_DUAL_REPORT === '1', log: console.log })));
   } else {
     let stopped = false;
     let timer;
     let wake;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopped = true; clearTimeout(timer); wake?.(); });
     while (!stopped) {
-      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); }
+      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto, dualReport: process.env.RADAR_DUAL_REPORT === '1', log: console.log }))); }
       catch { console.error('분석/알림 처리 실패: 다음 주기에 재확인'); }
       // Start shortly after each 5-minute boundary, never overlap cycles.
       if (!stopped) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, 300000 - Date.now() % 300000 + 5000); });
