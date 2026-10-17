@@ -65,3 +65,21 @@ test('검증 실행: 목록 조회가 권한 오류면 명확한 원인 메시�
   const fetchImpl = async () => new Response(JSON.stringify({ success: false }), { status: 403 });
   await assert.rejects(run('verify', { env: { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'a' }, fetchImpl }), /HTTP 403.*토큰 권한/);
 });
+
+import { resolveAccount } from '../resolve-account.mjs';
+test('계정 ID: Secret이 있으면 API 호출 없이 사용, 없으면 유일한 계정을 자동 선택', async () => {
+  let calls = 0; const f = async () => { calls++; return new Response(JSON.stringify({ success: true, result: [{ id: 'acc1', name: 'me' }] }), { status: 200 }); };
+  assert.deepEqual(await resolveAccount({ env: { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID_SECRET: ' given ' }, fetchImpl: f }), { id: 'given', source: 'secret' }); assert.equal(calls, 0);
+  const r = await resolveAccount({ env: { CLOUDFLARE_API_TOKEN: 't' }, fetchImpl: f }); assert.equal(r.id, 'acc1'); assert.equal(r.source, 'api'); assert.equal(calls, 1);
+});
+test('계정 ID: 계정이 여러 개/없음/권한 오류면 명확한 안내와 함께 실패 (임의 선택 금지)', async () => {
+  const mk = (status, result, success = true) => async () => new Response(JSON.stringify({ success, result }), { status });
+  await assert.rejects(resolveAccount({ env: { CLOUDFLARE_API_TOKEN: 't' }, fetchImpl: mk(200, [{ id: 'a' }, { id: 'b' }]) }), /2개.*CLOUDFLARE_ACCOUNT_ID/);
+  await assert.rejects(resolveAccount({ env: { CLOUDFLARE_API_TOKEN: 't' }, fetchImpl: mk(200, []) }), /0개/);
+  await assert.rejects(resolveAccount({ env: { CLOUDFLARE_API_TOKEN: 't' }, fetchImpl: mk(403, null, false) }), /HTTP 403.*Secret/);
+  await assert.rejects(resolveAccount({ env: {} }), /CLOUDFLARE_API_TOKEN/);
+});
+test('배포 워크플로: 계정 확인 단계가 있고 CLOUDFLARE_ACCOUNT_ID Secret은 필수가 아니다', () => {
+  assert.ok(wf.indexOf('Resolve Cloudflare account') < wf.indexOf('Deploy dispatcher')); assert.match(wf, /CLOUDFLARE_ACCOUNT_ID_SECRET: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
+  assert.doesNotMatch(wf, /missing="\$missing CLOUDFLARE_ACCOUNT_ID"/);
+});
