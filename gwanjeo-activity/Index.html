@@ -39,6 +39,7 @@ nav button{flex:1;border:0;background:none;padding:10px 0 8px;color:var(--mute);
 <button data-t="stats"><span>📊</span>분석</button>
 </nav>
 <script>
+var DEV=(function(){try{var d=localStorage.getItem('dev');if(!d){d=(self.crypto&&crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2)+Date.now()).replace(/[^A-Za-z0-9-]/g,'');localStorage.setItem('dev',d)}return d}catch(e){return 'anon'}})();
 var S={token:null,boot:null,tab:'today',admin:false,edit:null};
 var $=function(s){return document.querySelector(s)};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -47,7 +48,7 @@ function call(fn){var a=[].slice.call(arguments,1);return new Promise(function(r
 function api(fn){return call.apply(null,[fn,S.token].concat([].slice.call(arguments,1)))}
 function toLogin(msg){S.token=null;S.admin=false;try{sessionStorage.removeItem('t')}catch(e){}$('#login').classList.remove('hide');$('#lerr').textContent=msg||'';$('#pw').value=''}
 $('#lbtn').onclick=doLogin;$('#pw').onkeydown=function(e){if(e.key==='Enter')doLogin()};
-function doLogin(){var b=$('#lbtn');b.disabled=true;call('login',$('#pw').value).then(function(r){b.disabled=false;
+function doLogin(){var b=$('#lbtn');b.disabled=true;call('login',$('#pw').value,DEV).then(function(r){b.disabled=false;
  if(!r.ok){$('#lerr').textContent=r.error||'로그인 실패';return}
  S.token=r.token;try{sessionStorage.setItem('t',r.token)}catch(e){}start()}).catch(function(){b.disabled=false;$('#lerr').textContent='서버 연결 실패'})}
 $('#out').onclick=function(){call('logout',S.token).then(function(){toLogin('로그아웃되었습니다.')})};

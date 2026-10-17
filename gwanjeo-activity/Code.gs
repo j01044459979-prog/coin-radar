@@ -19,6 +19,7 @@ var ADMIN_TTL_MS = 30 * 60 * 1000; // 관리자 승격 30분
 var MAX_FAILS = 5;
 var LOCK_SECONDS = 300;
 var QR_DEDUPE_SECONDS = 5;
+var GLOBAL_FAIL_SOFT = 30;
 
 var SHEETS = {
   apt: { name: '아파트DB', head: ['ID', '아파트명', '주소', '총세대수', '전체동수', '동목록', '아파트형식', '공동현관', '메모', '최근활동일', '누적활동동수', '사용여부'] },
@@ -75,27 +76,38 @@ function safeEq_(a, b) {
   return d === 0;
 }
 
-function checkPassword_(kind, input) {
+// 잠금 정책: 다른 직원의 로그인을 막지 않는다.
+//  - 실패 횟수 제한은 "기기별"(클라이언트가 만든 임의 ID) 또는 "세션별"(관리자 승격)로만 적용.
+//  - 전역 실패가 많아져도 올바른 비밀번호는 항상 통과. 틀린 시도에만 지연(Utilities.sleep)을 건다.
+function cleanId_(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(id) ? id : 'anon'; }
+
+function checkPassword_(kind, input, scope) {
   var cache = CacheService.getScriptCache();
-  if (cache.get('LOCK:' + kind)) return { ok: false, locked: true, error: '시도 횟수 초과. 잠시 후 다시 시도하세요.' };
+  var lockKey = 'LOCK:' + kind + ':' + scope, failKey = 'FAIL:' + kind + ':' + scope;
+  if (cache.get(lockKey)) return { ok: false, locked: true, error: '이 기기에서 시도 횟수를 초과했습니다. 5분 후 다시 시도하세요.' };
   var real = prop_(kind === 'admin' ? 'ADMIN_PASSWORD' : 'STAFF_PASSWORD');
   if (!real) return { ok: false, error: '서버 비밀번호가 설정되지 않았습니다.' };
   if (typeof input === 'string' && input.length <= 100 && safeEq_(input, real)) {
-    cache.remove('FAIL:' + kind);
+    cache.remove(failKey);
     return { ok: true };
   }
   var lock = LockService.getScriptLock();
   lock.waitLock(5000);
+  var n, g;
   try {
-    var n = Number(cache.get('FAIL:' + kind) || 0) + 1;
-    cache.put('FAIL:' + kind, String(n), 900);
-    if (n >= MAX_FAILS) { cache.put('LOCK:' + kind, '1', LOCK_SECONDS); cache.remove('FAIL:' + kind); return { ok: false, locked: true, error: '시도 횟수 초과. 5분 후 다시 시도하세요.' }; }
-    return { ok: false, error: '비밀번호가 올바르지 않습니다. (' + n + '/' + MAX_FAILS + ')' };
+    n = Number(cache.get(failKey) || 0) + 1;
+    g = Number(cache.get('GFAIL:' + kind) || 0) + 1;
+    cache.put(failKey, String(n), 900);
+    cache.put('GFAIL:' + kind, String(g), 900);
+    if (n >= MAX_FAILS) cache.put(lockKey, '1', LOCK_SECONDS);
   } finally { lock.releaseLock(); }
+  if (g > GLOBAL_FAIL_SOFT) Utilities.sleep(2000); // 대량 추측 공격 둔화 (정상 로그인엔 영향 없음)
+  if (n >= MAX_FAILS) return { ok: false, locked: true, error: '이 기기에서 시도 횟수를 초과했습니다. 5분 후 다시 시도하세요.' };
+  return { ok: false, error: '비밀번호가 올바르지 않습니다. (' + n + '/' + MAX_FAILS + ')' };
 }
 
-function login(password) {
-  var r = checkPassword_('staff', password);
+function login(password, deviceId) {
+  var r = checkPassword_('staff', password, cleanId_(deviceId));
   if (!r.ok) return r;
   var token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
   CacheService.getScriptCache().put('S:' + token, JSON.stringify({ adminUntil: 0 }), SESSION_TTL);
@@ -111,7 +123,7 @@ function adminLogin(token, password) {
   var s = session_(token);
   if (!s) return { ok: false, session: false, error: '세션이 만료되었습니다.' };
   if (!prop_('ADMIN_PASSWORD')) return { ok: false, error: '관리자 비밀번호가 설정되지 않아 관리자 기능이 꺼져 있습니다.' };
-  var r = checkPassword_('admin', password);
+  var r = checkPassword_('admin', password, token.slice(0, 16));
   if (!r.ok) return r;
   s.adminUntil = Date.now() + ADMIN_TTL_MS;
   CacheService.getScriptCache().put('S:' + token, JSON.stringify(s), SESSION_TTL);

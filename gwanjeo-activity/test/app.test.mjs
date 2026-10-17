@@ -16,17 +16,37 @@ test('비밀번호 없이/가짜 토큰으로 모든 데이터 API 차단', () =
   assert.equal(e.sheets['활동기록'].length, 1);
 });
 
-test('잘못된 비밀번호 거부, 5회 실패 시 잠금(올바른 비밀번호도 잠금 중 거부)', () => {
+const D1 = 'device-aaaaaaaa', D2 = 'device-bbbbbbbb';
+test('잘못된 비밀번호 거부, 5회 실패 시 해당 기기만 잠금 — 다른 기기/직원은 영향 없음', () => {
   const e = createEnv({ props: P });
-  for (let i = 0; i < 4; i++) assert.equal(e.call('login', 'bad').ok, false);
-  const r5 = e.call('login', 'bad'); assert.equal(r5.locked, true);
-  assert.equal(e.call('login', 'pw-staff').ok, false);
+  for (let i = 0; i < 4; i++) assert.equal(e.call('login', 'bad', D1).ok, false);
+  assert.equal(e.call('login', 'bad', D1).locked, true);
+  assert.equal(e.call('login', 'pw-staff', D1).ok, false);   // 잠긴 기기는 정답도 거부
+  assert.equal(e.call('login', 'pw-staff', D2).ok, true);    // 다른 기기는 정상 로그인
 });
 
 test('잠금은 5분 후 해제', () => {
   let t = 1e12; const e = createEnv({ props: P, now: () => t });
-  for (let i = 0; i < 5; i++) e.call('login', 'bad');
-  t += 301e3; assert.equal(e.call('login', 'pw-staff').ok, true);
+  for (let i = 0; i < 5; i++) e.call('login', 'bad', D1);
+  t += 301e3; assert.equal(e.call('login', 'pw-staff', D1).ok, true);
+});
+
+test('기기 ID를 바꿔가며 대량 시도해도 정답 로그인은 막히지 않고 틀린 시도만 지연', () => {
+  const e = createEnv({ props: P });
+  let slept = 0; e.g.Utilities.sleep = (ms) => { slept += ms; };
+  for (let i = 0; i < 40; i++) e.call('login', 'bad', 'rotating-' + String(i).padStart(4, '0'));
+  assert.ok(slept > 0);
+  const before = slept;
+  assert.equal(e.call('login', 'pw-staff', D2).ok, true);
+  assert.equal(slept, before);
+});
+
+test('관리자 인증 실패는 해당 세션만 잠금, 다른 세션 영향 없음', () => {
+  const e = createEnv({ props: P });
+  const a = e.call('login', 'pw-staff', D1).token, b = e.call('login', 'pw-staff', D2).token;
+  for (let i = 0; i < 5; i++) e.call('adminLogin', a, 'bad');
+  assert.equal(e.call('adminLogin', a, 'pw-admin').ok, false);
+  assert.equal(e.call('adminLogin', b, 'pw-admin').ok, true);
 });
 
 test('비밀번호 미설정이면 로그인 불가 / 관리자 비밀번호 미설정이면 관리자 꺼짐', () => {
