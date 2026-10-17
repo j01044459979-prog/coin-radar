@@ -1,0 +1,43 @@
+name: backtest-dual
+# 듀얼 전략 3.0 백테스트(읽기 전용). OKX 공개 과거 캔들을 내려받아 기존(근사)·A·B·A+B를 같은 조건으로 비교한다.
+# Telegram·비밀값·쓰기 권한 없음. 운영 레이더(radar 워크플로)와 무관하다.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '과거 일수'
+        default: '365'
+      symbols:
+        description: '종목 수(거래대금 상위, BTC 포함 별도)'
+        default: '25'
+  push:
+    branches: ['feature/dual-strategy-3-0']
+    paths: [.github/workflows/backtest-dual.yml, radar-service/backtest/**, radar-service/dual/**]
+permissions:
+  contents: read
+concurrency:
+  group: backtest-dual
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests (dual strategy)
+        run: node --test radar-service/test/dual*.test.mjs
+      - name: Fetch OKX history (read-only public API)
+        run: node radar-service/backtest/fetch-okx.mjs --days "${{ github.event.inputs.days || '365' }}" --symbols "${{ github.event.inputs.symbols || '25' }}" --out "$RUNNER_TEMP/data.json.gz"
+      - name: Run backtest
+        run: node radar-service/backtest/run.mjs "$RUNNER_TEMP/data.json.gz" --out "$RUNNER_TEMP/results.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backtest-dual
+          path: |
+            ${{ runner.temp }}/data.json.gz
+            ${{ runner.temp }}/results.json
+          retention-days: 14

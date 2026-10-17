@@ -5,6 +5,7 @@ import { TF_MS, trendOf } from './indicators.mjs';
 import { jsonRequest, RESTRICTED, waitMs } from './service.mjs';
 import { parseCandleVolume } from './volume.mjs';
 import { scanMarket, selectTargets, recordRotation, TARGET_CONFIG } from './universe.mjs';
+import { evaluateDual } from './dual/live.mjs';
 
 export const SOURCE = { name: 'OKX', label: 'OKX USDT 무기한(SWAP)', url: 'https://www.okx.com/api/v5' };
 const base = SOURCE.url;
@@ -19,16 +20,17 @@ function okData(body, what) {
 export const internalSymbol = instId => instId.replace(/-USDT-SWAP$/, 'USDT');
 
 // config: max(정밀 분석 상한), topTurnover, movers, rotation, minTurnover / budgetMs: 종목 수집 시간 예산 / mtfTop: 상위 시간대 조회 후보 수
-export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, config = {}, budgetMs = 150000, mtfTop = 6 } = {}) {
+export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, config = {}, budgetMs = 150000, mtfTop = 6, dual = false, dualExtra = 8 } = {}) {
   const stats = { calls: 0 };
   const get = async path => { stats.calls++; const body = await jsonRequest(base + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
   // 상위 시간대: OKX 확정(confirm=1) 캔들만 사용. 실패는 해당 시간대만 '미확인' 처리하고 5분 레이더는 계속 동작한다.
-  async function loadMtf(instId, now, keep) {
+  async function loadMtf(instId, now, keep, full) {
     const out = {};
     for (const tf of ['15m', '1H', '4H']) {
       try {
-        const rows = okData(await get(`/market/candles?instId=${instId}&bar=${tf}&limit=100`), `${tf} 캔들`);
+        const rows = okData(await get(`/market/candles?instId=${instId}&bar=${tf}&limit=${tf === '1H' && full ? 300 : 100}`), `${tf} 캔들`);
         const candles = rows.filter(r => r[8] === '1').reverse().map(r => { const h = Number(r[2]), l = Number(r[3]); return { t: Number(r[0]), o: Number(r[1]), h, l, c: Number(r[4]), end: Number(r[0]) + TF_MS[tf] - 1, ...parseCandleVolume(r, l, h) }; });
+        if (tf === '1H' && full) full.candles = candles;                     // 듀얼 전략용 확정 1시간봉(최대 300개)
         out[tf] = candles.some(c => !(c.o > 0 && c.h >= Math.max(c.o, c.c, c.l) && c.l > 0 && c.l <= Math.min(c.o, c.c))) ? trendOf(null, tf, now, '비정상 캔들') : trendOf(candles, tf, now);
         if (keep && out[tf].dir !== 'UNKNOWN') keep[tf] = candles.slice(-100); // 검증(최신·연속·정상 OHLC)을 통과한 캔들만 차트에 사용
       } catch (error) {
@@ -92,14 +94,28 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
     const mtf = {}, charts = {}; let blocked = Boolean(stopped), mtfSkipped = 0;
     // 차트용 5분 확정 캔들(대체 시간봉): 이미 받은 데이터를 재사용하므로 추가 호출 없음
     for (const r of filtered) if (raw5[r.symbol]) charts[r.symbol] = { '5m': raw5[r.symbol] };
+    const dualCandles = {};
     for (const row of targets) {
       if (blocked || Date.now() - started > budgetMs + 50000) { mtfSkipped++; continue; }
       try {
-        const keep = charts[row.symbol] ??= {};
-        const m = await loadMtf(row.instId, now + (Date.now() - started), keep);
+        const keep = charts[row.symbol] ??= {}, full = dual ? {} : null;
+        const m = await loadMtf(row.instId, now + (Date.now() - started), keep, full);
+        if (full?.candles) dualCandles[row.symbol] = full.candles;
         if (m.blocked) { blocked = true; stopped ??= { ...m.blocked, stage: 'MTF' }; }
         delete m.blocked; mtf[row.symbol] = m;
       } catch { /* 시간대 분석 실패는 격리 */ }
+    }
+    // 듀얼 전략(옵션): BTC·MTF 대상 외에 24h 거래대금 상위 종목의 1시간봉을 추가 조회(종목당 1회). 제한 응답이면 즉시 중단.
+    let dualResult = null;
+    if (dual) {
+      const extra = filtered.filter(r => !dualCandles[r.symbol]).sort((x, y) => (y.turnover24h ?? 0) - (x.turnover24h ?? 0)).slice(0, dualExtra);
+      for (const r of extra) {
+        if (blocked || Date.now() - started > budgetMs + 70000) break;
+        try { const rows = okData(await get(`/market/candles?instId=${r.instId}&bar=1H&limit=300`), '1H 캔들'); dualCandles[r.symbol] = rows.filter(x => x[8] === '1').reverse().map(x => ({ t: Number(x[0]), o: Number(x[1]), h: Number(x[2]), l: Number(x[3]), c: Number(x[4]), q: Number(x[7]) })); }
+        catch (error) { if (RESTRICTED.includes(error.status)) { blocked = true; stopped ??= { status: error.status, retryAfter: error.retryAfter || 0, stage: 'DUAL' }; } }
+      }
+      dualResult = evaluateDual({ candlesBySymbol: dualCandles, now: now + (Date.now() - started) });
+      dualResult.candles = dualCandles;
     }
     const rotation = recordRotation(sel.rotation, analyzedIds, market.eligible.map(e => e.instId), now);
     const excluded = [...market.reasons.entries()].map(([id, reason]) => ({ id, reason, t: Number(tickers.find(x => x.instId === id)?.volCcy24h) * Number(tickers.find(x => x.instId === id)?.last) || 0 }))
@@ -113,7 +129,7 @@ export function createOkxCollector(fetcher = fetch, { gapMs = 260, priority, con
       liquidityExcluded: sel.liquidityExcluded, minTurnover: sel.cfg.minTurnover, turnoverPct: { p10: pct(0.1), p25: pct(0.25), p50: pct(0.5), p75: pct(0.75), p90: pct(0.9) },
       rotation: { reinit: rotation.reinit, swept: rotation.swept, neverAnalyzed: rotation.neverAnalyzed, lastGapMs: rotation.lastGapMs, lastMissed: rotation.lastMissed, missedTotal: rotation.missedTotal, maxGapMs: rotation.maxGapMs, oldestAt: rotation.oldestAt },
     };
-    return { rows: enrich(filtered, mtf), failures, charts, rotation, backoffMs: stopped ? waitMs(stopped.status, stopped.retryAfter) : 0, limit: stopped && { status: stopped.status, retryAfter: stopped.retryAfter, stage: stopped.stage, partial: true, analyzed: analyzedIds.length, skipped: skipped.length, mtfSkipped },
+    return { rows: enrich(filtered, mtf), failures, charts, rotation, dual: dualResult, backoffMs: stopped ? waitMs(stopped.status, stopped.retryAfter) : 0, limit: stopped && { status: stopped.status, retryAfter: stopped.retryAfter, stage: stopped.stage, partial: true, analyzed: analyzedIds.length, skipped: skipped.length, mtfSkipped },
       stats: { calls: stats.calls, ms: Date.now() - started, mtfSymbols: Object.keys(mtf).filter(k => ['15m', '1H', '4H'].some(tf => mtf[k][tf]?.dir !== 'UNKNOWN')), mtfAttempted: Object.keys(mtf).length, mtfSkipped, scan, universe: { selected: ids, eligible: sel.eligibleCount, priority: sel.priorityStatus, excluded, reasons: reasonCounts, categories: market.categoryCounts } } };
   };
 }

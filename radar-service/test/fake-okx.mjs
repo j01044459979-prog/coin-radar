@@ -4,11 +4,11 @@ export const open = now - (now % 300000);
 export const ok = data => new Response(JSON.stringify({ code: '0', msg: '', data }), { status: 200 });
 const TF = { '15m': 900000, '1H': 3600000, '4H': 14400000 };
 // 상위 시간대 캔들: kind = up | down | flat | gap. 최신 먼저, 첫 봉은 미확정(confirm 0)
-export function mtfCandles(bar, kind) {
+export function mtfCandles(bar, kind, len = 101) {
   const step = TF[bar], cur = now - (now % step);
   const rows = [];
-  for (let i = 0; i < 101; i++) {
-    const idx = 100 - i; // 오래된 쪽 0
+  for (let i = 0; i < len; i++) {
+    const idx = len - 1 - i; // 오래된 쪽 0
     const wave = Math.round(2 * Math.sin(2 * Math.PI * idx / 8) * 1e4) / 1e4;
     const drift = kind === 'up' ? idx * 0.4 : kind === 'down' ? -idx * 0.4 : 0;
     const c = 100 + drift + wave + (i === 0 ? 50 : 0); // 미확정 봉은 일부러 튀게(사용되면 결과가 바뀜)
@@ -37,7 +37,7 @@ export function fakeOkx({ breakout = true, funding = '0.0001', oiNow = 103, call
       case '/market/tickers': return tickers ? ok(tickers) : ok(instrumentList(universe).filter(x => x.ctType === 'linear').map(x => ({ instId: x.instId, last: '100', open24h: '98', volCcy24h: x.instCategory === '1' ? '100000' : '900000' })));
       case '/market/candles': {
         const bar = u.searchParams.get('bar');
-        if (bar !== '5m') { if (mtf[bar] === 'fail') return new Response('', { status: 500 }); return ok(mtfCandles(bar, mtf[bar] ?? 'up')); }
+        if (bar !== '5m') { if (mtf[bar] === 'fail') return new Response('', { status: 500 }); return ok(mtfCandles(bar, mtf[bar] ?? 'up', Number(u.searchParams.get('limit')) > 100 ? 301 : 101)); }
         const rows = [];
         for (let i = 0; i < 62; i++) { // 최신 먼저. i=0은 미확정 봉
           const t = open - i * 300000, idx = 61 - i;

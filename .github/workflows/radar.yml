@@ -96,6 +96,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RADAR_STATE_DIR: .radar-state
           RADAR_SLOT: ${{ github.event.inputs.slot }}
+          # 듀얼 전략 3.0은 기본 꺼짐: 기능 브랜치 프리뷰에서만 계산·출력하고(전송 없음), 운영 실행은 저장소 변수로 명시적으로 켜기 전까지 기존 동작 그대로
+          RADAR_DUAL: ${{ (env.MODE == 'preview' && '1') || vars.RADAR_DUAL || '' }}
+          RADAR_DUAL_REPORT: ${{ vars.RADAR_DUAL_REPORT || '' }}
         run: node radar-service/run.mjs --"$MODE"
       - name: Save state
         if: always() && steps.gate.outputs.run == 'true' && env.MODE != 'telegram-test'
