@@ -1,0 +1,56 @@
+name: deploy-dispatcher
+# Cloudflare 디스패처 Worker(scheduler/)를 'dispatch 꺼짐(DISPATCH_ENABLED=false)' 상태로 배포한다. 수동 실행 전용.
+# 필요한 GitHub Secrets(사용자가 저장소 설정에서 직접 등록, 채팅에 붙여넣지 않음):
+#   CLOUDFLARE_API_TOKEN  — Workers Scripts 편집 권한만, 만료 1~7일 권장(배포 후 삭제)
+#   CLOUDFLARE_ACCOUNT_ID — Cloudflare 계정 ID
+#   RADAR_DISPATCH_PAT    — GitHub fine-grained PAT(이 저장소 하나, Actions: Read and write)
+# 이 워크플로는 dispatch를 켜지 않고 스케줄러 전환 변수도 건드리지 않는다. 켜기는 별도 승인 단계.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '꺼진 상태(DISPATCH_ENABLED=false)로 배포하려면 deploy-disabled 를 입력'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: deploy-dispatcher
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'deploy-disabled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check required secrets
+        env:
+          PAT_PRESENT: ${{ secrets.RADAR_DISPATCH_PAT != '' }}
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ "$PAT_PRESENT" = "true" ] || missing="$missing RADAR_DISPATCH_PAT"
+          if [ -n "$missing" ]; then echo "::error title=GitHub Secret 누락::등록되지 않은 Secret:$missing (값은 출력하지 않습니다)"; exit 1; fi
+      - name: Scheduler tests
+        run: node --test scheduler/test/*.test.mjs
+      - name: Record website Worker state (read-only)
+        run: node scheduler/verify-deploy.mjs snapshot
+      - name: Deploy dispatcher (dispatch disabled)
+        working-directory: scheduler
+        run: npx --yes wrangler@4.146.0 deploy --name coin-radar-dispatcher --var DISPATCH_ENABLED:false
+      - name: Register GitHub token as Cloudflare Secret
+        working-directory: scheduler
+        env:
+          DISPATCH_PAT: ${{ secrets.RADAR_DISPATCH_PAT }}
+        run: printf '%s' "$DISPATCH_PAT" | npx --yes wrangler@4.146.0 secret put GITHUB_DISPATCH_TOKEN --name coin-radar-dispatcher
+      - name: Verify deployment (read-only)
+        run: node scheduler/verify-deploy.mjs verify

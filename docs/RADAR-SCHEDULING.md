@@ -120,3 +120,12 @@ GitHub schedule이 28~44분 간격이면 슬롯이 시각 기반이라 `lastSlot
 1. 장애 시작 후 정기 보고 1회 생략(의도된 비용). 긴급 알림은 그 시간대에만 억제.
 2. 장애 중 오래된 캐시 복원 시 정기 보고 1회 중복 가능.
 3. 경고 전달은 GitHub 알림 설정에 의존. 확실한 채널이 필요하면 Cloudflare 디스패처에서 별도 알림 경로를 두는 것을 검토(추가 비밀값·승인 필요).
+
+## 11. 디스패처 배포 (dispatch 꺼짐 상태) — `deploy-dispatcher` 워크플로
+이 환경은 Cloudflare API에 접근할 수 없고 계정 자격증명도 없어서, 배포는 GitHub Actions(수동 실행 전용)에서 합니다. 비밀값은 채팅이 아니라 **저장소 Secrets**에만 넣습니다.
+- 워크플로: `.github/workflows/deploy-dispatcher.yml` (workflow_dispatch 전용, main에서만, 입력 `deploy-disabled` 필요, 권한 `contents: read`).
+- 하는 일: ① Secret 3개 존재 확인(값은 출력 안 함) ② scheduler 테스트 ③ 기존 웹사이트 Worker(`coin-radar-engine`) 수정 시각 기록(읽기 전용) ④ 기존 `scheduler/` 코드를 **`coin-radar-dispatcher`** 이름으로 `--var DISPATCH_ENABLED:false` 배포(wrangler 4.146.0 고정) ⑤ GitHub PAT를 표준입력으로 Cloudflare Secret `GITHUB_DISPATCH_TOKEN`에 등록 ⑥ 읽기 전용 검증: Cron `*/5` 1개, `DISPATCH_ENABLED=false`, Secret 등록됨(값 조회 불가), Telegram·D1 바인딩 없음, workers.dev 꺼짐, 웹사이트 Worker 수정 시각 불변.
+- 하지 않는 일: dispatch 켜기, `RADAR_SCHEDULER` 변경, 웹사이트 Worker·D1·Telegram 접근.
+- 필요한 Secrets: `CLOUDFLARE_API_TOKEN`(Workers Scripts 편집, 만료 1~7일, 배포 후 삭제), `CLOUDFLARE_ACCOUNT_ID`, `RADAR_DISPATCH_PAT`(저장소 하나, Actions: Read and write; 배포 후 이 GitHub Secret은 삭제해도 Cloudflare 사본은 남음).
+- 주의: Cloudflare API 토큰은 계정 단위라 웹사이트 Worker도 편집 가능한 권한이 필요합니다(Worker 단위로 좁힐 수 없음). 그래서 짧은 만료 + 배포 후 삭제를 권장하고, 이를 원치 않으면 대시보드에서 `scheduler/worker.mjs`를 붙여넣는 방식(6장)으로도 같은 결과를 얻습니다.
+- 재배포 시 `wrangler.toml` 변수가 대시보드에서 바꾼 변수를 덮어씁니다(Secret은 유지). 켜기 단계는 별도 승인 후 진행합니다.
