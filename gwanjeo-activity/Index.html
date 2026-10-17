@@ -40,19 +40,19 @@ nav button{flex:1;border:0;background:none;padding:10px 0 8px;color:var(--mute);
 </nav>
 <script>
 var DEV=(function(){try{var d=localStorage.getItem('dev');if(!d){d=(self.crypto&&crypto.randomUUID?crypto.randomUUID():String(Math.random()).slice(2)+Date.now()).replace(/[^A-Za-z0-9-]/g,'');localStorage.setItem('dev',d)}return d}catch(e){return 'anon'}})();
-var S={token:null,boot:null,tab:'today',admin:false,edit:null};
+var S={token:null,boot:null,tab:'today',admin:true,edit:null};
 var $=function(s){return document.querySelector(s)};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function call(fn){var a=[].slice.call(arguments,1);return new Promise(function(res,rej){google.script.run.withSuccessHandler(function(r){
   if(r&&r.session===false){toLogin('세션이 만료되었습니다. 다시 로그인하세요.');}res(r)}).withFailureHandler(function(e){rej(e)})[fn].apply(null,a)})}
 function api(fn){return call.apply(null,[fn,S.token].concat([].slice.call(arguments,1)))}
-function toLogin(msg){S.token=null;S.admin=false;try{sessionStorage.removeItem('t')}catch(e){}$('#login').classList.remove('hide');$('#lerr').textContent=msg||'';$('#pw').value=''}
+function toLogin(msg){S.token=null;S.admin=true;try{sessionStorage.removeItem('t')}catch(e){}$('#login').classList.remove('hide');$('#lerr').textContent=msg||'';$('#pw').value=''}
 $('#lbtn').onclick=doLogin;$('#pw').onkeydown=function(e){if(e.key==='Enter')doLogin()};
 function doLogin(){var b=$('#lbtn');b.disabled=true;call('login',$('#pw').value,DEV).then(function(r){b.disabled=false;
  if(!r.ok){$('#lerr').textContent=r.error||'로그인 실패';return}
  S.token=r.token;try{sessionStorage.setItem('t',r.token)}catch(e){}start()}).catch(function(){b.disabled=false;$('#lerr').textContent='서버 연결 실패'})}
 $('#out').onclick=function(){call('logout',S.token).then(function(){toLogin('로그아웃되었습니다.')})};
-function start(){api('getBootstrap').then(function(r){if(!r||!r.ok)return;S.boot=r;S.admin=r.isAdmin;$('#login').classList.add('hide');$('#addr').textContent=r.store.address;show(S.tab)})}
+function start(){api('getBootstrap').then(function(r){if(!r||!r.ok)return;S.boot=r;$('#login').classList.add('hide');$('#addr').textContent=r.store.address;show(S.tab)})}
 document.querySelectorAll('nav button').forEach(function(b){b.onclick=function(){show(b.dataset.t)}});
 function show(t){S.tab=t;document.querySelectorAll('nav button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});
  ({today:vToday,log:vLog,staff:vStaff,stats:vStats})[t]()}
@@ -60,11 +60,7 @@ function setMain(h){$('#main').innerHTML=h}
 function opts(a,sel){return a.map(function(x){return '<option'+(x===sel?' selected':'')+'>'+esc(x)+'</option>'}).join('')}
 function ymd(d){var z=new Date(d.getTime()-d.getTimezoneOffset()*6e4);return z.toISOString().slice(0,10)}
 
-/* ── 관리자 게이트 ── */
-function needAdmin(render){
- if(S.admin)return render();
- setMain('<div class="card"><h2>관리자 인증</h2><p class="mute">이 메뉴는 관리자('+esc(S.boot.adminName)+') 전용입니다. 직원 비밀번호와 별도의 관리자 비밀번호가 필요합니다.</p><input id="apw" type="password" autocomplete="off" placeholder="관리자 비밀번호"><div class="err" id="aerr"></div><button class="btn" id="abtn">인증</button></div>');
- $('#abtn').onclick=function(){api('adminLogin',$('#apw').value).then(function(r){if(r.ok){S.admin=true;render()}else if(r.session!==false)$('#aerr').textContent=r.error||'인증 실패'})}}
+function needAdmin(render){render()}
 
 /* ── 오늘 / 입력 ── */
 function form(a){a=a||{};var b=S.boot,apt=b.apartments.filter(function(x){return x.id===a.aptId})[0];
@@ -101,20 +97,20 @@ function vLog(){var b=S.boot,to=b.today,from=ymd(new Date(Date.now()-6*864e5));
   $('#lr').innerHTML=Object.keys(by).sort().reverse().map(function(d){var t=by[d].reduce(function(s,x){return s+x.count},0);return '<div class="card"><h2>'+d+' <span class="mute">'+t+'개 동</span></h2>'+by[d].map(row).join('')+'</div>'}).join('')||'<div class="card mute">기록이 없습니다.</div>';bindRows()})}
  $('#lq').onclick=q;q()}
 
-/* ── 직원활동 (관리자) ── */
+/* ── 직원활동 ── */
 function vStaff(){needAdmin(function(){var to=S.boot.today,from=ymd(new Date(Date.now()-29*864e5));
  setMain('<div class="card"><h2>직원활동 (최근 30일)</h2><div id="sr" class="mute">불러오는 중…</div></div><div class="card"><h2>아파트 DB 관리</h2><div id="ar"></div></div>');
  api('staffActivity',from,to).then(function(r){if(!r.ok)return needAdminFail(r);$('#sr').innerHTML=r.items.map(function(x){return '<div class="item"><b>'+esc(x.staff)+'</b><div>'+x.dongs+'개 동 · '+x.records+'건 · '+x.days+'일 활동 <span class="mute">최근 '+esc(x.last||'-')+'</span></div></div>'}).join('')});
  $('#ar').innerHTML=S.boot.apartments.map(function(a){return '<div class="item"><b>'+esc(a.name)+'</b> <span class="mute">누적 '+a.total+'개 동 · 최근 '+esc(a.last||'-')+'</span><div class="mute">'+esc(a.type)+' · 현관 '+esc(a.entry)+(a.memo?' · '+esc(a.memo):'')+'</div></div>'}).join('')})}
-function needAdminFail(r){if(r.admin===false){S.admin=false;show(S.tab)}}
+function needAdminFail(r){}
 
-/* ── 분석 (관리자) ── */
+/* ── 분석 ── */
 function vStats(){needAdmin(function(){var chips=[['이번 주',0],['최근 7일',7],['최근 30일',30],['최근 90일',90]];
  setMain('<div class="chips" id="ch">'+chips.map(function(c,i){return '<button data-i="'+i+'">'+c[0]+'</button>'}).join('')+'</div><div id="sr"></div>');
  function run(i){document.querySelectorAll('#ch button').forEach(function(b,k){b.classList.toggle('on',k===i)});var now=new Date(),to=ymd(now),from;
   if(i===0){var d=new Date(now);d.setDate(d.getDate()-((d.getDay()+6)%7));from=ymd(d)}else from=ymd(new Date(Date.now()-(chips[i][1]-1)*864e5));
   $('#sr').innerHTML='<div class="mute">불러오는 중…</div>';
-  api('analytics',from,to).then(function(r){if(!r.ok){if(r.admin===false)needAdminFail(r);else $('#sr').innerHTML='<div class="err">'+esc(r.error)+'</div>';return}render(r)})}
+  api('analytics',from,to).then(function(r){if(!r.ok){$('#sr').innerHTML='<div class="err">'+esc(r.error)+'</div>';return}render(r)})}
  document.querySelectorAll('#ch button').forEach(function(b){b.onclick=function(){run(+b.dataset.i)}});run(1)})}
 function delta(a,b){var d=a-b;return (d>0?'+':'')+d}
 function render(r){var mx=Math.max.apply(null,r.daily.map(function(x){return Math.max(x.dongs,x.qr)}).concat([1]));

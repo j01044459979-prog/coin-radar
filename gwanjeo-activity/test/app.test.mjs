@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEnv } from './harness.mjs';
 
-const P = { SHEET_ID: 'SHEET', STAFF_PASSWORD: 'pw-staff', ADMIN_PASSWORD: 'pw-admin' };
+const P = { SHEET_ID: 'SHEET', STAFF_PASSWORD: 'pw-staff' };
 const act = (o = {}) => ({ date: '2026-10-09', staff: '전명석', aptId: 'APT011', dongs: '207동, 212동', type: '계단형', entry: '비밀번호 없음', memo: '', ...o });
 
 test('비밀번호 없이/가짜 토큰으로 모든 데이터 API 차단', () => {
@@ -41,41 +41,13 @@ test('기기 ID를 바꿔가며 대량 시도해도 정답 로그인은 막히�
   assert.equal(slept, before);
 });
 
-test('관리자 인증 실패는 해당 세션만 잠금, 다른 세션 영향 없음', () => {
-  const e = createEnv({ props: P });
-  const a = e.call('login', 'pw-staff', D1).token, b = e.call('login', 'pw-staff', D2).token;
-  for (let i = 0; i < 5; i++) e.call('adminLogin', a, 'bad');
-  assert.equal(e.call('adminLogin', a, 'pw-admin').ok, false);
-  assert.equal(e.call('adminLogin', b, 'pw-admin').ok, true);
-});
-
-test('비밀번호 미설정이면 로그인 불가 / 관리자 비밀번호 미설정이면 관리자 꺼짐', () => {
-  assert.equal(createEnv({ props: { SHEET_ID: 'SHEET' } }).call('login', '').ok, false);
-  const e = createEnv({ props: { SHEET_ID: 'SHEET', STAFF_PASSWORD: 'a' } });
-  const { token } = e.call('login', 'a');
-  assert.equal(e.call('adminLogin', token, '').ok, false);
-  assert.equal(e.call('analytics', token, '2026-10-01', '2026-10-09').ok, false);
-});
-
-test('직원 비밀번호만으로 관리자 기능 불가, 관리자 비밀번호로 승격, 직원 PW는 관리자 PW로 안 통함', () => {
-  const e = createEnv({ props: P });
-  const { token } = e.call('login', 'pw-staff');
-  assert.equal(e.call('staffActivity', token, '', '').admin, false);
-  assert.equal(e.call('adminLogin', token, 'pw-staff').ok, false);
-  assert.equal(e.call('adminLogin', token, 'pw-admin').ok, true);
-  assert.equal(e.call('staffActivity', token, '', '').ok, true);
-  assert.equal(e.call('login', 'pw-admin').ok, false); // 관리자 PW는 직원 로그인 불가
-});
-
-test('관리자 승격은 30분 후 만료', () => {
-  let t = 1e12; const e = createEnv({ props: P, now: () => t });
-  const { token } = e.call('login', 'pw-staff'); e.call('adminLogin', token, 'pw-admin');
-  t += 31 * 60e3; assert.equal(e.call('analytics', token, '2026-10-01', '2026-10-02').admin, false);
+test('STAFF_PASSWORD 미설정이면 로그인 불가', () => {
+  assert.equal(createEnv({ props: { SHEET_ID: 'SHEET' } }).call('login', '', D1).ok, false);
 });
 
 test('세션 만료·로그아웃 후 차단', () => {
   let t = 1e12; const e = createEnv({ props: P, now: () => t });
-  const a = e.call('login', 'pw-staff').token, b = e.call('login', 'pw-staff').token;
+  const a = e.call('login', 'pw-staff', D2).token, b = e.call('login', 'pw-staff', D2).token;
   assert.equal(e.call('getBootstrap', a).ok, true);
   e.call('logout', a); assert.equal(e.call('getBootstrap', a).session, false);
   t += 6 * 3600e3 + 1000; assert.equal(e.call('getBootstrap', b).session, false);
@@ -83,11 +55,11 @@ test('세션 만료·로그아웃 후 차단', () => {
 
 test('bootstrap: 직원 4명 제한, 비밀번호/시트ID 미노출, QR 추적주소는 신규 URL', () => {
   const e = createEnv({ props: P });
-  const { token } = e.call('login', 'pw-staff');
+  const { token } = e.call('login', 'pw-staff', D2);
   const b = e.call('getBootstrap', token);
   assert.equal(JSON.stringify(b.staff), JSON.stringify(['전명석', '박영빈', '김소명', '유병규']));
   const s = JSON.stringify(b);
-  assert.ok(!s.includes('pw-staff') && !s.includes('pw-admin') && !s.includes('SHEET'));
+  assert.ok(!s.includes('pw-staff') && !s.includes('SHEET'));
   assert.equal(b.qr.promoUrl, 'https://script.google.com/macros/s/NEW/exec?qr=promo');
   assert.equal(b.qr.regularUrl, 'https://su.kt.co.kr/SlRIQr5');
   assert.ok(!b.apartments.some((a) => a.id === 'APT099'));
@@ -95,7 +67,7 @@ test('bootstrap: 직원 4명 제한, 비밀번호/시트ID 미노출, QR 추적�
 
 test('활동 등록·조회·수정, 아파트DB 집계 갱신, 입력 검증', () => {
   const e = createEnv({ props: P });
-  const { token } = e.call('login', 'pw-staff');
+  const { token } = e.call('login', 'pw-staff', D2);
   assert.equal(e.call('addActivity', token, act()).ok, true);
   assert.equal(e.call('addActivity', token, act({ staff: '황윤주' })).ok, false);
   assert.equal(e.call('addActivity', token, act({ dongs: 'abc' })).ok, false);
@@ -114,19 +86,17 @@ test('활동 등록·조회·수정, 아파트DB 집계 갱신, 입력 검증', 
   assert.equal(e.call('updateActivity', token, 'NOPE', act()).ok, false);
 });
 
-test('삭제는 관리자만, 삭제 후 집계 재계산', () => {
+test('삭제 후 집계 재계산', () => {
   const e = createEnv({ props: P });
-  const { token } = e.call('login', 'pw-staff');
+  const { token } = e.call('login', 'pw-staff', D2);
   const id = (e.call('addActivity', token, act()), e.call('listActivities', token, {}).items[0].id);
-  assert.equal(e.call('deleteActivity', token, id).admin, false);
-  e.call('adminLogin', token, 'pw-admin');
   assert.equal(e.call('deleteActivity', token, id).ok, true);
   assert.equal(e.sheets['활동기록'].length, 1); assert.equal(e.sheets['아파트DB'][2][10], 0);
 });
 
 test('분석: 일별/직원별/아파트별/QR/기간비교', () => {
   const e = createEnv({ props: P });
-  const { token } = e.call('login', 'pw-staff'); e.call('adminLogin', token, 'pw-admin');
+  const { token } = e.call('login', 'pw-staff', D2);
   e.call('addActivity', token, act({ date: '2026-10-08', dongs: '201동' }));
   e.call('addActivity', token, act({ date: '2026-10-09', dongs: '207동, 212동', staff: '유병규' }));
   e.call('addActivity', token, act({ date: '2026-10-02', dongs: '203동', aptId: 'APT002' }));

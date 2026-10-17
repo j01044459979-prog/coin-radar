@@ -10,12 +10,12 @@ Google Apps Script 웹앱. 기존 폐쇄 URL은 사용하지 않으며 신규 Ap
 ## 배포 절차 (신규 프로젝트)
 1. script.google.com → 새 프로젝트. `Code.gs`, `Index.html`(HTML), `appsscript.json` 내용을 붙여넣기
    (또는 `clasp create --type standalone && clasp push`).
-2. 프로젝트 설정 → 스크립트 속성: `SHEET_ID`(운영용 시트 ID), `STAFF_PASSWORD`, `ADMIN_PASSWORD`(직원용과 다른 값).
+2. 프로젝트 설정 → 스크립트 속성: `SHEET_ID`(운영용 시트 ID), `STAFF_PASSWORD`(운영 값: 1004, 코드/저장소에는 넣지 않음).
 3. 배포 → 새 배포 → 웹 앱: 실행 사용자 **나**, 액세스 **모든 사용자**. 새 Deployment ID/URL 발급.
 4. QR①은 `<웹앱URL>?qr=promo` 로 재생성. QR②는 `https://su.kt.co.kr/SlRIQr5` 직접.
 
 ## 권한 구조
-- 직원: 오늘/활동기록(등록·조회·수정). 관리자(별도 비밀번호, 30분 승격): 직원활동·분석·삭제·아파트DB 수정.
+- 별도 관리자 인증 없음. 비밀번호로 로그인한 모든 사용자가 4개 메뉴(오늘/활동기록/직원활동/분석)와 수정·삭제를 동일하게 사용한다.
 - 데이터 함수는 전부 세션 토큰 검증. 공개 `doGet`은 로그인 화면과 `?qr=promo`만 처리.
 
 ## 알려진 제약
