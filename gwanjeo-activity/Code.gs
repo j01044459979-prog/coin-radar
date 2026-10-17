@@ -5,62 +5,29 @@
  *   SHEET_ID        운영용 구글시트 ID
  *   STAFF_PASSWORD  직원 공용 비밀번호
  *
- * 공개 진입점은 doGet 하나뿐이다. 데이터 함수는 모두 세션 토큰을 검증한다.
+ * 공개 진입점은 doGet(로그인 화면) 하나뿐이다. 데이터 함수는 모두 세션 토큰을 검증한다.
  */
 var TZ = 'Asia/Seoul';
-var STAFF = ['전명석', '박영빈', '김소명', '유병규'];
+var STAFF = ['전명석', '김소명', '유병규'];
 var STORE = { name: '관저중로점', address: '대전 서구 관저중로 98' };
-var QR_PROMO_URL = 'https://naver.me/Fm2I607T';
-var QR_REGULAR_URL = 'https://su.kt.co.kr/SlRIQr5';
 var SESSION_TTL = 6 * 3600;        // CacheService 최대 6시간
 var MAX_FAILS = 5;
 var LOCK_SECONDS = 300;
-var QR_DEDUPE_SECONDS = 5;
 var GLOBAL_FAIL_SOFT = 30;
 
 var SHEETS = {
   apt: { name: '아파트DB', head: ['ID', '아파트명', '주소', '총세대수', '전체동수', '동목록', '아파트형식', '공동현관', '메모', '최근활동일', '누적활동동수', '사용여부'] },
-  act: { name: '활동기록', head: ['활동ID', '활동일', '담당자', '아파트ID', '아파트명', '완료동', '활동동수', '아파트형식', '공동현관', '활동메모', '등록일시'] },
-  qr: { name: 'QR접속기록', head: ['접속ID', '접속일', '접속시간', 'QR구분', '기록일시'] }
+  act: { name: '활동기록', head: ['활동ID', '활동일', '담당자', '아파트ID', '아파트명', '완료동', '활동동수', '아파트형식', '공동현관', '활동메모', '등록일시'] }
 };
 var TYPES = ['복도형', '계단형', '혼합형', '미확인'];
 var ENTRY = ['미확인', '비밀번호 있음', '비밀번호 없음'];
 
 // ───────── 진입점 ─────────
-function doGet(e) {
-  var p = (e && e.parameter) || {};
-  if (p.qr === 'promo') return qrPromo_();
+function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle('관저중로점 AI 외부활동')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
-}
-
-// QR① 공개 경로: 접속 1건 기록 후 이동. 어떤 데이터도 읽거나 반환하지 않는다.
-function qrPromo_() {
-  try { recordQr_(); } catch (err) { console.error('qr log failed: ' + err); }
-  var u = QR_PROMO_URL;
-  var html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<body style="font-family:sans-serif;text-align:center;padding:40px 16px">' +
-    '<p>이동 중입니다…</p><p><a id="go" href="' + u + '" target="_top" style="font-size:18px">바로 이동하기</a></p>' +
-    '<script>try{window.top.location.replace(' + JSON.stringify(u) + ')}catch(e){}</script></body>';
-  return HtmlService.createHtmlOutput(html).setTitle('이동 중');
-}
-
-function recordQr_() {
-  var cache = CacheService.getScriptCache();
-  if (cache.get('QRD')) return false;      // 중복 집계 방지(짧은 시간 내 재접속)
-  cache.put('QRD', '1', QR_DEDUPE_SECONDS);
-  var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    var now = new Date();
-    sheet_('qr').appendRow([
-      'QR-' + Utilities.formatDate(now, TZ, 'yyyyMMddHHmmssSSS') + '-' + Utilities.getUuid().slice(0, 5).toUpperCase(),
-      now, now, '홍보QR', now
-    ]);
-  } finally { lock.releaseLock(); }
-  return true;
 }
 
 // ───────── 인증 ─────────
@@ -174,10 +141,10 @@ function parseDongs_(text) {
   return out;
 }
 
-function validateActivity_(a, aptRows) {
+function validateActivity_(a, aptRows, keepStaff) {
   if (!a || typeof a !== 'object') throw new Error('잘못된 요청');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(a.date || '')) throw new Error('활동일 형식 오류');
-  if (STAFF.indexOf(a.staff) < 0) throw new Error('선택할 수 없는 직원입니다.');
+  if (STAFF.indexOf(a.staff) < 0 && a.staff !== keepStaff) throw new Error('선택할 수 없는 직원입니다.');
   var apt = aptRows.filter(function (r) { return r.v[0] === a.aptId && r.v[11] !== '미사용'; })[0];
   if (!apt) throw new Error('아파트를 선택하세요.');
   var dongs = parseDongs_(a.dongs);
@@ -203,6 +170,13 @@ function refreshApts_() {
   });
 }
 
+// 현재 선택 가능한 직원 + 과거 기록에 남아 있는 담당자(조회 필터용)
+function allStaff_() {
+  var out = STAFF.slice();
+  rows_('act').forEach(function (r) { var n = r.v[2]; if (n && out.indexOf(n) < 0) out.push(n); });
+  return out;
+}
+
 // ───────── 직원용 API ─────────
 function getBootstrap(token) {
   return guard_(token, function () {
@@ -210,7 +184,7 @@ function getBootstrap(token) {
       ok: true, staff: STAFF, store: STORE, types: TYPES, entries: ENTRY,
       today: Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'),
       apartments: rows_('apt').map(aptOf_).filter(function (a) { return a.active !== '미사용'; }),
-      qr: { promoUrl: ScriptApp.getService().getUrl() + '?qr=promo', regularUrl: QR_REGULAR_URL }
+      staffAll: allStaff_()
     };
   });
 }
@@ -235,7 +209,7 @@ function updateActivity(token, id, a) {
     try {
       var target = rows_('act').filter(function (r) { return r.v[0] === id; })[0];
       if (!target) throw new Error('기록을 찾을 수 없습니다.');
-      var c = validateActivity_(a, rows_('apt'));
+      var c = validateActivity_(a, rows_('apt'), target.v[2]);
       var created = target.v[10];
       sheet_('act').getRange(target.row, 1, 1, 11).setValues([[id, noon_(a.date), a.staff, c.apt.v[0], c.apt.v[1], c.dongs.join(', '), c.dongs.length, c.type, c.entry, c.memo, created]]);
       refreshApts_();
@@ -307,19 +281,17 @@ function analytics(token, from, to) {
     if (span > 366) throw new Error('기간은 최대 366일입니다.');
     var pFrom = addDays_(from, -span), pTo = addDays_(from, -1);
     var acts = rows_('act').map(actOf_);
-    var qrs = rows_('qr').map(function (r) { return dkey_(r.v[1]); });
     function sum(a, b) {
       var inR = acts.filter(function (x) { return x.date >= a && x.date <= b; });
-      return { dongs: inR.reduce(function (s, x) { return s + x.count; }, 0), records: inR.length, qr: qrs.filter(function (d) { return d >= a && d <= b; }).length };
+      return { dongs: inR.reduce(function (s, x) { return s + x.count; }, 0), records: inR.length };
     }
     var daily = [], i;
     for (i = 0; i < span; i++) {
       var d = addDays_(from, i);
-      daily.push({ date: d, dongs: 0, qr: 0 });
+      daily.push({ date: d, dongs: 0 });
     }
     var idx = {}; daily.forEach(function (r, k) { idx[r.date] = k; });
     acts.forEach(function (x) { if (idx[x.date] != null) daily[idx[x.date]].dongs += x.count; });
-    qrs.forEach(function (d) { if (idx[d] != null) daily[idx[d]].qr++; });
     var staff = {}, apt = {};
     acts.filter(function (x) { return x.date >= from && x.date <= to; }).forEach(function (x) {
       staff[x.staff] = (staff[x.staff] || 0) + x.count;
@@ -330,8 +302,7 @@ function analytics(token, from, to) {
       ok: true, from: from, to: to, daily: daily,
       staff: Object.keys(staff).map(function (k) { return { staff: k, dongs: staff[k] }; }).sort(function (a, b) { return b.dongs - a.dongs; }),
       apartments: Object.keys(apt).map(function (k) { return apt[k]; }).sort(function (a, b) { return b.dongs - a.dongs; }),
-      current: sum(from, to), previous: sum(pFrom, pTo), previousRange: [pFrom, pTo],
-      note: '고정 QR을 사용하므로 QR 유입을 특정 아파트 활동의 결과로 단정할 수 없습니다. 기간 단위 추이만 참고하세요.'
+      current: sum(from, to), previous: sum(pFrom, pTo), previousRange: [pFrom, pTo]
     };
   });
 }
