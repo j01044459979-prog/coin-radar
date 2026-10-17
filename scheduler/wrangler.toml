@@ -1,0 +1,21 @@
+# COIN RADAR 5분 디스패처 — 기존 웹사이트용 Worker(coin-radar-engine)와 완전히 별개의 Worker입니다.
+# ⚠️ 이 파일은 GitHub에 올라갑니다. 토큰/비밀값을 절대 적지 마세요.
+# 필요한 Secret 1개: GITHUB_DISPATCH_TOKEN (Cloudflare 대시보드 > Worker > Settings > Variables and Secrets 에서 "Secret"으로 등록)
+name = "coin-radar-dispatcher"
+main = "worker.mjs"
+compatibility_date = "2025-09-01"
+workers_dev = false   # 공개 URL을 만들지 않음(cron 전용)
+
+[observability]
+enabled = true
+
+# 무료 플랜 Cron Trigger는 계정 전체 5개. 기존 coin-radar-engine이 2개를 쓰므로 이 Worker는 1개만 추가(합계 3개).
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+GITHUB_REPO = "j01044459979-prog/coin-radar"
+GITHUB_WORKFLOW = "radar.yml"
+GITHUB_REF_NAME = "main"
+# 킬 스위치: 처음에는 "false"로 배포해 두고, 전환 절차 3단계에서 "true"로 바꿉니다.
+DISPATCH_ENABLED = "false"

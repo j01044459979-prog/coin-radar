@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, appendFile } from 'node:fs/promises';
+import { evaluate, slotOfTime } from './gate.mjs';
 import { createCollector, cycle, telegramPhotoSender, telegramSender } from './service.mjs';
 import { buildSvg, chartCaption, chartPlan, renderChart, renderPng } from './chart.mjs';
 import { createOkxCollector } from './okx.mjs';
@@ -10,10 +11,19 @@ import { refreshNews } from './news.mjs';
 const args = new Set(process.argv.slice(2));
 const directory = process.env.RADAR_STATE_DIR || '/data';
 await mkdir(directory, { recursive: true, mode: 0o700 });
-let state = {};
-try { state = JSON.parse(await readFile(`${directory}/state.json`, 'utf8')); }
-catch (error) { if (error.code !== 'ENOENT') throw new Error('상태 파일 손상: 운영자 확인 필요'); }
+let state = {}, recoveredNow = false;
+try { state = JSON.parse(await readFile(`${directory}/state.json`, 'utf8')); if (!state || typeof state !== 'object' || Array.isArray(state)) throw new SyntaxError('state is not an object'); }
+catch (error) {
+  if (error.code !== 'ENOENT') {
+    // 손상된 상태가 가장 최근 캐시로 남아 레이더 전체를 영구 정지시키지 않도록: 원본은 보존하고 새 상태로 시작한다(정기 보고 1회 중복 가능).
+    const kept = `state.corrupt-${Date.now()}.json`;
+    await rename(`${directory}/state.json`, `${directory}/${kept}`).catch(() => {});
+    state = { recovery: { reason: 'corrupt-state', keptAs: kept, at: Date.now() } }; recoveredNow = true;
+    console.log(`::warning title=레이더 상태 손상::상태 파일을 읽지 못해 새 상태로 시작합니다(원본 ${kept} 보존). 중복 전송을 막기 위해 이번 시간대 Telegram 전송은 생략하고 다음 시간대부터 재개합니다.`);
+  }
+}
 const save = async data => {
+  data.seq = (Number(data.seq) || 0) + 1; data.savedAt = Date.now(); // 저장 순서 추적(어느 캐시가 복원됐는지 로그로 확인)
   await writeFile(`${directory}/state.tmp`, JSON.stringify(data), { mode: 0o600 });
   await rename(`${directory}/state.tmp`, `${directory}/state.json`);
 };
@@ -22,7 +32,22 @@ const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : cre
 const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 
-if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
+if (args.has('--gate')) {
+  // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false, alert=true|false.
+  const now = Date.now();
+  const before = JSON.stringify([state.quiet, state.degraded]);
+  const d = evaluate({ source: process.env.RADAR_SOURCE_EVENT, scheduler: process.env.RADAR_SCHEDULER, state, now, slot: process.env.RADAR_SLOT, cacheStatus: process.env.RADAR_CACHE_STATUS, recovered: recoveredNow });
+  console.log(`GATE ${d.run ? '실행' : '건너뜀'} · 출처=${process.env.RADAR_SOURCE_EVENT} · 슬롯=${d.slot} · 스케줄러=${d.mode} · 직전 시도 ${d.ageMs === null ? '없음' : Math.round(d.ageMs / 1000) + '초 전'} · ${d.reason} · 복원된 상태 seq=${state.seq ?? '없음'} savedAt=${state.savedAt ? new Date(state.savedAt).toISOString() : '없음'} · 캐시 판정=${process.env.RADAR_CACHE_STATUS || '없음'}`);
+  // 이상 상태(캐시 확인 불가·오래된 캐시·손상 복구)는 로그와 요약에서 바로 보이게 남긴다.
+  if (d.kind) {
+    console.log(`::warning title=레이더 상태 연속성 경고 (${d.kind})::${d.kind} 상태 ${d.degradedHours}시간째${d.quiet ? ` · 이번 시간대 Telegram 전송 억제(${d.quiet})` : ' · 전송은 정상 진행'}`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `### ⚠️ 레이더 상태 연속성 경고\n- 종류: \`${d.kind}\` · 지속 ${d.degradedHours}시간\n- Telegram: ${d.quiet ? `이번 시간대 전송 억제(\`${d.quiet}\`)` : '정상 진행'}\n- 조치: 캐시 확인 API 장애면 GitHub 상태를 확인하세요. 3시간 넘게 이어지면 이 실행이 실패로 표시됩니다.\n`).catch(() => {});
+  }
+  if (d.quiet) console.log(`::warning title=Telegram 전송 억제::${d.quiet}: 이번 시간대(UTC 기준 ${state.quiet.hour}) 정기 보고·긴급 알림을 보내지 않고 상태만 복구합니다.`);
+  if (d.alert) console.log(`::error title=레이더 이상 상태 장기화::${d.alert}`);
+  if (JSON.stringify([state.quiet, state.degraded]) !== before) await save(state);
+  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `run=${d.run}\nalert=${Boolean(d.alert)}\n`);
+} else if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   if (args.has('--once')) console.log('Telegram 비밀값 미설정: 수집·분석만 실행하고 전송/상태 저장은 하지 않습니다.');
   const now = Date.now();
   const { rows, failures, stats, charts } = await collect(now);
@@ -79,6 +104,10 @@ if (args.has('--preview') || (args.has('--once') && !tokenConfigured)) {
   const sendPhoto = telegramPhotoSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
   const render = renderChart;
   if (args.has('--once')) {
+    // 슬롯 멱등성: 이 슬롯을 처리했다고 먼저 기록한다(같은 슬롯의 중복 실행·늦게 도착한 이전 슬롯 실행은 게이트가 건너뜀).
+    const slot = Number(process.env.RADAR_SLOT);
+    state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
+    await save(state);
     console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
   } else {
     let stopped = false;

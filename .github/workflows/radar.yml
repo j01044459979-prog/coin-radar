@@ -1,11 +1,23 @@
 name: radar
+run-name: radar · ${{ github.event_name }} · ${{ inputs.source || '-' }} · slot ${{ inputs.slot || '-' }}
 # 리치 선물 레이더: OKX 공개 API 수집 → 분석 → Telegram. 키/주문 없음. 공개 저장소 표준 러너(무료).
 # 스케줄은 GitHub 사정으로 수 분~수십 분 지연되거나 일부 건너뛸 수 있다(정확한 5분/정시 보장 없음).
+# 외부 스케줄러(Cloudflare 디스패처, scheduler/)가 5분마다 workflow_dispatch(source=cloudflare)로 시작할 수 있다.
+# 저장소 변수 RADAR_SCHEDULER: 'github'(기본, GitHub schedule만) | 'cloudflare'(디스패처 우선, GitHub schedule은 15분 넘게 공백일 때만 대신 실행).
+# 어느 쪽이든 Gate 단계가 직전 시도 시각으로 같은 슬롯의 중복 실행을 막는다. 롤백: 변수를 'github'로 바꾸면 즉시 원복.
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
+      source:
+        description: '외부 스케줄러가 채우는 값(수동 실행 시 비워 둠)'
+        type: string
+        default: ''
+      slot:
+        description: '5분 슬롯 번호(외부 스케줄러 중복 방지용, 수동 실행 시 비워 둠)'
+        type: string
+        default: ''
       mode:
         description: 'once = 분석·알림 1회, telegram-test = 연결 확인 메시지 1건, preview = 전송 없이 출력'
         type: choice
@@ -13,9 +25,10 @@ on:
         default: once
   push:
     branches: [claude/coin-radar-auto-alerts-fzsnyl, 'feature/**']
-    paths: [.github/workflows/radar.yml, radar-service/**, assets/futures-engine.js, worker/src/intel/**, radar-service/package-lock.json]
+    paths: [.github/workflows/radar.yml, radar-service/**, scheduler/**, assets/futures-engine.js, worker/src/intel/**, radar-service/package-lock.json]
 permissions:
   contents: read
+  actions: read   # 상태 캐시 최신성 확인(캐시 목록 조회)에만 사용
 concurrency:
   group: radar
   cancel-in-progress: false
@@ -26,44 +39,100 @@ jobs:
     timeout-minutes: 8
     env:
       # feature/* 브랜치 push는 읽기 전용 프리뷰: Telegram 전송 없음
+      RADAR_SOURCE_EVENT: ${{ github.event_name == 'schedule' && 'github-schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.source == 'cloudflare' && 'cloudflare') || 'manual' }}
+      RADAR_SCHEDULER: ${{ vars.RADAR_SCHEDULER || 'github' }}
       MODE: ${{ github.event.inputs.mode || ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/')) && 'preview' || 'once') }}
     steps:
       - uses: actions/checkout@v4
+      - name: Restore state
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}
+          restore-keys: radar-state-
+      # 복원된 캐시가 저장소의 가장 최근 캐시인지 확인한다(오래된 상태 복원 → Telegram 중복 전송 방지). 확인 실패는 'unverified'로 두고 계속한다.
+      - name: Check cache freshness
+        id: cachecheck
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RESTORED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+        run: node radar-service/cache-check.mjs
+      # 더 새 캐시가 있으면 그 키로 정확히 재복원한다. 재복원도 실패하면 Gate가 이번 시간대 전송을 억제한다.
+      - name: Restore newest cache
+        id: restore_newest
+        if: steps.cachecheck.outputs.status == 'stale' || steps.cachecheck.outputs.status == 'cold-with-caches'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: ${{ steps.cachecheck.outputs.newest }}
+      # 실행 게이트: 상태(마지막 시도 시각)와 출처로 이번 실행의 수집·전송 여부를 결정한다. 건너뛰면 아래 단계는 모두 생략된다(상태 저장도 없음).
+      - name: Gate
+        id: gate
+        env:
+          RADAR_STATE_DIR: .radar-state
+          RADAR_SLOT: ${{ github.event.inputs.slot }}
+          RADAR_CACHE_STATUS: ${{ (steps.restore_newest.outputs.cache-hit == 'true' && 'ok') || steps.cachecheck.outputs.status || 'unverified' }}
+        run: node radar-service/run.mjs --gate
       - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: radar-service/package-lock.json
       # 차트 PNG 렌더러(@resvg/resvg-js). 설치에 실패해도 레이더는 텍스트 전용으로 계속 동작한다.
       - name: Install chart dependency
+        if: steps.gate.outputs.run == 'true'
         continue-on-error: true
         run: npm ci --prefix radar-service --no-audit --no-fund
-      - name: Restore state
-        uses: actions/cache/restore@v4
-        with:
-          path: .radar-state
-          key: radar-state-${{ github.run_id }}
-          restore-keys: radar-state-
       - name: Unit tests
-        run: node --test radar-service/test/*.test.mjs
+        if: steps.gate.outputs.run == 'true'
+        run: node --test radar-service/test/*.test.mjs scheduler/test/*.test.mjs
       - name: Run radar
+        if: steps.gate.outputs.run == 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RADAR_STATE_DIR: .radar-state
+          RADAR_SLOT: ${{ github.event.inputs.slot }}
         run: node radar-service/run.mjs --"$MODE"
       - name: Save state
-        if: always() && env.MODE != 'telegram-test'
+        if: always() && steps.gate.outputs.run == 'true' && env.MODE != 'telegram-test'
         uses: actions/cache/save@v4
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
       # 캐시 저장이 실제로 반영됐는지 확인한다. 실패하면 이 실행을 성공으로 표시하지 않는다.
       - name: Verify state saved
-        if: always() && env.MODE != 'telegram-test'
+        id: verify
+        continue-on-error: true
+        if: always() && steps.gate.outputs.run == 'true' && env.MODE != 'telegram-test'
         uses: actions/cache/restore@v4
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
           lookup-only: true
           fail-on-cache-miss: true
+      # 저장 검증이 실패하면 다른 키로 한 번 더 저장하고 다시 검증한다(다음 실행이 오래된 상태를 복원해 정기 보고가 중복되는 것을 줄이기 위함).
+      - name: Retry state save
+        id: retry_save
+        if: always() && steps.verify.outcome == 'failure'
+        uses: actions/cache/save@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
+      - name: Verify retry save
+        if: always() && steps.verify.outcome == 'failure'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
+          lookup-only: true
+          fail-on-cache-miss: true
+      # 이상 상태(캐시 확인 불가·오래된 캐시·손상 복구)가 3시간 넘게 이어지면(시간당 최대 1회) 이 실행을 실패로 표시해 GitHub 실패 알림을 유도한다.
+      - name: Prolonged degradation alert
+        if: always() && steps.gate.outputs.alert == 'true'
+        run: |
+          echo "::error title=레이더 이상 상태 장기화::Gate 단계 로그와 실행 요약(Summary)을 확인하세요."
+          exit 1
