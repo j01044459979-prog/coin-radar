@@ -143,7 +143,7 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
   add('reentry', '재진입 확인 캔들', interacting && candle && recovered, `${L ? '양봉' : '음봉'} 마감으로 구간 ${L ? '회복' : '복귀'}`,
     !interacting ? '눌림이 먼저 필요함' : `재진입 확인 대기: ${missing.join(' · ') || '조건 미충족'}`);
   const chaseOk = sel ? sel.dist / atr4 <= P.chaseAtr4h && range <= P.maxRangeAtr1h : false;
-  add('chase', '추격 아님', chaseOk, `추격 아님(구간에서 ${f2(Math.max(0, dist4))} ATR(4H) 이내)`,
+  add('chase', '추격 아님', chaseOk, (dist4 <= 0 ? '추격 아님(가격이 구간 안쪽)' : `추격 아님(구간에서 ${f2(dist4)} ATR(4H) 이내)`),
     !sel ? '기준 구간 없음' : `추격 위험: 구간에서 ${f2(sel.dist / atr4)} ATR(4H) 이격(기준 ${P.chaseAtr4h}) · 마지막 봉 폭 ${f2(range)} ATR(1H)(기준 ${P.maxRangeAtr1h})`);
   const riskAtr = risk === null ? null : risk / a1, widthOk = riskAtr !== null && riskAtr >= P.stopMinAtr1h && riskAtr <= P.stopMaxAtr1h;
   add('width', '무효화 거리 적정', widthOk, `무효화 가격까지 ${f2(riskAtr)} ATR(1H)`,
