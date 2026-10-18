@@ -21,7 +21,7 @@ export function watchBlock(sym, a, event) {
   if (a.zone) lines.push(`${zn} 구간 ${fmtPrice(a.zone.lo)}~${fmtPrice(a.zone.hi)} (${escHtml(a.zone.type)}) · 무효화 가격 ${fmtPrice(a.invalidation)} (1H 종가가 이 가격을 ${L ? '하향' : '상향'} 이탈하면 관찰 해제)`);
   lines.push(`반대편 ${on} ${a.opposing === null ? '가까운 구간 없음' : fmtPrice(a.opposing)}`);
   const vol = m.relVol === null ? '확인 불가' : `×${m.relVol.toFixed(1)}`;
-  const btc = m.btcAlign === '확인 불가' ? 'BTC 4H 확인 불가' : `BTC 4H ${m.btcDir === 'UP' ? '상승' : m.btcDir === 'DOWN' ? '하락' : '중립'}(${m.btcAlign})`;
+  const btc = m.btcAlign === '확인 불가' ? 'BTC 4H 확인 불가' : m.btcDir ? `BTC 4H ${m.btcDir === 'UP' ? '상승' : '하락'}(${m.btcAlign})` : 'BTC 4H 중립';
   lines.push(`${trendText(a)} · ${escHtml(btc)} · 상대 거래량 ${vol} · 변동성 ${m.volLabel}(ATR 1H ${m.atr1Pct.toFixed(2)}% / 4H ${m.atr4Pct.toFixed(2)}%) · 추격 위험 ${escHtml(m.chase)}`);
   lines.push(`관찰 이유: ${a.reasons.map(escHtml).join(' / ') || '-'}`);
   lines.push(`미충족: ${a.unmet.length ? a.unmet.map(escHtml).join(' / ') : '없음'}`);

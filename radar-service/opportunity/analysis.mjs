@@ -135,17 +135,18 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
     out.zone = { lo: sel.z.lo, hi: sel.z.hi, level: sel.z.level, type: sel.z.type }; out.invalidation = inv;
   }
   const zoneTxt = sel ? `${zname} 구간 ${fmtPrice(sel.z.lo)}~${fmtPrice(sel.z.hi)}(${sel.z.type})` : '';
-  add('touch', `${zname} 구간 접촉`, interacting, `${zoneTxt}에 최근 ${P.pullbackBars}시간 안에 닿음`,
+  add('touch', `${zname} 구간 접촉`, interacting, `${zname} 구간에 최근 ${P.pullbackBars}시간 안에 접촉`,
     approaching ? `${zoneTxt}까지 ${f2(approaching.dist / atr4)} ATR(4H) 남음(아직 닿지 않음)` : brokenNear ? `${zname} 구간 ${fmtPrice(brokenNear.z.lo)}~${fmtPrice(brokenNear.z.hi)}을 1H 종가로 ${L ? '하향' : '상향'} 이탈함` : `${P.approachAtr4h} ATR(4H) 안에 접근한 ${zname} 구간이 없음${farNear ? `(가장 가까운 구간과 ${f2(farNear.dist / atr4)} ATR 이격)` : ''}`);
-  add('hold', '구간 유지(눌림 구조)', interacting, `최근 ${P.pullbackBars}시간 1H 종가가 구간을 ${L ? '하향' : '상향'} 이탈하지 않고 구간 밖에서 내려옴`, interacting ? '' : '눌림이 진행되지 않았거나 구간을 이탈함');
+  add('hold', '구간 유지(눌림 구조)', interacting, `눌림 구간 동안 1H 종가 이탈 없음`, interacting ? '' : '눌림이 진행되지 않았거나 구간을 이탈함');
   const candle = L ? x.c > x.o && x.c > prev.c : x.c < x.o && x.c < prev.c, recovered = sel ? sel.dist >= 0 : false;
-  add('reentry', '재진입 확인 캔들', interacting && candle && recovered, `${L ? '양봉' : '음봉'} 마감 · 직전 종가 ${L ? '상회' : '하회'} · 구간 ${L ? '회복' : '복귀'}`,
-    !interacting ? '눌림이 먼저 필요함' : `${L ? '양봉' : '음봉'} 마감 · 직전 종가 ${L ? '상회' : '하회'} · 구간 ${L ? '회복' : '복귀'} 중 일부 미충족`);
+  const missing = [!(L ? x.c > x.o : x.c < x.o) && `${L ? '양봉' : '음봉'} 미형성`, !(L ? x.c > prev.c : x.c < prev.c) && `직전 종가 미${L ? '상회' : '하회'}`, !recovered && `종가가 구간 ${L ? '상단' : '하단'} 안쪽 또는 ${L ? '아래' : '위'}`].filter(Boolean);
+  add('reentry', '재진입 확인 캔들', interacting && candle && recovered, `${L ? '양봉' : '음봉'} 마감으로 구간 ${L ? '회복' : '복귀'}`,
+    !interacting ? '눌림이 먼저 필요함' : `재진입 확인 대기: ${missing.join(' · ') || '조건 미충족'}`);
   const chaseOk = sel ? sel.dist / atr4 <= P.chaseAtr4h && range <= P.maxRangeAtr1h : false;
-  add('chase', '추격 아님', chaseOk, `구간에서 ${f2(dist4)} ATR(4H) 이내 · 마지막 봉 폭 ${f2(range)} ATR(1H)`,
+  add('chase', '추격 아님', chaseOk, `추격 아님(구간에서 ${f2(Math.max(0, dist4))} ATR(4H) 이내)`,
     !sel ? '기준 구간 없음' : `추격 위험: 구간에서 ${f2(sel.dist / atr4)} ATR(4H) 이격(기준 ${P.chaseAtr4h}) · 마지막 봉 폭 ${f2(range)} ATR(1H)(기준 ${P.maxRangeAtr1h})`);
   const riskAtr = risk === null ? null : risk / a1, widthOk = riskAtr !== null && riskAtr >= P.stopMinAtr1h && riskAtr <= P.stopMaxAtr1h;
-  add('width', '무효화 거리 적정', widthOk, `무효화 가격까지 ${f2(riskAtr)} ATR(1H)(허용 ${P.stopMinAtr1h}~${P.stopMaxAtr1h})`,
+  add('width', '무효화 거리 적정', widthOk, `무효화 가격까지 ${f2(riskAtr)} ATR(1H)`,
     riskAtr === null ? '기준 구간 없음' : `무효화 가격까지 ${f2(riskAtr)} ATR(1H)로 ${riskAtr < P.stopMinAtr1h ? '너무 좁음' : '너무 넓음'}(허용 ${P.stopMinAtr1h}~${P.stopMaxAtr1h})`);
   // 반대편 장애물까지 공간: 4H 확정 스윙 고점(저점) 120봉 + 최근 72개 1H 최고(최저)
   const margin = P.resMarginAtr1h * a1, obst = [], lst = L ? T.ph : T.pl, nn = countUpTo(lst, d - P.pivotK);
@@ -154,13 +155,16 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
   if (L ? rv > x.c + margin : rv < x.c - margin) obst.push(rv);
   const opp = obst.length ? (L ? Math.min(...obst) : Math.max(...obst)) : null, roomR = opp === null || !(risk > 0) ? null : (opp - x.c) * s / risk;
   out.opposing = opp;
-  add('room', `반대편 ${oname}까지 공간`, risk > 0 && (opp === null || roomR >= P.roomR), opp === null ? `가까운 반대편 ${oname} 없음` : `반대편 ${oname} ${fmtPrice(opp)}까지 ${f2(roomR)}R(기준 ${P.roomR}R)`,
+  add('room', `반대편 ${oname}까지 공간`, risk > 0 && (opp === null || roomR >= P.roomR), opp === null ? `가까운 반대편 ${oname} 없음` : `반대편 ${oname}까지 ${f2(roomR)}R`,
     risk > 0 ? `반대편 ${oname} ${fmtPrice(opp)}까지 ${f2(roomR)}R로 ${P.roomR}R 미만` : '기준 구간 없음');
 
   out.checks = checks; out.met = checks.filter(c => c.ok).length;
-  out.reasons = checks.filter(c => c.ok).map(c => c.detail);
-  out.unmet = checks.filter(c => !c.ok).map(c => c.detail).filter(Boolean);
   out.stage = interacting ? (out.met === CHECK_TOTAL ? 3 : 2) : approaching ? 1 : 0;
+  // 표시용 정리: 접근 단계에서는 아직 의미 없는 항목(구간 이탈 없음·반대편 공간 등)을 '관찰 이유'로 내세우지 않고, 앞 조건이 안 된 때 따라오는 항목은 미충족 설명에서 중복으로 늘어놓지 않는다.
+  out.reasons = checks.filter(c => c.ok && (out.stage >= 2 || c.key === 'trend')).map(c => c.detail);
+  const hidden = new Set(!sel ? ['hold', 'reentry', 'chase', 'width', 'room'] : !interacting ? ['hold', 'reentry'] : []);
+  out.unmet = checks.filter(c => !c.ok && !hidden.has(c.key)).map(c => c.detail).filter(Boolean);
+  if (sel && !interacting) out.unmet.push('눌림 이후 재진입 확인 캔들 필요');
   out.stageLabel = STAGE[out.stage];
   if (out.stage === 0) { out.zone = null; out.invalidation = null; out.opposing = null; } else { out.state = dirName; out.dir = dirName; }
   return out;
