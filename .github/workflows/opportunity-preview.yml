@@ -1,0 +1,30 @@
+name: opportunity-preview
+# 기회 포착 레이더 읽기 전용 미리보기: 공개 OKX 시세로 현재 판정과 '보냈을 메시지'를 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시를 쓰지 않으며 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다.
+on:
+  push:
+    branches: ['research/opportunity-radar']
+    paths: [.github/workflows/opportunity-preview.yml, radar-service/opportunity/**, radar-service/test/opportunity*.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: opportunity-preview
+  cancel-in-progress: true
+jobs:
+  preview:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/opportunity.test.mjs radar-service/test/opportunity-stability.test.mjs
+      - name: Preview (public OKX data, no Telegram)
+        run: node radar-service/opportunity/preview-cli.mjs --top 20 | tee "$RUNNER_TEMP/preview.txt"
+      - name: Summary
+        run: |
+          { echo '### Opportunity radar preview (read-only, nothing sent)'; echo '```'; cat "$RUNNER_TEMP/preview.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
