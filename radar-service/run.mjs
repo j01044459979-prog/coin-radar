@@ -6,6 +6,7 @@ import { createOkxCollector } from './okx.mjs';
 import { fullReportParts, reportParts } from './report.mjs';
 import { visibleLength } from './format.mjs';
 import { refreshNews } from './news.mjs';
+import { modeOf, runOpportunitySafe } from './opportunity/step.mjs';   // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
 const args = new Set(process.argv.slice(2));
@@ -31,6 +32,14 @@ const save = async data => {
 const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : createOkxCollector();
 const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+// Opportunity radar runs after the regular cycle and never throws; it is a no-op unless RADAR_OPPORTUNITY=preview|on.
+const opportunity = async (options) => {
+  if (modeOf(process.env) === 'off') return;
+  const out = await runOpportunitySafe({ now: Date.now(), state, save, log: () => {}, ...options });
+  const { preview, ...rest } = out;
+  console.log('OPPORTUNITY ' + JSON.stringify(rest));
+  if (preview) { preview.lines.forEach(l => console.log('OPPORTUNITY ' + l)); preview.messages.forEach((m, i) => console.log('===== OPPORTUNITY message ' + (i + 1) + '/' + preview.messages.length + ' =====\n' + m)); }
+};
 
 if (args.has('--gate')) {
   // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false, alert=true|false.
@@ -95,6 +104,7 @@ if (args.has('--gate')) {
   console.log(`===== [전체 분석 · 자동 발송 안 함] 텍스트 ${full.length}건, 합계 ${full.reduce((n, p) => n + p.text.length, 0)}자 =====`);
   full.forEach((p, i) => console.log(`----- 전체 분석 ${i + 1}/${full.length} (${p.text.length}자) -----\n${p.text}`));
   console.log(JSON.stringify({ analyzed: rows.length, failed: failures.length, failures, stats, timing, news: preview.news ? { status: preview.news.status, items: preview.news.items?.length ?? 0, health: preview.news.health } : null }));
+  if (modeOf(process.env) !== 'off') { const dry = {}; await opportunity({ state: dry, save: async () => {}, send: null, env: { ...process.env, RADAR_OPPORTUNITY: 'preview' }, force: true }); }
 } else if (args.has('--telegram-test')) {
   const send = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
   await send(`리치 선물 레이더 · 연결 확인\n${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' })} KST\n이 메시지가 보이면 Telegram 전송이 정상입니다.`);
@@ -109,13 +119,14 @@ if (args.has('--gate')) {
     state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
     await save(state);
     console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
+    await opportunity({ send });
   } else {
     let stopped = false;
     let timer;
     let wake;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopped = true; clearTimeout(timer); wake?.(); });
     while (!stopped) {
-      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); }
+      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); }
       catch { console.error('분석/알림 처리 실패: 다음 주기에 재확인'); }
       // Start shortly after each 5-minute boundary, never overlap cycles.
       if (!stopped) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, 300000 - Date.now() % 300000 + 5000); });

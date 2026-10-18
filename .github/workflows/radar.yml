@@ -42,6 +42,9 @@ jobs:
       RADAR_SOURCE_EVENT: ${{ github.event_name == 'schedule' && 'github-schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.source == 'cloudflare' && 'cloudflare') || 'manual' }}
       RADAR_SCHEDULER: ${{ vars.RADAR_SCHEDULER || 'github' }}
       MODE: ${{ github.event.inputs.mode || ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/')) && 'preview' || 'once') }}
+      # 기회 포착 레이더(관찰 알림) 기능 플래그: off(기본) | preview(전송 없이 로그만) | on(전송). 저장소 변수로만 켠다.
+      RADAR_OPPORTUNITY: ${{ vars.RADAR_OPPORTUNITY || 'off' }}
+      RADAR_OPPORTUNITY_TOP: ${{ vars.RADAR_OPPORTUNITY_TOP || '20' }}
     steps:
       - uses: actions/checkout@v4
       - name: Restore state
