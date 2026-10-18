@@ -1,0 +1,49 @@
+name: research-4-0
+# COIN RADAR 4.0 신규 전략 연구(읽기 전용): 선별형 추세 + 눌림목(A·B·C·D)을 3.0 전략·무작위 기준선과 비교한다.
+# 규칙은 docs/TREND-PULLBACK-4-0-PREREG.md에 사전 고정. 최종 테스트 구간은 평가하지 않는다(사용자 승인 후 별도 1회).
+# Telegram·비밀값·쓰기 권한 없음. 운영 레이더·GitHub 스케줄·Cloudflare와 무관.
+on:
+  push:
+    branches: ['research/trend-pullback-4-0']
+    paths: [.github/workflows/research-4-0.yml, radar-service/backtest/**, radar-service/dual/**]
+permissions:
+  contents: read
+concurrency:
+  group: research-4-0
+  cancel-in-progress: true
+jobs:
+  research:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/dual*.test.mjs radar-service/test/research.test.mjs radar-service/test/research4.test.mjs
+      - name: Restore dataset cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/data.json.gz
+          key: trend4-research-data-v1-${{ hashFiles('radar-service/backtest/CANDIDATES.json') }}
+      - name: Fetch 3 years of OKX 1H history (read-only public API)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: node radar-service/backtest/fetch-okx.mjs --days 1095 --symbols 32 --ids-file radar-service/backtest/CANDIDATES.json --out "$RUNNER_TEMP/data.json.gz"
+      - name: Save dataset cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/data.json.gz
+          key: trend4-research-data-v1-${{ hashFiles('radar-service/backtest/CANDIDATES.json') }}
+      - name: Research (development + validation + already-seen; final test excluded)
+        run: node radar-service/backtest/research4-cli.mjs "$RUNNER_TEMP/data.json.gz" --out "$RUNNER_TEMP/research4.json" | tee "$RUNNER_TEMP/report4.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: research-4-0
+          path: |
+            ${{ runner.temp }}/report4.md
+            ${{ runner.temp }}/research4.json
+          retention-days: 30
