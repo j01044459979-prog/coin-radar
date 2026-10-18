@@ -6,7 +6,8 @@ import { createOkxCollector } from './okx.mjs';
 import { fullReportParts, reportParts } from './report.mjs';
 import { visibleLength } from './format.mjs';
 import { refreshNews } from './news.mjs';
-import { modeOf, runOpportunitySafe } from './opportunity/step.mjs';   // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
+import { modeOf } from './opportunity/config.mjs';           // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
+import { runAfterCycle } from './opportunity/integrate.mjs';
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
 const args = new Set(process.argv.slice(2));
@@ -33,13 +34,7 @@ const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : cre
 const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 // Opportunity radar runs after the regular cycle and never throws; it is a no-op unless RADAR_OPPORTUNITY=preview|on.
-const opportunity = async (options) => {
-  if (modeOf(process.env) === 'off') return;
-  const out = await runOpportunitySafe({ now: Date.now(), state, save, log: () => {}, ...options });
-  const { preview, ...rest } = out;
-  console.log('OPPORTUNITY ' + JSON.stringify(rest));
-  if (preview) { preview.lines.forEach(l => console.log('OPPORTUNITY ' + l)); preview.messages.forEach((m, i) => console.log('===== OPPORTUNITY message ' + (i + 1) + '/' + preview.messages.length + ' =====\n' + m)); }
-};
+const opportunity = options => runAfterCycle({ state, save, env: process.env, ...options }).catch(() => null);
 
 if (args.has('--gate')) {
   // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false, alert=true|false.

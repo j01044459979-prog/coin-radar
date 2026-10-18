@@ -45,6 +45,10 @@ jobs:
       # 기회 포착 레이더(관찰 알림) 기능 플래그: off(기본) | preview(전송 없이 로그만) | on(전송). 저장소 변수로만 켠다.
       RADAR_OPPORTUNITY: ${{ vars.RADAR_OPPORTUNITY || 'off' }}
       RADAR_OPPORTUNITY_TOP: ${{ vars.RADAR_OPPORTUNITY_TOP || '20' }}
+      RADAR_OPPORTUNITY_MIN_STAGE: ${{ vars.RADAR_OPPORTUNITY_MIN_STAGE || '2' }}
+      RADAR_OPPORTUNITY_MAX_PER_HOUR: ${{ vars.RADAR_OPPORTUNITY_MAX_PER_HOUR || '12' }}
+      RADAR_OPPORTUNITY_MAX_PER_DAY: ${{ vars.RADAR_OPPORTUNITY_MAX_PER_DAY || '80' }}
+      RADAR_OPPORTUNITY_FIRST_RUN: ${{ vars.RADAR_OPPORTUNITY_FIRST_RUN || 'summary' }}
     steps:
       - uses: actions/checkout@v4
       - name: Restore state

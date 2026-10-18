@@ -8,6 +8,7 @@ const out = await runOpportunitySafe({ now: Date.now(), state, env: { RADAR_OPPO
 const { preview, ...rest } = out;
 console.log('OPPORTUNITY ' + JSON.stringify(rest));
 if (preview) {
+  if (preview.note) console.log('NOTE ' + preview.note);
   console.log('--- per-coin state ---'); preview.lines.forEach(l => console.log(l));
   console.log('--- messages that would be sent (' + preview.messages.length + ') ---'); preview.messages.forEach((m, i) => console.log('[' + (i + 1) + ']\n' + m + '\n'));
 }

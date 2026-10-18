@@ -1,6 +1,7 @@
 // 기회 포착 레이더 Telegram 메시지 생성(순수 함수). HTML 서식은 <b>만 사용하고 외부 문자열은 모두 이스케이프한다.
 // 표현 원칙: LONG/SHORT는 '관찰 방향'이지 주문 권고가 아니다. 점수는 조건 충족 개수(설명용)이며 승률·수익을 뜻하지 않는다.
 import { bold, escHtml, fmtPrice, htmlToPlain } from '../format.mjs';
+import { sortAlerts } from './priority.mjs';
 
 export const MAX_MESSAGE_HTML = 3600;     // Telegram 한도(4000)보다 여유를 둔 분할 기준
 export const DISCLAIMER = '※ 차트 조건을 점검한 관찰 알림입니다. 주문 권고가 아니며 이 조건의 수익성은 검증되지 않았습니다. 충족 n/7은 조건 개수 설명용입니다.';
@@ -36,8 +37,7 @@ export function clearBlock(sym, event, price) {
 // items: [{ symbol, event, analysis, price }] — 한 번에 여러 코인을 길이 제한 안에서 나눠 담는다. 반환: [{ text, plain, html: true }]
 export function formatAlerts(items, { now, health = null } = {}) {
   if (!items.length) return [];
-  const order = { flip: 0, new: 1, upgrade: 1, invalidated: 2, cleared: 2 };
-  const sorted = [...items].sort((a, b) => (order[a.event.type] - order[b.event.type]) || ((b.analysis?.stage ?? 0) - (a.analysis?.stage ?? 0)) || (a.symbol < b.symbol ? -1 : 1));
+  const sorted = sortAlerts(items);                                // 조건 충족 → 무효화 해제 → 방향 전환 → 눌림 → 일반 해제 → 접근 순(호출자가 상한 적용 전에 같은 순서로 정렬)
   const blocks = sorted.map(it => ({ it, html: it.event.type === 'cleared' || it.event.type === 'invalidated' ? clearBlock(it.symbol, it.event, it.price) : watchBlock(it.symbol, it.analysis, it.event) }));
   const header = `🔎 ${bold('기회 포착 레이더')} · 관찰 알림 (${kst(now)})`;
   const extra = health?.excluded?.length ? `\n데이터 점검: ${health.excluded.length}종목 제외(데이터 부족·지연: ${escHtml(health.excluded.slice(0, 5).map(baseName).join(', '))}${health.excluded.length > 5 ? ' 외' : ''})` : '';
@@ -59,4 +59,17 @@ export function summaryLines(rows) {
     if (!a || a.status !== 'ok') return `${baseName(r.symbol)}: 분석 제외 — ${r.reason ?? a?.reason ?? '데이터 부족'}`;
     return `${baseName(r.symbol)}: ${a.stage >= 1 ? `${dirText(a.dir)} / ${a.stageLabel} (충족 ${a.met}/${a.total})` : `대기${a.trend ? ` (4H ${a.trend === 'UP' ? '상승' : '하락'} 추세, ${a.unmet[0] ?? ''})` : ` (${a.unmet[0] ?? '추세 불명확'})`}`}`;
   });
+}
+
+// 첫 실행 기준선 요약(1건): 기존 관찰 상태는 알림 없이 기록했고 이후 변화부터 알린다는 안내. states: [{ symbol, dir, stage, stageLabel }]
+export function formatBaseline(states, { now, analyzed, wait, excluded = 0 }) {
+  const list = dir => states.filter(s => s.dir === dir).sort((a, b) => b.stage - a.stage || (a.symbol < b.symbol ? -1 : 1)).slice(0, 12).map(s => `${baseName(s.symbol)}(${s.stageLabel})`).join(', ');
+  const count = dir => states.filter(s => s.dir === dir).length;
+  const text = [`🔎 ${bold('기회 포착 레이더')} · 활성화 기준선 (${kst(now)})`,
+    '기능이 켜졌습니다. 현재 관찰 중인 상태는 알림 없이 기준선으로 기록했고, 이후 새 관찰·단계 상승·해제부터 알립니다.',
+    `LONG 관찰 ${count('LONG')}종목${count('LONG') ? `: ${escHtml(list('LONG'))}` : ''}`,
+    `SHORT 관찰 ${count('SHORT')}종목${count('SHORT') ? `: ${escHtml(list('SHORT'))}` : ''}`,
+    `대기 ${wait}종목 · 점검 ${analyzed}종목${excluded ? ` · 분석 제외 ${excluded}종목` : ''}`,
+    '', escHtml(DISCLAIMER)].join('\n');
+  return { text, plain: htmlToPlain(text), html: true, items: [], baseline: true };
 }
