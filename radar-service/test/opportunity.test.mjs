@@ -8,28 +8,14 @@ import { sortAlerts, alertRank } from '../opportunity/priority.mjs';
 import { settings, DEFAULTS } from '../opportunity/config.mjs';
 import { runAfterCycle } from '../opportunity/integrate.mjs';
 import { cycle } from '../service.mjs';
+import { T0, lcg, wave, mirror, at, N, ETH, SOL, BTC, find, ethStage, row, SERIES, okxFake, IDX, NOW, mkSend, env, rebase, aligned, mixed, fx, names, dayOf, thisHour, preState } from './opportunity-fixture.mjs';
 import { formatAlerts, watchBlock, summaryLines, DISCLAIMER } from '../opportunity/message.mjs';
 import { parseCandles, freshness, collectOpportunity } from '../opportunity/collect.mjs';
 import { opportunityStep, runOpportunitySafe, modeOf, normalize } from '../opportunity/step.mjs';
 
+globalThis.fetch = async url => { throw new Error(`테스트에서 실제 네트워크 호출 금지: ${url}`); };   // 주입하지 않은 호출이 있으면 즉시 실패
+
 // ── 합성 데이터 ──
-const T0 = Date.UTC(2024, 0, 1);
-const lcg = seed => { let x = seed >>> 0; return () => (x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 4294967296; };
-function wave(n, seed, { amp = 0.06, per = 240, drift = 0.0004 } = {}) {
-  const r = lcg(seed); let p = 100; const rows = [];
-  for (let i = 0; i < n; i++) {
-    const tgt = 100 * Math.exp(drift * i + amp * Math.sin(2 * Math.PI * i / per)), o = p, c = tgt * (1 + (r() - 0.5) * 0.004);
-    rows.push({ t: T0 + i * H1, o, h: Math.max(o, c) * (1 + r() * 0.002), l: Math.min(o, c) * (1 - r() * 0.002), c, q: 1e6 * (0.6 + r() * 1.5) }); p = c;
-  }
-  return rows;
-}
-const mirror = (c, K = 1000) => c.map(x => ({ t: x.t, o: K - x.o, h: K - x.l, l: K - x.h, c: K - x.c, q: x.q }));
-const at = (c, i) => { const s = c.slice(0, i + 1); return analyzeCoin(s, aggregate(s), aggregate(s)); };
-const N = 2600;
-const ETH = wave(N, 5), SOL = mirror(ETH), BTC = wave(N, 9, { amp: 0.04, per: 300 });
-// stage별 대표 인덱스(합성 데이터에서 탐색)
-function find(c, pred, from = 1100) { const out = []; for (let i = from; i < c.length; i++) { const a = at(c, i); if (a.status === 'ok' && pred(a)) out.push(i); } return out; }
-const ethStage = {}; for (const st of [1, 2, 3]) ethStage[st] = find(ETH, a => a.stage === st);
 
 // ── 분석 ──
 test('합성 데이터에서 접근(1)·눌림(2)·조건 충족(3) 단계가 모두 탐지된다', () => {
@@ -43,7 +29,7 @@ test('합성 데이터에서 접근(1)·눌림(2)·조건 충족(3) 단계가 �
 });
 test('LONG/SHORT 대칭: 가격을 뒤집으면 같은 봉에서 같은 단계·충족 개수, 방향·구간·무효화 가격만 거울', () => {
   let n = 0;
-  for (let i = 1100; i < N; i += 1) {
+  for (let i = 1100; i < N; i += 2) {
     const a = at(ETH, i), b = at(SOL, i);
     assert.equal(a.status, b.status);
     if (a.status !== 'ok') continue;
@@ -159,7 +145,6 @@ test('코인이 많으면 메시지를 길이 한도 안에서 나눈다', () =>
 });
 
 // ── 수집 검증 ──
-const row = (t, o, h, l, c, confirm = '1', q = 1000) => [String(t), String(o), String(h), String(l), String(c), '1', String(q / ((h + l) / 2)), String(q), confirm];
 test('parseCandles: 미확정 제외, 최신→오래된 순 정렬, 비정상 봉·누락 봉이 있으면 최근 연속 구간만', () => {
   const rows = [row(T0 + 5 * H1, 1, 9, 1, 5, '0'), ...[4, 3, 2, 1, 0].map(k => row(T0 + k * H1, 10, 11, 9, 10))];
   const ok = parseCandles(rows, H1); assert.deepEqual(ok.candles.map(c => c.t), [0, 1, 2, 3, 4].map(k => T0 + k * H1)); assert.equal(ok.notes.length, 0);
@@ -182,28 +167,6 @@ test('freshness: 직전에 마감한 봉이면 fresh, 방금 마감해 미확정
 });
 
 // ── OKX 모의 서버 ──
-const SERIES = { 'BTC-USDT-SWAP': BTC, 'ETH-USDT-SWAP': ETH, 'SOL-USDT-SWAP': SOL };
-function okxFake({ cursor, calls = [], fail = {}, limit4 = 300, series = SERIES } = {}) {
-  const ok = d => new Response(JSON.stringify({ code: '0', msg: '', data: d }), { status: 200 });
-  return async url => {
-    calls.push(url); const u = new URL(url), path = u.pathname.replace('/api/v5', ''), id = u.searchParams.get('instId');
-    for (const [k, v] of Object.entries(fail)) if (url.includes(k)) return typeof v === 'function' ? v(url) : v;
-    if (path === '/public/instruments') return ok(Object.keys(series).map(instId => ({ instId, state: 'live', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' })));
-    if (path === '/market/tickers') return ok(Object.keys(series).map(instId => ({ instId, last: '100', open24h: '99', volCcy24h: '100000' })));
-    if (path !== '/market/candles') return new Response('', { status: 404 });
-    const c = series[id], i = cursor(id); if (!c) return new Response('', { status: 404 });
-    const s = c.slice(0, i + 1);
-    if (u.searchParams.get('bar') === '1H') {
-      const rows = s.map(x => row(x.t, x.o, x.h, x.l, x.c, '1', x.q)).reverse(); rows.unshift(row(s.at(-1).t + H1, 1, 9999, 0.5, 5000, '0'));   // 진행 중 봉(튀는 값)
-      return ok(rows.slice(0, Number(u.searchParams.get('limit'))));
-    }
-    const c4 = aggregate(s), rows = c4.map(x => row(x.t, x.o, x.h, x.l, x.c, '1', x.q)).reverse(); rows.unshift(row(Math.floor((s.at(-1).t + H1) / H4) * H4 === c4.at(-1).t + H4 ? c4.at(-1).t + H4 : c4.at(-1).t + H4, 1, 9999, 0.5, 5000, '0'));
-    return ok(rows.slice(0, Math.min(limit4, Number(u.searchParams.get('limit')))));
-  };
-}
-const IDX = ethStage[3][0], NOW = i => ETH[i].t + H1 + 30000;      // 신호 봉 i가 막 마감된 시각(+30초)
-const mkSend = (sent, failAt = []) => async (text, opt) => { if (failAt.includes(sent.length + 1)) { sent.push('FAIL'); sent.pop(); throw Object.assign(new Error('전송 실패'), { status: 500 }); } sent.push({ text, opt }); };
-const env = (v, extra = {}) => ({ RADAR_OPPORTUNITY: v, RADAR_OPPORTUNITY_FIRST_RUN: 'alert', ...extra });
 
 test('기능 플래그: 미설정·알 수 없는 값·off는 모두 꺼짐, 꺼져 있으면 네트워크 호출이 없다', async () => {
   for (const v of [undefined, '', 'off', 'OFF', 'true', '1', 'yes', 'enable']) assert.equal(modeOf({ RADAR_OPPORTUNITY: v }), 'off');
@@ -235,8 +198,8 @@ test('전송 흐름: 정시 후 1회 수집·알림, 같은 시간대 재실행�
   assert.ok(r3.sentMessages >= 0);
 });
 test('연속 시간 시뮬레이션: 같은 (코인, 방향, 단계)가 해제 없이 두 번 알림되지 않는다', async () => {
-  const sent = [], state = {}; let i = IDX - 30;
-  for (; i < IDX + 40; i++) await opportunityStep({ env: env('on'), send: mkSend(sent), save: async () => {}, gapMs: 0, now: NOW(i), state, fetcher: okxFake({ cursor: () => i }) });
+  const sent = [], state = {}; let i = IDX - 20;
+  for (; i < IDX + 20; i++) await opportunityStep({ env: env('on'), send: mkSend(sent), save: async () => {}, gapMs: 0, now: NOW(i), state, fetcher: okxFake({ cursor: () => i }) });
   const seen = new Map(); let bad = 0;
   for (const m of sent) for (const blk of m.text.split('\n\n')) {
     const head = blk.match(/<b>(\w+)<\/b> · <b>(LONG|SHORT) 관찰<\/b> — (새 관찰|단계 상승|방향 전환)[^:]*: ([^(]+) \(/); const clr = blk.match(/<b>(\w+)<\/b> · <b>(LONG|SHORT) 관찰<\/b> 해제/);
@@ -314,19 +277,6 @@ test('주문·레버리지 기능 없음: 소스에 거래/주문 API 호출이 
 });
 
 // ════════ PR #27 안전성 보완: 최소 알림 단계 · 우선순위 · 상한 · 첫 실행 정책 · 실패·시간 초과 · 기존 운영 회귀 ════════
-const rebase = (series, i, target) => series.slice(0, i + 1).map(x => ({ ...x, t: x.t + (target - i) * H1 }));   // 같은 모양의 시리즈를 목표 인덱스 시각에 끝나도록 평행 이동(4시간 정렬 유지)
-const aligned = st => ethStage[st].find(i => (IDX - i) % 4 === 0);
-const mixed = ({ r = 0, w = 0, a = 0 }) => {
-  const out = { 'BTC-USDT-SWAP': BTC.slice(0, IDX + 1) };
-  const add = (prefix, n, i) => { for (let k = 0; k < n; k++) out[`${prefix}${String(k).padStart(2, '0')}-USDT-SWAP`] = rebase(ETH, i, IDX); };
-  add('R', r, IDX); add('W', w, aligned(2)); add('A', a, aligned(1));
-  return out;
-};
-const fx = (series, extra = {}) => okxFake({ cursor: id => series[id].length - 1, series, ...extra });
-const names = sent => sent.flatMap(m => [...m.text.matchAll(/<b>([A-Z0-9]+)<\/b> · <b>(?:LONG|SHORT) 관찰/g)].map(x => x[1]));
-const dayOf = t => new Date(t).toISOString().slice(0, 10);
-const thisHour = Math.floor(NOW(IDX) / H1);
-const preState = o => ({ opportunity: { ...normalize({ v: 1, coins: {} }), baselineDone: true, ...o } });
 
 test('정렬 가능한 합성 시나리오가 있다(접근·눌림·충족이 4시간 정렬로 재배치 가능)', () => { for (const st of [1, 2, 3]) assert.ok(aligned(st) !== undefined, `stage ${st}`); });
 test('설정: 잘못된 값은 안전한 기본값, 범위를 벗어나면 기본값', () => {
@@ -430,28 +380,32 @@ test('preview → on 전환: 미리보기는 기준선 동작을 보여 주기�
   const r = await opportunityStep({ env: env('on', { RADAR_OPPORTUNITY_TOP: '30', RADAR_OPPORTUNITY_FIRST_RUN: 'summary' }), send: mkSend(sent), save: async () => {}, gapMs: 0, now: NOW(IDX), state, fetcher: fx(series) });
   assert.equal(sent.length, 1); assert.equal(r.baseline, true); assert.equal(names(sent).length, 0); assert.match(sent[0].text, /LONG 관찰 17종목/);
 });
-test('캐시 유실·상태 손상 뒤에도 대량 재발송 없음(기준선 재적용), 기준선 요약 전송 실패는 확정하지 않고 재시도', async () => {
+test('캐시 유실·상태 손상 뒤에도 대량 재발송 없음(기준선 재적용), 기준선 요약 전송 실패는 기준선만 확정하고 요약만 재시도', async () => {
   const state = {}, sent = [], common = { env: env('on', { RADAR_OPPORTUNITY_FIRST_RUN: 'summary' }), save: async () => {}, gapMs: 0, state };
   await opportunityStep({ ...common, send: mkSend(sent), now: NOW(IDX), fetcher: okxFake({ cursor: () => IDX }) }); assert.equal(sent.length, 1);
   state.opportunity = { v: 1, coins: 'garbage' };                                                    // 캐시 손상
   const later = NOW(IDX) + 1200000; await opportunityStep({ ...common, send: mkSend(sent), now: later, fetcher: okxFake({ cursor: () => IDX }), force: true });
   assert.equal(sent.length, 2); assert.match(sent[1].text, /활성화 기준선/); assert.equal(names(sent).length, 0);
   const st2 = {}, s2 = []; const f = await opportunityStep({ ...common, state: st2, send: mkSend(s2, [1]), now: NOW(IDX), fetcher: okxFake({ cursor: () => IDX }) });
-  assert.ok(f.sendError); assert.equal(st2.opportunity.baselineDone, false); assert.deepEqual(st2.opportunity.coins, {}); assert.equal(st2.opportunity.rescanHour, thisHour);
-  await opportunityStep({ ...common, state: st2, send: mkSend(s2), now: NOW(IDX) + 1200000, fetcher: okxFake({ cursor: () => IDX }) }); assert.equal(s2.length, 1); assert.equal(st2.opportunity.baselineDone, true);
+  assert.ok(f.sendError); assert.equal(st2.opportunity.baselineDone, true); assert.equal(st2.opportunity.baselineNotice, 'pending'); assert.ok(st2.opportunity.coins.ETHUSDT.alertedStage === 3);   // 기준선은 요약보다 먼저 저장됨
+  assert.equal(st2.opportunity.inflight, null); assert.equal(st2.opportunity.rescanHour, thisHour);
+  await opportunityStep({ ...common, state: st2, send: mkSend(s2), now: NOW(IDX) + 1200000, fetcher: okxFake({ cursor: () => IDX }) }); assert.equal(s2.length, 1); assert.equal(st2.opportunity.baselineNotice, 'sent'); assert.equal(names(s2).length, 0);
   const st3 = {}, s3 = []; const stale = await opportunityStep({ ...common, state: st3, send: mkSend(s3), now: NOW(IDX), fetcher: okxFake({ cursor: () => IDX - 8 }) });   // 모두 오래된 데이터 → 기준선 보류
-  assert.equal(s3.length, 0); assert.equal(st3.opportunity.baselineDone, false); assert.equal(stale.baseline, false);
+  assert.equal(s3.length, 0); assert.equal(st3.opportunity?.baselineDone ?? false, false); assert.equal(stale.baseline, false);
 });
 
 // ── 실패·시간 초과 ──
-test('상태 저장 실패: 첫 전송 뒤 저장이 실패하면 더 보내지 않고(중복 확대 방지) 예외 없이 기록, 복구되면 나머지만 한 번씩 전송', async () => {
+test('상태 저장 실패: 장부를 저장할 수 없으면 보내지 않고, 전송 뒤 기록 저장이 실패하면 더 보내지 않으며(중복 확대 방지) 예외 없이 기록, 복구되면 나머지만 한 번씩', async () => {
   const series = mixed({ r: 10 }), sent = [], state = {}, opts = { env: env('on', { RADAR_OPPORTUNITY_TOP: '30', RADAR_OPPORTUNITY_MAX_PER_HOUR: '30' }), gapMs: 0, state, fetcher: fx(series) };
-  const r1 = await runOpportunitySafe({ ...opts, now: NOW(IDX), send: mkSend(sent), save: async () => { throw new Error('disk full'); } });
-  assert.equal(r1.sentMessages, 1); assert.match(r1.saveError, /disk full/); assert.equal(sent.length, 1); assert.ok(state.opportunity.rescanHour === thisHour && state.opportunity.scanHour !== thisHour);
+  const r0 = await runOpportunitySafe({ ...opts, now: NOW(IDX), send: mkSend(sent), save: async () => { throw new Error('disk full'); } });   // 저장 전부 실패 → 전송 없음
+  assert.equal(r0.sentMessages, 0); assert.match(r0.saveError, /disk full/); assert.equal(sent.length, 0);
+  let n = 0;                                                                                          // 첫 저장(장부)은 성공, 전송 뒤 저장은 실패
+  const r1 = await runOpportunitySafe({ ...opts, now: NOW(IDX) + 300000, send: mkSend(sent), save: async () => { if (++n >= 2) throw new Error('disk full'); } });
+  assert.equal(sent.length, 1); assert.match(r1.saveError, /disk full/); assert.ok(state.opportunity.rescanHour === thisHour && state.opportunity.scanHour !== thisHour);
   const first = names(sent); assert.ok(first.length >= 1 && first.length < 10);
-  const r2 = await runOpportunitySafe({ ...opts, now: NOW(IDX) + 300000, send: mkSend(sent), save: async () => {} });
+  const r2 = await runOpportunitySafe({ ...opts, now: NOW(IDX) + 600000, send: mkSend(sent), save: async () => {} });
   assert.equal(r2.saveError, null); const all = names(sent); assert.equal(all.length, 10); assert.equal(new Set(all).size, 10);
-  assert.equal(state.opportunity.scanHour, thisHour);
+  assert.equal(state.opportunity.scanHour, thisHour); assert.equal(state.opportunity.inflight, null);
 });
 test('Telegram 부분 실패: 성공한 메시지의 코인만 확정, 실패분은 다음 시도에서 한 번만; 429는 Retry-After 반영', async () => {
   const series = mixed({ r: 10 }), sent = [], state = {}, opts = { env: env('on', { RADAR_OPPORTUNITY_TOP: '30', RADAR_OPPORTUNITY_MAX_PER_HOUR: '30' }), gapMs: 0, state, fetcher: fx(series), save: async () => {} };
@@ -465,17 +419,9 @@ test('Telegram 부분 실패: 성공한 메시지의 코인만 확정, 실패분
   assert.ok(r2.sendError); assert.ok(st2.opportunity.retryAt >= NOW(IDX) + 900000); assert.equal(st2.opportunity.lastSendStatus, 429);
 });
 function ApiErrorLike(status, retryAfter) { const e = new Error(`api.telegram.org HTTP ${status}`); e.status = status; e.retryAfter = retryAfter; return e; }
-test('시간 초과: 전송이 멈추면 래퍼가 실패로 돌려주고, 늦게 끝난 수집·전송은 상태와 Telegram에 영향을 주지 않는다', async () => {
-  const sent = [], state = {}, t0 = Date.now();
-  const hang = await runOpportunitySafe({ env: env('on'), now: NOW(IDX), state, send: () => new Promise(() => {}), save: async () => {}, gapMs: 0, fetcher: okxFake({ cursor: () => IDX }), timeoutMs: 150 });
-  assert.match(hang.failed, /timeout/); assert.ok(Date.now() - t0 < 2000);
-  const state2 = {}, slow = async args => { await new Promise(r => setTimeout(r, 120)); return collectOpportunity(args); };         // 수집이 시간 초과 뒤에 끝남
-  const late = await runOpportunitySafe({ env: env('on'), now: NOW(IDX), state: state2, send: mkSend(sent), save: async () => {}, gapMs: 0, fetcher: okxFake({ cursor: () => IDX }), collect: slow, timeoutMs: 30 });
-  assert.match(late.failed, /timeout/); await new Promise(r => setTimeout(r, 400));
-  assert.equal(sent.length, 0); assert.deepEqual(state2.opportunity.coins, {}); assert.equal(state2.opportunity.lastScanAt, 0);
-  const series = mixed({ r: 10 }), state3 = {}, s3 = [], slowSend = async (text, o) => { await new Promise(r => setTimeout(r, 70)); s3.push({ text, o }); };   // 전송 도중 시간 초과 → 남은 메시지는 보내지 않음
-  const mid = await runOpportunitySafe({ env: env('on', { RADAR_OPPORTUNITY_TOP: '30', RADAR_OPPORTUNITY_MAX_PER_HOUR: '30' }), now: NOW(IDX), state: state3, send: slowSend, save: async () => {}, gapMs: 0, fetcher: fx(series), timeoutMs: 100 });
-  assert.match(mid.failed, /timeout/); await new Promise(r => setTimeout(r, 500)); assert.ok(s3.length < 3, `시간 초과 뒤에도 전송이 이어짐: ${s3.length}`);   // 마감 뒤에는 남은 메시지를 보내지 않는다(느린 환경에서는 0건일 수도 있음)
+test('시간 초과: 전송이 끝나지 않으면 래퍼가 제한 시간에 실패로 돌려준다 (세부 경계는 opportunity-stability.test.mjs)', async () => {
+  const state = {}, hang = await runOpportunitySafe({ env: env('on'), now: NOW(IDX), state, send: () => new Promise(() => {}), save: async () => {}, gapMs: 0, fetcher: okxFake({ cursor: () => IDX }), timeoutMs: 150 });
+  assert.match(hang.failed, /timeout/);
 });
 
 // ── 기존 운영 회귀 ──

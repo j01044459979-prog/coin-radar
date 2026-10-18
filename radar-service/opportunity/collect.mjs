@@ -53,7 +53,7 @@ export function freshness(c1h, c4h, now, graceMs = LIMITS.graceMs) {
 
 // 수집. ids가 있으면 그 종목만(확정 대기 재시도), 없으면 시세 상위 topN. 반환:
 //  { universe, coins: { [instId]: { symbol, status: 'fresh'|'pending'|'stale'|'error', c1h, c4h, reason, notes } }, btc4h, stopped, calls, fatal }
-export async function collectOpportunity({ fetcher = fetch, now, ids = null, topN = LIMITS.defaultTop, budgetMs = 60000, gapMs = 260 } = {}) {
+export async function collectOpportunity({ fetcher = fetch, now, ids = null, topN = LIMITS.defaultTop, budgetMs = 60000, gapMs = 260, shouldStop = () => false } = {}) {
   const started = Date.now(), out = { universe: ids, coins: {}, btc4h: null, stopped: null, calls: 0, fatal: null };
   const get = async path => { out.calls++; const body = await jsonRequest(BASE + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
   try {
@@ -67,7 +67,7 @@ export async function collectOpportunity({ fetcher = fetch, now, ids = null, top
   } catch (error) { out.fatal = { message: error.message, status: error.status ?? null, retryAfter: error.retryAfter ?? 0 }; return out; }
   const fetchList = [...new Set(['BTC-USDT-SWAP', ...out.universe])];                // BTC는 맥락용으로 항상 필요
   for (const id of fetchList) {
-    if (Date.now() - started > budgetMs) { if (out.universe.includes(id)) out.coins[id] = { symbol: id.replace(/-USDT-SWAP$/, 'USDT'), status: 'pending', reason: '수집 시간 예산 초과(다음 실행에서 재시도)' }; continue; }
+    if (shouldStop() || Date.now() - started > budgetMs) { if (out.universe.includes(id)) out.coins[id] = { symbol: id.replace(/-USDT-SWAP$/, 'USDT'), status: 'pending', reason: '수집 시간 예산 초과(다음 실행에서 재시도)' }; continue; }   // 호출 쪽의 제한 시간이 지나면 새 요청을 보내지 않는다
     const symbol = id.replace(/-USDT-SWAP$/, 'USDT');
     try {
       const r1 = data(await get(`/market/candles?instId=${id}&bar=1H&limit=${LIMITS.c1h}`), '1H 캔들');

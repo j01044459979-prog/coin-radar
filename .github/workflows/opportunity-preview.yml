@@ -4,7 +4,7 @@ name: opportunity-preview
 on:
   push:
     branches: ['research/opportunity-radar']
-    paths: [.github/workflows/opportunity-preview.yml, radar-service/opportunity/**, radar-service/test/opportunity.test.mjs]
+    paths: [.github/workflows/opportunity-preview.yml, radar-service/opportunity/**, radar-service/test/opportunity*.mjs]
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 22
       - name: Tests
-        run: node --test radar-service/test/opportunity.test.mjs
+        run: node --test radar-service/test/opportunity.test.mjs radar-service/test/opportunity-stability.test.mjs
       - name: Preview (public OKX data, no Telegram)
         run: node radar-service/opportunity/preview-cli.mjs --top 20 | tee "$RUNNER_TEMP/preview.txt"
       - name: Summary
