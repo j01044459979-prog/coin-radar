@@ -1,0 +1,30 @@
+name: signal-preview
+# 실시간 신호 읽기 전용 미리보기: 공개 OKX 시세로 관찰 후보 → 15분봉 트리거를 판정하고 '보냈을 메시지'를 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시를 쓰지 않으며 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다. 이 개발 브랜치에서만 실행된다.
+on:
+  push:
+    branches: ['claude/opportunity-radar-v2']
+    paths: [.github/workflows/signal-preview.yml, radar-service/signal/**, radar-service/test/signal*.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: signal-preview
+  cancel-in-progress: true
+jobs:
+  preview:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/signal.test.mjs
+      - name: Preview (public OKX data, no Telegram)
+        run: node radar-service/signal/preview-cli.mjs --top 20 | tee "$RUNNER_TEMP/signal.txt"
+      - name: Summary
+        run: |
+          { echo '### Signal preview (read-only, nothing sent)'; echo '```'; cat "$RUNNER_TEMP/signal.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

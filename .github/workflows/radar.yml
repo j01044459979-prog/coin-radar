@@ -49,6 +49,11 @@ jobs:
       RADAR_OPPORTUNITY_MAX_PER_HOUR: ${{ vars.RADAR_OPPORTUNITY_MAX_PER_HOUR || '12' }}
       RADAR_OPPORTUNITY_MAX_PER_DAY: ${{ vars.RADAR_OPPORTUNITY_MAX_PER_DAY || '80' }}
       RADAR_OPPORTUNITY_FIRST_RUN: ${{ vars.RADAR_OPPORTUNITY_FIRST_RUN || 'summary' }}
+      # 실시간 매매 판단 지원 신호(15분봉 트리거): off(기본) | preview(전송 없이 로그만) | on(전송). 기회 레이더와 독립이며 저장소 변수로만 켠다. 주문 기능 없음.
+      RADAR_SIGNAL: ${{ vars.RADAR_SIGNAL || 'off' }}
+      RADAR_SIGNAL_VALID_MIN: ${{ vars.RADAR_SIGNAL_VALID_MIN || '45' }}
+      RADAR_SIGNAL_MIN_RR: ${{ vars.RADAR_SIGNAL_MIN_RR || '1.5' }}
+      RADAR_SIGNAL_MAX_PER_DAY: ${{ vars.RADAR_SIGNAL_MAX_PER_DAY || '20' }}
     steps:
       - uses: actions/checkout@v4
       - name: Restore state
