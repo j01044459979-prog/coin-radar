@@ -33,7 +33,7 @@ function market(k, { fail15 = false, calls = [] } = {}) {
     return okx(url, init);
   };
 }
-async function scenario({ opp = true, sig = null, fail15 = false, throwSig = false, roundtrip = false } = {}) {
+async function scenario({ opp = true, sig = null, fail15 = false, throwSig = false, roundtrip = false, paper = false } = {}) {
   const { analyze } = await import('../analysis.mjs'), main = [], oppMsgs = [], sigMsgs = [], calls = [], outs = [];
   let state = {}; const row0 = { ...analyze('BTCUSDT', rawMain(), MAIN_NOW), strong: true };
   const save = async () => {}, mainOpt = { collect: async () => ({ rows: [row0], failures: [] }), send: async t => main.push(t), save };
@@ -44,7 +44,7 @@ async function scenario({ opp = true, sig = null, fail15 = false, throwSig = fal
     await cycle({ ...mainOpt, now: MAIN_NOW + st.main, state });
     const now = sNow(st.k) + (st.dt ?? 0), f = market(st.k, { fail15, calls });
     if (opp) await runAfterCycle({ state, save, send: async t => oppMsgs.push(t), env: env('on'), out: () => {}, now, gapMs: 0, fetcher: f });
-    if (sig) await runSignalAfterCycle({ state, save, send: async t => sigMsgs.push(t), env: { RADAR_SIGNAL: sig }, out: m => outs.push(m), now, gapMs: 0, fetcher: f, elapsedMs: 1000, ...(throwSig ? { collectHour: async () => { throw new Error('boom'); } } : {}) });
+    if (sig) await runSignalAfterCycle({ state, save, send: async t => sigMsgs.push(t), env: { RADAR_SIGNAL: sig, ...(paper ? { RADAR_SIGNAL_PAPER: 'on' } : {}) }, out: m => outs.push(m), now, gapMs: 0, fetcher: f, elapsedMs: 1000, ...(throwSig ? { collectHour: async () => { throw new Error('boom'); } } : {}) });
   }
   const { opportunity, signal, ...rest } = state; return { main, oppMsgs, sigMsgs, rest, opportunity, signal, state, calls, outs };
 }
@@ -52,7 +52,7 @@ async function scenario({ opp = true, sig = null, fail15 = false, throwSig = fal
 test('통합: 신호 기능이 off/preview/on/실패/예외여도 정기 보고 메시지·기존 상태·기회 레이더 알림은 그대로다', async () => {
   const base = await scenario({ sig: null });
   assert.ok(base.main.length >= 2 && base.oppMsgs.length >= 1 && base.opportunity.baselineDone);
-  for (const o of [{ sig: 'off' }, { sig: 'preview' }, { sig: 'on' }, { sig: 'on', fail15: true }, { sig: 'on', throwSig: true }]) {
+  for (const o of [{ sig: 'off' }, { sig: 'preview' }, { sig: 'on' }, { sig: 'on', fail15: true }, { sig: 'on', throwSig: true }, { sig: 'preview', paper: true }, { sig: 'on', paper: true }, { sig: 'preview', paper: true, fail15: true }, { sig: 'preview', paper: true, throwSig: true }]) {
     const r = await scenario(o);
     assert.deepEqual(r.main, base.main, JSON.stringify(o)); assert.deepEqual(r.rest, base.rest, JSON.stringify(o));
     assert.deepEqual(r.oppMsgs, base.oppMsgs, `기회 레이더 알림이 달라짐 ${JSON.stringify(o)}`); assert.deepEqual(r.opportunity, base.opportunity, `state.opportunity가 달라짐 ${JSON.stringify(o)}`);
@@ -85,4 +85,15 @@ test('통합: 모든 Telegram 전송은 같은 sender를 쓰고 기회 레이더
   const r = await scenario({ sig: 'on' });
   assert.equal(r.opportunity.inflight, null); assert.equal(r.signal.inflight, null); assert.notEqual(r.opportunity, r.signal);
   assert.ok(r.signal.daily[new Date(sNow(0)).toISOString().slice(0, 10)].candidates === 1);
+});
+
+test('통합: 모의 추적(preview + RADAR_SIGNAL_PAPER=on)은 전송 없이 state.signal.paper에만 기록하고 재시작 후에도 중복 기록하지 않는다', async () => {
+  for (const roundtrip of [false, true]) {
+    const r = await scenario({ sig: 'preview', paper: true, roundtrip });
+    assert.equal(r.sigMsgs.length, 0, 'preview는 전송하지 않는다'); assert.ok(r.signal, 'paper 기록이 있어야 함');
+    assert.deepEqual(Object.keys(r.signal).sort(), ['coins', 'daily', 'failures', 'health', 'inflight', 'lastError', 'paper', 'retryAt', 'slot', 'v'].sort());
+    assert.deepEqual(r.signal.coins, {}); assert.equal(r.signal.slot, null); assert.deepEqual(r.signal.daily, {}); assert.equal(r.signal.inflight, null);
+    assert.equal(r.signal.paper.open.length + r.signal.paper.closed.length, 1, `모의 거래 ${r.signal.paper.open.length + r.signal.paper.closed.length}건 (roundtrip ${roundtrip})`);
+    assert.ok(r.outs.some(l => l.startsWith('SIGNAL-PAPER [모의·미검증]')));
+  }
 });

@@ -54,6 +54,7 @@ jobs:
       RADAR_SIGNAL_VALID_MIN: ${{ vars.RADAR_SIGNAL_VALID_MIN || '45' }}
       RADAR_SIGNAL_MIN_RR: ${{ vars.RADAR_SIGNAL_MIN_RR || '1.5' }}
       RADAR_SIGNAL_MAX_PER_DAY: ${{ vars.RADAR_SIGNAL_MAX_PER_DAY || '20' }}
+      RADAR_SIGNAL_PAPER: ${{ vars.RADAR_SIGNAL_PAPER || 'off' }}   # 모의매매 성과 추적(전송 없음, state.signal.paper에만 기록). RADAR_SIGNAL이 preview|on일 때만 동작
     steps:
       - uses: actions/checkout@v4
       - name: Restore state

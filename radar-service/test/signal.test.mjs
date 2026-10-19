@@ -137,7 +137,7 @@ test('메시지: 무효화 메시지와 외부 문자열 이스케이프', () =>
 // ── 설정 ──
 test('설정: 기본 off·잘못된 값은 안전한 기본값, 범위 검사', () => {
   assert.equal(signalMode({}), 'off'); assert.equal(signalMode({ RADAR_SIGNAL: 'ON' }), 'on'); assert.equal(signalMode({ RADAR_SIGNAL: 'true' }), 'off'); assert.equal(signalMode({ RADAR_SIGNAL: 'preview' }), 'preview');
-  assert.deepEqual(signalSettings({}), { mode: 'off', ...SIGNAL_DEFAULTS });
+  assert.deepEqual(signalSettings({}), { mode: 'off', ...SIGNAL_DEFAULTS, paper: false }); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'ON' }).paper, true); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'true' }).paper, false);
   const s = signalSettings({ RADAR_SIGNAL: 'on', RADAR_SIGNAL_VALID_MIN: '30', RADAR_SIGNAL_MIN_RR: '2.5', RADAR_SIGNAL_MAX_PER_DAY: '5' }); assert.deepEqual([s.validMin, s.minRR, s.maxPerDay], [30, 2.5, 5]);
   const bad = signalSettings({ RADAR_SIGNAL_VALID_MIN: '5', RADAR_SIGNAL_MIN_RR: '0.5', RADAR_SIGNAL_MAX_PER_DAY: '999' }); assert.deepEqual([bad.validMin, bad.minRR, bad.maxPerDay], [45, 1.5, 20]);
   assert.equal(signalSettings({ RADAR_SIGNAL_VALID_MIN: '45abc' }).validMin, 45);
@@ -248,7 +248,7 @@ test('연결부: 꺼져 있으면 null·호출 없음, 시간 예산이 부족�
 test('운영 파일: radar.yml의 스케줄·권한·동시성은 그대로이고 신호 변수 4개가 기본 off/안전값으로 추가됨, run.mjs는 예외를 삼키는 호출만 추가', () => {
   const yml = readFileSync(new URL('../../.github/workflows/radar.yml', import.meta.url), 'utf8');
   assert.match(yml, /cron: '\*\/5 \* \* \* \*'/); assert.match(yml, /group: radar/); assert.match(yml, /timeout-minutes: 8/); assert.match(yml, /permissions:\n  contents: read\n  actions: read/);
-  assert.match(yml, /RADAR_SIGNAL: \$\{\{ vars\.RADAR_SIGNAL \|\| 'off' \}\}/); assert.match(yml, /RADAR_SIGNAL_VALID_MIN: \$\{\{ vars\.RADAR_SIGNAL_VALID_MIN \|\| '45' \}\}/); assert.match(yml, /RADAR_SIGNAL_MIN_RR: \$\{\{ vars\.RADAR_SIGNAL_MIN_RR \|\| '1\.5' \}\}/); assert.match(yml, /RADAR_SIGNAL_MAX_PER_DAY: \$\{\{ vars\.RADAR_SIGNAL_MAX_PER_DAY \|\| '20' \}\}/);
+  assert.match(yml, /RADAR_SIGNAL: \$\{\{ vars\.RADAR_SIGNAL \|\| 'off' \}\}/); assert.match(yml, /RADAR_SIGNAL_VALID_MIN: \$\{\{ vars\.RADAR_SIGNAL_VALID_MIN \|\| '45' \}\}/); assert.match(yml, /RADAR_SIGNAL_MIN_RR: \$\{\{ vars\.RADAR_SIGNAL_MIN_RR \|\| '1\.5' \}\}/); assert.match(yml, /RADAR_SIGNAL_MAX_PER_DAY: \$\{\{ vars\.RADAR_SIGNAL_MAX_PER_DAY \|\| '20' \}\}/); assert.match(yml, /RADAR_SIGNAL_PAPER: \$\{\{ vars\.RADAR_SIGNAL_PAPER \|\| 'off' \}\}/);
   assert.match(yml, /RADAR_OPPORTUNITY: \$\{\{ vars\.RADAR_OPPORTUNITY \|\| 'off' \}\}/);
   assert.ok(!/RADAR_OPPORTUNITY_(TOP|MIN_STAGE|MAX_PER_HOUR|MAX_PER_DAY|FIRST_RUN): .*vars\.RADAR_SIGNAL/.test(yml));
   const run = readFileSync(new URL('../run.mjs', import.meta.url), 'utf8');
