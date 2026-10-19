@@ -9,6 +9,7 @@ import { watchBlock, formatAlerts, DISCLAIMER } from '../opportunity/message.mjs
 import { sortAlerts } from '../opportunity/priority.mjs';
 import { outcome, collectEvents, runBacktest, scoreMonotonic, clusterBootstrap, summarize, COHORTS } from '../opportunity/backtest.mjs';
 import { ETH, SOL, BTC, at, find, ethStage } from './opportunity-fixture.mjs';
+import { displayWidth } from '../signal/message.mjs';
 
 globalThis.fetch = async url => { throw new Error(`테스트에서 실제 네트워크 호출 금지: ${url}`); };
 
@@ -101,8 +102,8 @@ const stage2i = ethStage[2].find(i => at(ETH, i).dir === 'LONG');
 test('메시지: 3단계(조건 충족)와 2단계(눌림 진행 중)는 머리줄부터 구분되고 근거·위험·가격이 함께 있다', () => {
   const m3 = watchBlock('ETHUSDT', item('ETHUSDT', ETH, ethStage[3][0]).analysis, { type: 'new' });
   const m2 = watchBlock('ETHUSDT', item('ETHUSDT', ETH, stage2i).analysis, { type: 'new' });
-  assert.match(m3, /^✅/); assert.match(m3, /3단계 · 조건 충족<\/b> — 점검 7\/7 모두 통과/); assert.ok(!/남은 조건/.test(m3));
-  assert.match(m2, /2단계 · 눌림 진행 중<\/b> — 관찰 단계, 점검 \d\/7/); assert.match(m2, /🔜 3단계까지 남은 조건/); assert.ok(!/^✅/.test(m2)); assert.ok(!/3단계 · /.test(m2));
+  assert.match(m3, /^✅/); assert.match(m3, /3단계 · 조건 충족<\/b> \(새 관찰\)\n점검 7\/7 모두 통과/); assert.ok(!/남은 조건/.test(m3));
+  assert.match(m2, /2단계 · 눌림 진행 중<\/b> \(새 관찰\)\n관찰 단계 · 점검 \d\/7/); assert.match(m2, /🔜 3단계까지 남은 조건/); assert.ok(!/^✅/.test(m2)); assert.ok(!/3단계 · /.test(m2));
   for (const m of [m3, m2]) for (const need of ['조건 적합도', '관찰 가격', '확정 1H 종가', '무효화', '📈 근거', '⚠️ 위험', '거래량', 'BTC 4H', '변동성']) assert.ok(m.includes(need), `${need} 없음`);
   assert.match(m3, /목표 [\d.]+ \(\+/); assert.match(m3, /손익비 [\d.]+R/);
 });
@@ -208,4 +209,13 @@ test('과거 검증 도구는 네트워크·Telegram·주문과 무관하다(모
   assert.ok(!/sendText|TELEGRAM_|process\.env|method:\s*['"]POST|\/trade\/|\/account\//i.test(cli));
   const wf = readFileSync(new URL('../../.github/workflows/opportunity-backtest.yml', import.meta.url), 'utf8');
   assert.ok(!/secrets\.|schedule:|cron:/.test(wf) && /contents: read/.test(wf) && /branches: \['claude\/opportunity-radar-v2'\]/.test(wf));
+});
+
+test('메시지 모바일 폭: 기회 레이더 알림의 고정 문구 줄은 화면 폭 44 이하, 분석 문장 줄(•)은 58 이하(최대 2줄로 꺾임)', () => {
+  const pick = [ethStage[3][0], ethStage[2][0], ethStage[2].find(i => at(ETH, i).score.total < 85) ?? ethStage[2][1]];
+  const items = [...pick.map(i => item('ETHUSDT', ETH, i)), item('SOLUSDT', SOL, find(SOL, a => a.stage === 3)[0])];
+  for (const it of items) {
+    const t = formatAlerts([it], { now: Date.UTC(2024, 5, 1, 3, 0, 20) })[0].plain;
+    for (const line of t.split('\n')) { const limit = line.startsWith('• ') ? 58 : 44; assert.ok(displayWidth(line) <= limit, `폭 ${displayWidth(line)} > ${limit}: ${line}`); }
+  }
 });

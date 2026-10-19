@@ -93,7 +93,7 @@ test('[보류 3] 2단계 알림이 보류된 사이 3단계로 올라가면 늦�
   const a = await runProc(store, { series: set(j), now: nowAt(j), send: mkSend(sent) });
   assert.equal(sent.length, 0); assert.equal(a.r.held, 1); assert.equal(a.state.opportunity.coins.ETHUSDT, undefined);
   const b = await runProc(store, { series: set(j + k), now: nowAt(j + k), send: mkSend(sent) });
-  assert.equal(sent.length, 1); assert.match(texts(sent), /ETH/); assert.match(texts(sent), /3단계 · 조건 충족[^\n]*\(새 관찰\)/); assert.ok(!/2단계 · 눌림 진행 중/.test(texts(sent))); assert.equal(b.state.opportunity.coins.ETHUSDT.alertedStage, 3);
+  assert.equal(sent.length, 1); assert.match(texts(sent), /ETH/); assert.match(texts(sent), /3단계 · 조건 충족<\/b> \(새 관찰\)|3단계 · 조건 충족 \(새 관찰\)/); assert.ok(!/2단계 · 눌림 진행 중/.test(texts(sent))); assert.equal(b.state.opportunity.coins.ETHUSDT.alertedStage, 3);
 });
 test('[보류 4] 보류 중이던 종목이 대기로 돌아가면 뒤늦게 보내지 않는다', async () => {
   const j = 1148, k = 3; assert.equal(at(ETH, j).stage, 2); assert.equal(at(ETH, j + k).stage, 0);

@@ -74,10 +74,10 @@ export function evaluateSignal({ a, c15, now }, { minRR = 1.5, validMin = 45, P 
   const L2 = L ? '상승' : '하락';
   return {
     status: 'CANDIDATE', ...base0, blockers: [],
-    evidence: [
-      `4H ${L2} 추세 · 1H ${L ? '지지' : '저항'} 구간 ${fmtPrice(z.lo)}~${fmtPrice(z.hi)} 눌림 유지`,
-      `15분봉 확정 ${L ? '돌파' : '이탈'}(직전 ${P.trigBars}봉 ${L ? '고점' : '저점'} ${fmtPrice(level)}) · 거래량 ×${volRel.toFixed(1)}`,
-      `손절은 ${L ? '눌림 저점·구간 하단' : '눌림 고점·구간 상단'} 기준 · 1차 목표 ${T1.source ?? '확정 구간'}`,
+    evidence: [                                                         // 모바일 한 줄(폭 44 이하)에 들어가도록 짧게
+      `4H ${L2} · 1H ${L ? '지지' : '저항'} ${fmtPrice(z.lo)}~${fmtPrice(z.hi)} 눌림`,
+      `15분 ${L ? '돌파' : '이탈'} ${fmtPrice(level)} · 거래량 ×${volRel.toFixed(1)}`,
+      `손절=${L ? '눌림 저점' : '눌림 고점'} · 1차=${T1.source ?? '확정 구간'}`,
     ],
   };
 }
@@ -85,8 +85,8 @@ export function evaluateSignal({ a, c15, now }, { minRR = 1.5, validMin = 45, P 
 // 저장된 활성 신호의 무효화 판단. c15 마지막 확정 봉 종가가 손절 기준을 이탈했거나, 4H·1H 구조가 사라졌거나 방향이 바뀌면 무효.
 export function invalidation(active, { a, c15 }) {
   const s = active.dir === 'LONG' ? 1 : -1, last = c15?.at(-1);
-  if (last && (last.c - active.stop) * s < 0) return { reason: `15분봉 종가 ${fmtPrice(last.c)}가 손절 기준 ${fmtPrice(active.stop)}을 ${s > 0 ? '하향' : '상향'} 이탈`, price: last.c };
-  if (a?.status === 'ok' && (a.stage < 1 || a.dir !== active.dir)) return { reason: a.stage < 1 ? '4H 추세·1H 눌림 구조가 더 이상 유지되지 않음' : '4H 추세 방향이 바뀜', price: last?.c ?? a.price };
-  if (a?.status === 'ok' && a.invalidation !== null && (a.price - a.invalidation) * s < 0) return { reason: `1H 종가 ${fmtPrice(a.price)}가 구조적 무효화 가격 ${fmtPrice(a.invalidation)}을 ${s > 0 ? '하향' : '상향'} 이탈`, price: a.price };
+  if (last && (last.c - active.stop) * s < 0) return { reason: `15분 종가 ${fmtPrice(last.c)}가 손절 ${fmtPrice(active.stop)} ${s > 0 ? '하향' : '상향'} 이탈`, price: last.c };
+  if (a?.status === 'ok' && (a.stage < 1 || a.dir !== active.dir)) return { reason: a.stage < 1 ? '4H 추세·1H 눌림 구조 소멸' : '4H 추세 방향 전환', price: last?.c ?? a.price };
+  if (a?.status === 'ok' && a.invalidation !== null && (a.price - a.invalidation) * s < 0) return { reason: `1H 종가 ${fmtPrice(a.price)}가 무효화 ${fmtPrice(a.invalidation)} ${s > 0 ? '하향' : '상향'} 이탈`, price: a.price };
   return null;
 }

@@ -125,7 +125,7 @@ test('Telegram 메시지 예시: LONG·SHORT 관찰, 필수 항목 표시, 금�
   const clear = { symbol: 'XRPUSDT', event: { type: 'invalidated', reason: '1H 종가 88.0가 무효화 가격 90.0을 하향 이탈', prevDir: 'LONG' }, price: 88 };
   const parts = formatAlerts([longItem, shortItem, clear], { now: Date.UTC(2024, 5, 1, 3, 0, 20), health: { excluded: ['DOGEUSDT'], states: { analyzed: 20, long: ['ETHUSDT'], short: ['SOLUSDT'], wait: 18 } } });
   assert.equal(parts.length, 1); const t = parts[0].plain;
-  for (const need of ['기회 포착 레이더', 'ETH', 'LONG 관찰', 'SHORT 관찰', '관찰 가격', '지지 구간', '저항 구간', '무효화', '근거', '위험', '조건 적합도', '손익비', '목표', 'BTC 4H', '거래량', '변동성', '추격 위험', '3단계 · 조건 충족', '점검 7/7', '해제', '데이터 점검', '현재 상태(이번 점검 20종목): LONG 관찰 ETH · SHORT 관찰 SOL · 대기 18종목', '주문 권고가 아니며']) assert.ok(t.includes(need), `${need} 없음`);
+  for (const need of ['기회 포착 레이더', 'ETH', 'LONG 관찰', 'SHORT 관찰', '관찰 가격', '지지 구간', '저항 구간', '무효화', '근거', '위험', '조건 적합도', '손익비', '목표', 'BTC 4H', '거래량', '변동성', '추격 위험', '3단계 · 조건 충족', '점검 7/7', '해제', '데이터 점검', '현재 상태(이번 점검 20종목): LONG 관찰 ETH · SHORT 관찰 SOL · 대기 18종목', '주문 권고가 아닙니다']) assert.ok(t.includes(need), `${need} 없음`);
   assert.ok(!FORBIDDEN.test(t.replace(DISCLAIMER, '')), t.match(FORBIDDEN)?.[0]);
   assert.ok(parts[0].text.length < 4000 && parts[0].html && parts[0].text.includes('<b>'));
   assert.ok(!/<(?!\/?b>)/.test(parts[0].text.replace(/&lt;|&gt;/g, '')), '허용되지 않은 HTML 태그');

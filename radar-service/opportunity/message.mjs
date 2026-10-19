@@ -4,8 +4,7 @@ import { bold, escHtml, fmtPrice, htmlToPlain } from '../format.mjs';
 import { sortAlerts } from './priority.mjs';
 
 export const MAX_MESSAGE_HTML = 3600;     // Telegram 한도(4000)보다 여유를 둔 분할 기준
-export const DISCLAIMER = '※ 차트 조건을 점검한 관찰 알림입니다. 주문 권고가 아니며 이 조건의 수익성은 검증되지 않았습니다. 점검 n/7과 조건 적합도는 조건 충족도 설명용이며 확률이 아닙니다. 무효화·목표는 규칙으로 계산한 관찰 가격입니다.';
-
+export const DISCLAIMER = ['※ 차트 조건을 점검한 관찰 알림이며', '※ 주문 권고가 아닙니다.', '※ 이 조건의 수익성은 검증되지 않았습니다.', '※ 점검 n/7·적합도는 확률이 아닙니다.', '※ 적합도의 선별력은 검증되지 않았습니다.', '※ 무효화·목표는 규칙으로 계산한 관찰 가격'].join('\n');
 const kst = t => `${new Date(t + 9 * 3600000).toISOString().slice(11, 16)} KST`;
 const dirText = dir => (dir === 'LONG' ? 'LONG 관찰' : 'SHORT 관찰');
 const icon = dir => (dir === 'LONG' ? '🟢' : '🔴');
@@ -23,7 +22,8 @@ export function watchBlock(sym, a, event) {
   const L = a.dir === 'LONG', zn = L ? '지지' : '저항', on = L ? '저항' : '지지', m = a.metrics, ready = a.stage >= 3, sc = a.score, plan = a.plan;
   const kind = event?.type === 'flip' ? `방향 전환(${dirText(event.prevDir)} 해제)` : event?.type === 'upgrade' ? '단계 상승' : '새 관찰';
   const lines = [`${ready ? '✅' : icon(a.dir)} ${bold(baseName(sym))} · ${bold(dirText(a.dir))}`,
-    ready ? `${bold(`3단계 · ${a.stageLabel}`)} — 점검 ${a.met}/${a.total} 모두 통과 (${escHtml(kind)})` : `${bold(`${a.stage}단계 · ${a.stageLabel}`)} — 관찰 단계, 점검 ${a.met}/${a.total} (${escHtml(kind)})`];
+    `${bold(`${ready ? 3 : a.stage}단계 · ${a.stageLabel}`)} (${escHtml(kind)})`,
+    ready ? `점검 ${a.met}/${a.total} 모두 통과` : `관찰 단계 · 점검 ${a.met}/${a.total}`];
   if (sc) lines.push(`${gradeIcon(sc.grade)} 조건 적합도 ${bold(`${sc.total}/100`)} (${escHtml(sc.grade)})`);
   lines.push('');
   lines.push(`💰 관찰 가격 ${fmtPrice(a.price)}`, `   ${kst(a.asOf)} 확정 1H 종가`);
@@ -43,9 +43,9 @@ export function watchBlock(sym, a, event) {
   lines.push('', '⚠️ 위험');
   lines.push(`• 변동성 ${escHtml(m.volLabel)} (ATR 1H ${m.atr1Pct.toFixed(2)}% · 4H ${m.atr4Pct.toFixed(2)}%)`, `• 추격 위험 ${escHtml(m.chase)}`);
   if (a.unmet.length) lines.push('', `🔜 ${a.stage + 1 > 3 ? '' : `${a.stage + 1}단계까지 `}남은 조건`, ...a.unmet.flatMap(u => u.split(' · ')).map(u => `• ${escHtml(u)}`));   // 긴 설명은 ' · ' 기준으로 줄을 나눈다
-  if (sc) {                                                                      // 점수 내역: 3항목씩 두 줄(모바일 줄바꿈 방지)
+  if (sc) {                                                                      // 점수 내역: 2항목씩 세 줄(모바일 줄바꿈 방지)
     const pt = sc.parts.map(p => `${p.label} ${Math.round(p.score)}/${p.max}`);
-    lines.push('', `🔢 ${pt.slice(0, 3).join(' · ')}`, `   ${pt.slice(3).join(' · ')}`);
+    lines.push('', `🔢 ${pt.slice(0, 2).join(' · ')}`, `   ${pt.slice(2, 4).join(' · ')}`, `   ${pt.slice(4).join(' · ')}`);
   }
   return lines.join('\n');
 }

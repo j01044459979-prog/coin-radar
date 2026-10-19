@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { evaluateSignal, invalidation, SIG, M15 } from '../signal/evaluate.mjs';
 import { signalTransition, blank } from '../signal/transition.mjs';
-import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER } from '../signal/message.mjs';
+import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER, displayWidth } from '../signal/message.mjs';
 import { signalSettings, signalMode, SIGNAL_DEFAULTS } from '../signal/config.mjs';
 import { signalStep, runSignalSafe, normalizeSignal, watchlist, MAX_ATTEMPTS } from '../signal/step.mjs';
 import { runSignalAfterCycle } from '../signal/integrate.mjs';
@@ -96,7 +96,7 @@ test('전이: 무효화(15분 종가가 손절 기준 이탈 / 구조 소멸 / �
   const e = ev(), active = signalTransition(null, e, ctx()).committed;
   const broke = mk15({ closeT: T + 2 * M15, lastClose: 97.4, lastOpen: 98.0, lastHigh: 98.1, lastLow: 97.3, level: 98 });
   const t = signalTransition(active, { status: 'WAIT' }, ctx({ c15: broke, now: T + 2 * M15 + 60000 }));
-  assert.equal(t.event.type, 'invalidated'); assert.match(t.event.reason, /15분봉 종가 97\.400가 손절 기준 97\.500을 하향 이탈/); assert.equal(t.committed.status, 'closed'); assert.equal(t.committed.closeReason, 'invalidated');
+  assert.equal(t.event.type, 'invalidated'); assert.match(t.event.reason, /15분 종가 97\.400가 손절 97\.500 하향 이탈/); assert.equal(t.committed.status, 'closed'); assert.equal(t.committed.closeReason, 'invalidated');
   assert.equal(signalTransition(t.committed, { status: 'WAIT' }, ctx({ c15: broke, now: T + 2 * M15 + 120000 })).event, null, '무효화는 한 번만');
   const lost = signalTransition(active, { status: 'WAIT' }, ctx({ a: mkA({ stage: 0, dir: null, zone: null, plan: null, invalidation: null }), now: NOW + 60000 })); assert.equal(lost.event.type, 'invalidated'); assert.match(lost.event.reason, /구조/);
   const flipped = signalTransition(active, { status: 'WAIT' }, ctx({ a: mirrorFlip(), now: NOW + 60000 })); assert.equal(flipped.event.type, 'invalidated');
@@ -113,14 +113,14 @@ test('전이: 손절 기준 위반이 15분 종가가 아니라 꼬리(고저)�
 const FORBID = /승률|확률|매수|매도|주문 접수|수익 보장|보장합니다/;
 test('메시지: 필수 8개 항목(종목·방향, 상태, 진입 관심가, 손절, 1·2차 목표, 손익비, 근거 3개 이내, 생성시각·유효시간)', () => {
   const m = candidateMessage('ETHUSDT', ev()), t = m.plain;
-  for (const need of ['ETH', 'LONG', '진입 후보', '관찰 ▶ 진입 후보 ▶ 무효화', '진입 관심가 100.15', '손절 기준 97.50', '1차 105.00', '2차 109.00', '손익비 1차 1.83R', '비용 반영', '근거', '생성 21:15 KST', '유효 21:15~22:00 KST', '무효화:', '미검증', '레버리지']) assert.ok(t.includes(need), `${need} 없음\n${t}`);
+  for (const need of ['ETH', 'LONG', '진입 후보', '관찰 ▶ 진입 후보 ▶ 무효화', '진입 관심가 100.15', '손절 기준 97.50', '1차 105.00', '2차 109.00', '손익비 1차 1.83R', '비용 반영', '근거', '생성 21:15 KST', '유효 21:15~22:00 KST', '무효화 조건', '미검증', '레버리지']) assert.ok(t.includes(need), `${need} 없음\n${t}`);
   assert.equal((t.match(/^• /gm) ?? []).length, 3); assert.ok(m.html && m.text.includes('<b>'));
   const sh = candidateMessage('SOLUSDT', ev(mirrorA(mkA()), mirror15(mk15()))).plain; assert.match(sh, /SHORT/); assert.match(sh, /손절 기준 102\.50 \(\+/); assert.match(sh, /1차 95\.000 \(−/); assert.match(sh, /상향 이탈/);
 });
-test('메시지: 모바일 가독성(줄 길이 ≤ 60자, 전체 ≤ 1500자, 허용 HTML은 <b>만, 금지 표현 없음) · 2차 목표 없음 표시 · 레버리지 손실은 사실만', () => {
+test('메시지: 모바일 가독성(모든 줄 화면 폭 ≤ 44, 전체 ≤ 1500자, 허용 HTML은 <b>만, 금지 표현 없음) · 2차 목표 없음 표시 · 레버리지 손실은 사실만', () => {
   for (const e of [ev(), ev(mkA({ obstacles: [{ price: 105, source: 'a' }] })), ev(mirrorA(mkA()), mirror15(mk15()))]) {
     const m = candidateMessage('ETHUSDT', e); assert.ok(m.text.length <= 1500, `길이 ${m.text.length}`);
-    for (const line of m.plain.split('\n').filter(l => !l.startsWith('※'))) assert.ok([...line].length <= 60, `줄이 길다(${[...line].length}): ${line}`);
+    for (const line of m.plain.split('\n')) assert.ok(displayWidth(line) <= 44, `모바일에서 줄이 꺾임(폭 ${displayWidth(line)}): ${line}`);
     assert.ok(!/<(?!\/?b>)/.test(m.text.replace(/&lt;|&gt;/g, '')), '허용되지 않은 HTML'); assert.ok(!FORBID.test(m.plain.replace(SIGNAL_DISCLAIMER, '')), m.plain.match(FORBID)?.[0]);
   }
   assert.match(candidateMessage('ETHUSDT', ev(mkA({ obstacles: [{ price: 105, source: 'a' }] }))).plain, /2차 산정 불가/);
@@ -129,7 +129,8 @@ test('메시지: 모바일 가독성(줄 길이 ≤ 60자, 전체 ≤ 1500자, �
 });
 test('메시지: 무효화 메시지와 외부 문자열 이스케이프', () => {
   const t = invalidatedMessage('ETHUSDT', { dir: 'LONG', reason: '15분봉 종가 97.40가 손절 기준 97.50을 하향 이탈 <x>', price: 97.4, stop: 97.5, triggerT: T }).plain;
-  for (const need of ['무효화', 'ETH', 'LONG', '사유:', '97.40', '신호 생성 21:15 KST', '더 이상 유효하지 않습니다']) assert.ok(t.includes(need), need);
+  for (const need of ['무효화', 'ETH', 'LONG', '사유', '97.40', '신호 생성 21:15 KST', '더 이상 유효하지 않습니다']) assert.ok(t.includes(need), need);
+  for (const line of invalidatedMessage('ETHUSDT', { dir: 'LONG', reason: '15분 종가 97.400가 손절 97.500 하향 이탈', price: 97.4, stop: 97.5, triggerT: T }).plain.split('\n')) assert.ok(displayWidth(line) <= 44, `무효화 메시지 줄 폭 ${displayWidth(line)}: ${line}`);
   const html = invalidatedMessage('ETHUSDT', { dir: 'LONG', reason: '<script>', price: 1, stop: 1, triggerT: T }).text; assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;'));
 });
 
