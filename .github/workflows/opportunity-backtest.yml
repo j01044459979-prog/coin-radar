@@ -1,0 +1,30 @@
+name: opportunity-backtest
+# 기회 포착 레이더 과거 데이터 검증(읽기 전용): 공개 OKX 시세로 알림 이벤트의 사후 결과를 계산해 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시를 쓰지 않으며 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다. 이 개발 브랜치에서만 실행된다.
+on:
+  push:
+    branches: ['claude/opportunity-radar-v2']
+    paths: [.github/workflows/opportunity-backtest.yml, radar-service/opportunity/backtest*.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: opportunity-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/opportunity-v2.test.mjs
+      - name: Backtest (public OKX data, no Telegram)
+        run: node radar-service/opportunity/backtest-cli.mjs --top 20 --days 270 | tee "$RUNNER_TEMP/backtest.txt"
+      - name: Summary
+        run: |
+          { echo '### Opportunity radar backtest (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/backtest.txt"; } >> "$GITHUB_STEP_SUMMARY"

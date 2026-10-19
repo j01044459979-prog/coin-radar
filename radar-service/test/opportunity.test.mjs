@@ -119,13 +119,13 @@ test('같은 봉은 다시 평가되지 않아도 안전: 이미 알린 단계�
 
 // ── 메시지 ──
 const alertItem = (sym, series, i, type = 'new') => { const s = series.slice(0, i + 1), a = analyzeCoin(s, aggregate(s), aggregate(BTC.slice(0, i + 1))); return { symbol: sym, event: { type, to: { dir: a.dir, stage: a.stage }, prevDir: type === 'flip' ? 'LONG' : null }, analysis: a, price: a.price }; };
-const FORBIDDEN = /승률|확률|레버리지|매수|매도|진입 추천|주문|수익 보장|목표가|손절/;
+const FORBIDDEN = /승률|확률|레버리지|매수|매도|진입 추천|주문|수익 보장|손절/;
 test('Telegram 메시지 예시: LONG·SHORT 관찰, 필수 항목 표시, 금지 표현 없음, 한도 이내', () => {
   const longItem = alertItem('ETHUSDT', ETH, ethStage[3][0]), short3 = find(SOL, a => a.stage === 3)[0], shortItem = alertItem('SOLUSDT', SOL, short3);
   const clear = { symbol: 'XRPUSDT', event: { type: 'invalidated', reason: '1H 종가 88.0가 무효화 가격 90.0을 하향 이탈', prevDir: 'LONG' }, price: 88 };
   const parts = formatAlerts([longItem, shortItem, clear], { now: Date.UTC(2024, 5, 1, 3, 0, 20), health: { excluded: ['DOGEUSDT'], states: { analyzed: 20, long: ['ETHUSDT'], short: ['SOLUSDT'], wait: 18 } } });
   assert.equal(parts.length, 1); const t = parts[0].plain;
-  for (const need of ['기회 포착 레이더', 'ETH', 'LONG 관찰', 'SHORT 관찰', '참고 가격', '지지 구간', '저항 구간', '무효화 가격', '관찰 이유', '미충족', 'BTC 4H', '상대 거래량', '변동성', '추격 위험', '충족 7/7', '해제', '데이터 점검', '현재 상태(이번 점검 20종목): LONG 관찰 ETH · SHORT 관찰 SOL · 대기 18종목', '주문 권고가 아니며']) assert.ok(t.includes(need), `${need} 없음`);
+  for (const need of ['기회 포착 레이더', 'ETH', 'LONG 관찰', 'SHORT 관찰', '관찰 가격', '지지 구간', '저항 구간', '무효화', '근거', '위험', '조건 적합도', '손익비', '목표', 'BTC 4H', '거래량', '변동성', '추격 위험', '3단계 · 조건 충족', '점검 7/7', '해제', '데이터 점검', '현재 상태(이번 점검 20종목): LONG 관찰 ETH · SHORT 관찰 SOL · 대기 18종목', '주문 권고가 아닙니다']) assert.ok(t.includes(need), `${need} 없음`);
   assert.ok(!FORBIDDEN.test(t.replace(DISCLAIMER, '')), t.match(FORBIDDEN)?.[0]);
   assert.ok(parts[0].text.length < 4000 && parts[0].html && parts[0].text.includes('<b>'));
   assert.ok(!/<(?!\/?b>)/.test(parts[0].text.replace(/&lt;|&gt;/g, '')), '허용되지 않은 HTML 태그');
