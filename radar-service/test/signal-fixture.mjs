@@ -61,3 +61,10 @@ export function collectors({ symbols = ['ETHUSDT'], c15 = mk15(), status15 = 'fr
   return { collectHour, collectM15 };
 }
 export const oppState = (symbols = ['ETHUSDT'], dir = 'LONG', stage = 3, lastBarT = T - H1) => ({ opportunity: { v: 1, baselineDone: true, coins: Object.fromEntries(symbols.map(s => [s, { dir, stage, lastBarT }])) } });
+
+// 1H → 15분 확장(백테스트 파이프라인 검증용): 앞 3개 15분봉은 시가에서 횡보, 마지막 15분봉이 그 시간의 고저·종가를 만든다.
+// 집계하면 원래 1H와 시가·고가·저가·종가가 정확히 같다. 마지막 봉에 큰 거래량(방향 대칭)을 줘서 15분 트리거·거래량 조건이 발생할 수 있게 한다.
+export const expand15 = c1h => c1h.flatMap(x => {
+  const q = x.q == null ? null : x.q / 4, flat = t => ({ t, o: x.o, h: x.o, l: x.o, c: x.o, q: q == null ? null : q * 0.5 });
+  return [flat(x.t), flat(x.t + M15), flat(x.t + 2 * M15), { t: x.t + 3 * M15, o: x.o, h: x.h, l: x.l, c: x.c, q: q == null ? null : q * 6 }];
+});

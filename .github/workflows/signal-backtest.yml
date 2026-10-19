@@ -1,0 +1,30 @@
+name: signal-backtest
+# 15분봉 진입 트리거 과거 데이터 검증(읽기 전용): 공개 OKX 시세로 '진입 후보' 이벤트의 사후 결과를 계산해 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시를 쓰지 않으며 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다. 이 개발 브랜치에서만 실행된다.
+on:
+  push:
+    branches: ['claude/opportunity-radar-v2']
+    paths: [.github/workflows/signal-backtest.yml, radar-service/signal/backtest*.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: signal-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/signal-backtest.test.mjs radar-service/test/signal.test.mjs
+      - name: Backtest (public OKX data, no Telegram)
+        run: node radar-service/signal/backtest-cli.mjs --top 20 --days 120 | tee "$RUNNER_TEMP/signal-backtest.txt"
+      - name: Summary
+        run: |
+          { echo '### Signal 15m-trigger backtest (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/signal-backtest.txt"; } >> "$GITHUB_STEP_SUMMARY"

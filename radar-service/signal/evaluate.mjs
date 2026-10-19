@@ -27,7 +27,8 @@ export const SIG = Object.freeze({
 const f2 = x => Number(x).toFixed(2);
 const pctOf = (v, base) => (v - base) / base * 100;
 
-export function evaluateSignal({ a, c15, now }, { minRR = 1.5, validMin = 45, P = SIG } = {}) {
+// ignore: 백테스트 대조군 전용(예: ['trigger','volume']으로 '맥락만' 판정). 운영 경로는 쓰지 않는다. 막힘 이유마다 tags에 분류가 들어간다.
+export function evaluateSignal({ a, c15, now }, { minRR = 1.5, validMin = 45, P = SIG, ignore = [] } = {}) {
   const wait = why => ({ status: 'WAIT', why, blockers: [why] });
   if (!a || a.status !== 'ok') return wait(`4H·1H 분석 불가(${a?.reason ?? '데이터 없음'})`);
   if (a.stage < 2 || !a.dir || !a.zone || !a.plan) return wait(a.stage === 1 ? '1H 눌림 구조 미충족(구간 접근 단계)' : '4H 추세·1H 눌림 조건 미충족');
@@ -40,40 +41,40 @@ export function evaluateSignal({ a, c15, now }, { minRR = 1.5, validMin = 45, P 
   const L = a.dir === 'LONG', s = L ? 1 : -1, a1 = a.metrics.atr1, z = a.zone;
   if (!(a1 > 0)) return wait('ATR(1H) 계산 불가');
   const entry = last.c, stop = a.invalidation, risk = (entry - stop) * s;
-  const blockers = [];
+  const blockers = [], tags = [], block = (tag, text) => { if (!ignore.includes(tag)) { blockers.push(text); tags.push(tag); } };
   if (!(risk > 0)) return { ...wait('가격이 이미 손절 기준을 이탈'), invalid: true };
 
   // 트리거: 직전 trigBars개 15분봉 극단을 확정 종가로 돌파 + 방향 봉
   const prior = c15.slice(-1 - P.trigBars, -1), level = L ? Math.max(...prior.map(x => x.h)) : Math.min(...prior.map(x => x.l));
   const broke = (entry - level) * s > 0, dirBar = L ? last.c > last.o : last.c < last.o;
-  if (!broke || !dirBar) blockers.push(`15분봉 확정 트리거 대기(직전 ${P.trigBars}봉 ${L ? '고점' : '저점'} ${fmtPrice(level)} ${L ? '상향' : '하향'} 마감 필요)`);
+  if (!broke || !dirBar) block('trigger', `15분봉 확정 트리거 대기(직전 ${P.trigBars}봉 ${L ? '고점' : '저점'} ${fmtPrice(level)} ${L ? '상향' : '하향'} 마감 필요)`);
   // 구조: 최근 4시간 15분봉 극단이 손절 기준 안쪽, 가격이 구간 경계 안쪽으로 돌아와 있을 것
   const recent = c15.slice(-16), extreme = L ? Math.min(...recent.map(x => x.l)) : Math.max(...recent.map(x => x.h));
-  if ((extreme - stop) * s <= 0) blockers.push('최근 4시간 안에 손절 기준을 건드림');
+  if ((extreme - stop) * s <= 0) block('structure', '최근 4시간 안에 손절 기준을 건드림');
   const zoneEdge = L ? z.lo : z.hi;
-  if ((entry - zoneEdge) * s < 0) blockers.push(`가격이 ${L ? '지지' : '저항'} 구간 ${L ? '하단' : '상단'}을 ${L ? '아래' : '위'}로 벗어남`);
+  if ((entry - zoneEdge) * s < 0) block('zone', `가격이 ${L ? '지지' : '저항'} 구간 ${L ? '하단' : '상단'}을 ${L ? '아래' : '위'}로 벗어남`);
   const ext = (entry - (L ? z.hi : z.lo)) * s;
-  if (ext > P.chaseAtr1 * a1) blockers.push(`구간에서 ${f2(ext / a1)} ATR(1H) 이격(추격 구간, 기준 ${P.chaseAtr1})`);
+  if (ext > P.chaseAtr1 * a1) block('chase', `구간에서 ${f2(ext / a1)} ATR(1H) 이격(추격 구간, 기준 ${P.chaseAtr1})`);
   const riskAtr = risk / a1;
-  if (riskAtr < P.stopMinAtr1 || riskAtr > P.stopMaxAtr1) blockers.push(`손절 거리 ${f2(riskAtr)} ATR(1H)가 ${riskAtr < P.stopMinAtr1 ? '너무 좁음' : '너무 넓음'}(허용 ${P.stopMinAtr1}~${P.stopMaxAtr1})`);
-  if ((last.h - last.l) > P.maxTrigRangeAtr1 * a1) blockers.push(`트리거 봉 폭 ${f2((last.h - last.l) / a1)} ATR(1H)로 급변(기준 ${P.maxTrigRangeAtr1})`);
+  if (riskAtr < P.stopMinAtr1 || riskAtr > P.stopMaxAtr1) block('stop', `손절 거리 ${f2(riskAtr)} ATR(1H)가 ${riskAtr < P.stopMinAtr1 ? '너무 좁음' : '너무 넓음'}(허용 ${P.stopMinAtr1}~${P.stopMaxAtr1})`);
+  if ((last.h - last.l) > P.maxTrigRangeAtr1 * a1) block('spike', `트리거 봉 폭 ${f2((last.h - last.l) / a1)} ATR(1H)로 급변(기준 ${P.maxTrigRangeAtr1})`);
   // 거래량 확인
   const vs = c15.slice(-1 - P.volBase, -1).map(x => x.q).filter(q => Number.isFinite(q) && q >= 0), base = vs.length >= P.volBase / 2 ? vs.reduce((x, y) => x + y, 0) / vs.length : null;
   const volRel = Number.isFinite(last.q) && base > 0 ? last.q / base : null;
-  if (volRel === null) blockers.push('거래량 확인 불가'); else if (volRel < P.volMult) blockers.push(`거래량 ×${f2(volRel)}로 부족(기준 ×${P.volMult})`);
+  if (volRel === null) block('volume', '거래량 확인 불가'); else if (volRel < P.volMult) block('volume', `거래량 ×${f2(volRel)}로 부족(기준 ×${P.volMult})`);
   // 목표 1·2차(계산 근거가 있을 때만) + 비용 반영 손익비
   const cand = (a.obstacles ?? []).map(o => ({ ...o, dist: (o.price - entry) * s })).filter(o => o.dist > 0).map(o => ({ ...o, rr: o.dist / risk })).sort((p, q) => p.dist - q.dist);
   const t1 = cand.find(o => o.rr >= P.firstTargetMinR) ?? null, t2 = t1 ? cand.find(o => o.rr >= t1.rr + P.t2ExtraR) ?? null : null;
   const costR = entry * P.costPct / 100 / risk;
   const mk = o => (o ? { price: o.price, pct: pctOf(o.price, entry), rr: o.rr, net: o.rr - costR, source: o.source } : null);
   const T1 = mk(t1), T2 = mk(t2);
-  if (!T1) blockers.push('1차 목표 산정 불가(1R 이상 거리의 반대편 확정 구간 없음)'); else if (T1.net < minRR) blockers.push(`1차 목표 비용 반영 손익비 ${f2(T1.net)}R로 부족(기준 ${minRR}R)`);
+  if (!T1) block('target', '1차 목표 산정 불가(1R 이상 거리의 반대편 확정 구간 없음)'); else if (T1.net < minRR) block('target', `1차 목표 비용 반영 손익비 ${f2(T1.net)}R로 부족(기준 ${minRR}R)`);
 
   const base0 = { dir: a.dir, entry, stop, riskAbs: risk, riskPct: risk / entry * 100, riskAtr, costR, costPct: P.costPct, t1: T1, t2: T2, volRel, zone: z, level, triggerT: last.t, triggerCloseT: closeT, validUntil: closeT + validMin * 60000, zoneKey: `${a.dir}:${Number(z.level).toPrecision(8)}`, score: a.score?.total ?? null, btcAlign: a.metrics.btcAlign, stageLabel: a.stageLabel };
-  if (blockers.length) return { status: 'OBSERVE', ...base0, blockers };
+  if (blockers.length) return { status: 'OBSERVE', ...base0, blockers, tags };
   const L2 = L ? '상승' : '하락';
   return {
-    status: 'CANDIDATE', ...base0, blockers: [],
+    status: 'CANDIDATE', ...base0, blockers: [], tags: [],
     evidence: [                                                         // 모바일 한 줄(폭 44 이하)에 들어가도록 짧게
       `4H ${L2} · 1H ${L ? '지지' : '저항'} ${fmtPrice(z.lo)}~${fmtPrice(z.hi)} 눌림`,
       `15분 ${L ? '돌파' : '이탈'} ${fmtPrice(level)} · 거래량 ×${volRel.toFixed(1)}`,
