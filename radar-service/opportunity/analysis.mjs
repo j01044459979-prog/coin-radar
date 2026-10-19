@@ -8,6 +8,7 @@
 // 신호 봉 = 마지막 확정 1시간봉. 4시간봉은 그 1시간봉의 마감 시각까지 마감된 것만 쓴다.
 import { atr, ema, avgQuote, priorHigh, priorLow, H1, H4 } from './indicators.mjs';
 import { fmtPrice } from '../format.mjs';
+import { fitScore, volumeState } from './score.mjs';
 
 export const OPP = Object.freeze({
   pivotK: 3, swingLookback4h: 60, flipLookback4h: 20, resLookback4h: 120, zoneHalfAtr4h: 0.3,
@@ -98,6 +99,11 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
   const atr1Pct = a1 / x.c * 100, atr4Pct = atr4 / x.c * 100;
   let btcDir; if (btc4h && btc4h.length >= P.minBars4h) { const TB = trendSeries(btc4h, P); btcDir = emaDirAt(TB, doneIndex(btc4h, tClose)); } else btcDir = undefined;   // undefined = 확인 불가
   const metrics = { relVol, atr1Pct, atr4Pct, volLabel: label(atr4Pct, P.atrLowPct, P.atrHighPct, ['낮음', '보통', '높음']), btcDir };
+  metrics.emaGapAtr4 = Math.abs(T.e50[d] - T.e200[d]) / atr4;                    // 추세 강도(설명·점수용): EMA50-EMA200 간격 ÷ ATR(4H)
+  const pbStart = i - P.pullbackBars + 1, pbBase = avgQuote(c1h, pbStart, P.volBase);   // 눌림 구간(마지막 봉 제외) 평균 거래대금 ÷ 그 이전 20봉 평균
+  let pbSum = 0, pbN = 0; for (let j = pbStart; j < i; j++) if (Number.isFinite(c1h[j].q) && c1h[j].q >= 0) { pbSum += c1h[j].q; pbN++; }
+  metrics.pullbackRelVol = pbBase > 0 && pbN >= Math.ceil((P.pullbackBars - 1) / 2) ? pbSum / pbN / pbBase : null;
+  metrics.volume = volumeState(relVol, metrics.pullbackRelVol);
   const out = { status: 'ok', barT: x.t, asOf: tClose, price: x.c, trend: trend.dir, trendWhy: trend.why ?? null, state: 'WAIT', dir: null, stage: 0, stageLabel: STAGE[0], zone: null, invalidation: null, opposing: null, checks: [], met: 0, total: CHECK_TOTAL, reasons: [], unmet: [], metrics };
   if (!trend.dir) { out.unmet.push(trend.why); return out; }
 
@@ -149,10 +155,10 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
   add('width', '무효화 거리 적정', widthOk, `무효화 가격까지 ${f2(riskAtr)} ATR(1H)`,
     riskAtr === null ? '기준 구간 없음' : `무효화 가격까지 ${f2(riskAtr)} ATR(1H)로 ${riskAtr < P.stopMinAtr1h ? '너무 좁음' : '너무 넓음'}(허용 ${P.stopMinAtr1h}~${P.stopMaxAtr1h})`);
   // 반대편 장애물까지 공간: 4H 확정 스윙 고점(저점) 120봉 + 최근 72개 1H 최고(최저)
-  const margin = P.resMarginAtr1h * a1, obst = [], lst = L ? T.ph : T.pl, nn = countUpTo(lst, d - P.pivotK);
-  for (let n = nn - 1; n >= 0; n--) { const p = lst[n]; if (p < d - P.resLookback4h) break; const v = L ? T.c4[p].h : T.c4[p].l; if (L ? v > x.c + margin : v < x.c - margin) obst.push(v); }
+  const margin = P.resMarginAtr1h * a1, obst = [], lst = L ? T.ph : T.pl, nn = countUpTo(lst, d - P.pivotK), srcOf = new Map();
+  for (let n = nn - 1; n >= 0; n--) { const p = lst[n]; if (p < d - P.resLookback4h) break; const v = L ? T.c4[p].h : T.c4[p].l; if (L ? v > x.c + margin : v < x.c - margin) { obst.push(v); if (!srcOf.has(v)) srcOf.set(v, `4H 스윙 ${L ? '고점' : '저점'}`); } }
   const rv = L ? Math.max(priorHigh(c1h, i, P.res1hBars), x.h) : Math.min(priorLow(c1h, i, P.res1hBars), x.l);
-  if (L ? rv > x.c + margin : rv < x.c - margin) obst.push(rv);
+  if (L ? rv > x.c + margin : rv < x.c - margin) { obst.push(rv); if (!srcOf.has(rv)) srcOf.set(rv, `최근 ${P.res1hBars}시간 ${L ? '고점' : '저점'}`); }
   const opp = obst.length ? (L ? Math.min(...obst) : Math.max(...obst)) : null, roomR = opp === null || !(risk > 0) ? null : (opp - x.c) * s / risk;
   out.opposing = opp;
   add('room', `반대편 ${oname}까지 공간`, risk > 0 && (opp === null || roomR >= P.roomR), opp === null ? `가까운 반대편 ${oname} 없음` : `반대편 ${oname}까지 ${f2(roomR)}R`,
@@ -167,5 +173,13 @@ export function analyzeCoin(c1h, c4h, btc4h = null, P = OPP) {
   if (sel && !interacting) out.unmet.push('눌림 이후 재진입 확인 캔들 필요');
   out.stageLabel = STAGE[out.stage];
   if (out.stage === 0) { out.zone = null; out.invalidation = null; out.opposing = null; } else { out.state = dirName; out.dir = dirName; }
+  // 가격 계획(표시용): 실제로 계산된 값만 담는다. 기준 구간이 없거나 위험폭이 0 이하이면 plan 전체가 null, 반대편 장애물이 없으면 target/rr만 null.
+  //  ref = 마지막 확정 1H 종가(주문 가격 아님) · invalidation = 위에서 계산한 무효화 가격 · target = 가장 가까운 반대편 확정 스윙/최근 고저(예측치가 아니라 '막힐 수 있는 가격')
+  out.plan = out.stage >= 1 && sel && risk > 0 ? {
+    ref: x.c, invalidation: inv, riskPct: risk / x.c * 100,
+    target: opp === null ? null : { price: opp, source: srcOf.get(opp) ?? null, pct: (opp - x.c) * s / x.c * 100 },
+    rr: opp === null ? null : roomR,
+  } : null;
+  out.score = out.stage >= 1 ? fitScore(out) : null;
   return out;
 }

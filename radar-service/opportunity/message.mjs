@@ -4,7 +4,7 @@ import { bold, escHtml, fmtPrice, htmlToPlain } from '../format.mjs';
 import { sortAlerts } from './priority.mjs';
 
 export const MAX_MESSAGE_HTML = 3600;     // Telegram 한도(4000)보다 여유를 둔 분할 기준
-export const DISCLAIMER = '※ 차트 조건을 점검한 관찰 알림입니다. 주문 권고가 아니며 이 조건의 수익성은 검증되지 않았습니다. 충족 n/7은 조건 개수 설명용입니다.';
+export const DISCLAIMER = '※ 차트 조건을 점검한 관찰 알림입니다. 주문 권고가 아니며 이 조건의 수익성은 검증되지 않았습니다. 점검 n/7과 조건 적합도는 조건 충족도 설명용이며 확률이 아닙니다. 무효화·목표는 규칙으로 계산한 관찰 가격입니다.';
 
 const kst = t => `${new Date(t + 9 * 3600000).toISOString().slice(11, 16)} KST`;
 const dirText = dir => (dir === 'LONG' ? 'LONG 관찰' : 'SHORT 관찰');
@@ -12,20 +12,41 @@ const icon = dir => (dir === 'LONG' ? '🟢' : '🔴');
 export const baseName = symbol => String(symbol).replace(/USDT$/, '');
 const trendText = (a) => `4H ${a.dir === 'LONG' ? '상승' : '하락'} 추세`;
 
-// 한 코인의 관찰 블록(HTML)
+const pct = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+const gradeIcon = g => (g === '높음' ? '🟢' : g === '보통' ? '🟡' : '⚪');
+
+// 한 코인의 관찰 블록(HTML). 모바일 폭(한 줄 약 30자 안팎)에서 읽히도록 짧은 줄과 목록으로 나눈다.
+//  · 2단계(눌림 진행 중) = 관찰 중. 아직 못 채운 점검 항목을 '다음 단계까지'로 보여 준다.
+//  · 3단계(조건 충족) = 7개 점검 모두 통과. 머리줄부터 다르게 표시한다.
+//  · 가격(관찰·무효화·목표·손익비)은 분석에서 실제로 계산된 값(a.plan)이 있을 때만 표시한다. 없으면 줄 자체를 빼거나 '산정 불가'로 적는다.
 export function watchBlock(sym, a, event) {
-  const L = a.dir === 'LONG', zn = L ? '지지' : '저항', on = L ? '저항' : '지지', m = a.metrics;
-  const title = event?.type === 'flip' ? `방향 전환: ${dirText(event.prevDir)} 해제 → ${dirText(a.dir)}`
-    : event?.type === 'upgrade' ? `단계 상승: ${a.stageLabel}` : `새 관찰: ${a.stageLabel}`;
-  const lines = [`${icon(a.dir)} ${bold(baseName(sym))} · ${bold(dirText(a.dir))} — ${escHtml(title)} (충족 ${a.met}/${a.total})`];
-  lines.push(`참고 가격 ${fmtPrice(a.price)} (${kst(a.asOf)} 마감 1H 종가)`);
-  if (a.zone) lines.push(`${zn} 구간 ${fmtPrice(a.zone.lo)}~${fmtPrice(a.zone.hi)} (${escHtml(a.zone.type)}) · 무효화 가격 ${fmtPrice(a.invalidation)} (1H 종가가 이 가격을 ${L ? '하향' : '상향'} 이탈하면 관찰 해제)`);
-  lines.push(`반대편 ${on} ${a.opposing === null ? '가까운 구간 없음' : fmtPrice(a.opposing)}`);
-  const vol = m.relVol === null ? '확인 불가' : `×${m.relVol.toFixed(1)}`;
+  const L = a.dir === 'LONG', zn = L ? '지지' : '저항', on = L ? '저항' : '지지', m = a.metrics, ready = a.stage >= 3, sc = a.score, plan = a.plan;
+  const kind = event?.type === 'flip' ? `방향 전환(${dirText(event.prevDir)} 해제)` : event?.type === 'upgrade' ? '단계 상승' : '새 관찰';
+  const lines = [`${ready ? '✅' : icon(a.dir)} ${bold(baseName(sym))} · ${bold(dirText(a.dir))}`,
+    ready ? `${bold(`3단계 · ${a.stageLabel}`)} — 점검 ${a.met}/${a.total} 모두 통과 (${escHtml(kind)})` : `${bold(`${a.stage}단계 · ${a.stageLabel}`)} — 관찰 단계, 점검 ${a.met}/${a.total} (${escHtml(kind)})`];
+  if (sc) lines.push(`${gradeIcon(sc.grade)} 조건 적합도 ${bold(`${sc.total}/100`)} (${escHtml(sc.grade)})`);
+  lines.push('');
+  lines.push(`💰 관찰 가격 ${fmtPrice(a.price)}`, `   ${kst(a.asOf)} 확정 1H 종가`);
+  if (plan) {
+    lines.push(`🛑 무효화 ${fmtPrice(plan.invalidation)} (${pct(-plan.riskPct * (L ? 1 : -1))})`, `   1H 종가가 ${L ? '하향' : '상향'} 이탈하면 해제`);
+    if (plan.target) lines.push(`🎯 목표 ${fmtPrice(plan.target.price)} (${pct(plan.target.pct * (L ? 1 : -1))})`, `   ${escHtml(on)}: ${escHtml(plan.target.source ?? '확정 구간')}`, `⚖️ 손익비 ${plan.rr.toFixed(1)}R`);
+    else lines.push(`🎯 목표 산정 불가 — 가까운 반대편 ${on} 없음`);
+  }
+  if (a.zone) lines.push(`📍 ${zn} 구간 ${fmtPrice(a.zone.lo)}~${fmtPrice(a.zone.hi)} (${escHtml(a.zone.type)})`);
+  const dup = new Set(a.checks.filter(c => c.key === 'room' || c.key === 'width').map(c => c.detail));   // 손익비·무효화 거리는 위 가격 줄에 이미 있다
+  const why = a.reasons.filter(r => !dup.has(r));
+  lines.push('', '📈 근거', ...(why.length ? why.map(r => `• ${escHtml(r)}`) : ['• -']));
+  const v = m.volume;
+  lines.push(`• 거래량 ${v && v.level !== '확인 불가' ? `${escHtml(v.level)} ×${v.sig.toFixed(1)}${v.dry === null ? '' : v.dry ? ' (눌림 중 위축)' : ''}` : '확인 불가'}`);
   const btc = m.btcAlign === '확인 불가' ? 'BTC 4H 확인 불가' : m.btcDir ? `BTC 4H ${m.btcDir === 'UP' ? '상승' : '하락'}(${m.btcAlign})` : 'BTC 4H 중립';
-  lines.push(`${trendText(a)} · ${escHtml(btc)} · 상대 거래량 ${vol} · 변동성 ${m.volLabel}(ATR 1H ${m.atr1Pct.toFixed(2)}% / 4H ${m.atr4Pct.toFixed(2)}%) · 추격 위험 ${escHtml(m.chase)}`);
-  lines.push(`관찰 이유: ${a.reasons.map(escHtml).join(' / ') || '-'}`);
-  lines.push(`미충족: ${a.unmet.length ? a.unmet.map(escHtml).join(' / ') : '없음'}`);
+  lines.push(`• ${escHtml(btc)}`);
+  lines.push('', '⚠️ 위험');
+  lines.push(`• 변동성 ${escHtml(m.volLabel)} (ATR 1H ${m.atr1Pct.toFixed(2)}% · 4H ${m.atr4Pct.toFixed(2)}%)`, `• 추격 위험 ${escHtml(m.chase)}`);
+  if (a.unmet.length) lines.push('', `🔜 ${a.stage + 1 > 3 ? '' : `${a.stage + 1}단계까지 `}남은 조건`, ...a.unmet.flatMap(u => u.split(' · ')).map(u => `• ${escHtml(u)}`));   // 긴 설명은 ' · ' 기준으로 줄을 나눈다
+  if (sc) {                                                                      // 점수 내역: 3항목씩 두 줄(모바일 줄바꿈 방지)
+    const pt = sc.parts.map(p => `${p.label} ${Math.round(p.score)}/${p.max}`);
+    lines.push('', `🔢 ${pt.slice(0, 3).join(' · ')}`, `   ${pt.slice(3).join(' · ')}`);
+  }
   return lines.join('\n');
 }
 // 해제 블록(HTML)
