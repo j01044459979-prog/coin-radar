@@ -1,0 +1,39 @@
+name: radar3 research (read-only)
+# Only the v3 feature branch. No schedule, no secrets, no Telegram or trade execution.
+on:
+  push:
+    branches: [feature/rich-strategy-radar-3]
+    paths:
+      - 'radar-service/history-v3.mjs'
+      - 'radar-service/research-v3.mjs'
+      - 'radar-service/test/history-v3.test.mjs'
+      - 'radar-service/test/research-v3.test.mjs'
+      - '.github/workflows/radar3-research.yml'
+permissions:
+  contents: read
+concurrency:
+  group: radar3-research-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  research:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Research collector and scoring tests
+        run: node --test radar-service/test/history-v3.test.mjs radar-service/test/research-v3.test.mjs radar-service/test/strategy-v3.test.mjs
+      - name: Real OKX BTC ETH SOL 90-day public-data research
+        # Fully read-only, from UTC completed candles. Fail closed if even one bar is absent.
+        run: node radar-service/research-v3.mjs --days=90 --symbols=BTC,ETH,SOL | tee research-summary.txt
+      - name: Save research summary only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar3-90day-research-summary
+          path: research-summary.txt
+          if-no-files-found: ignore
+          retention-days: 7
