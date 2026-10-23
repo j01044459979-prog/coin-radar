@@ -3,7 +3,7 @@ name: rich300-s0
 # Secret이 없으면 아무것도 하지 않고 성공 종료한다. 로그에는 URL·본문을 출력하지 않고 집계 결과만 남긴다.
 on:
   push:
-    branches: [feature/rich300-journal]
+    branches: [test/rich300-s0-measurements]
     paths: ['.github/workflows/rich300-s0.yml', 'rich300/s0/**']
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   probe:
-    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/feature/rich300-journal'
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/test/rich300-s0-measurements'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
