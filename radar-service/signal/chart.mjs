@@ -46,7 +46,9 @@ export function validateInputs(symbol, ev, c15) {
 
 export const TEST_BANNER = '테스트 · 가상 데이터 · 매매 금지';
 // opts.test: 연결 확인용 가상 신호임을 이미지 상단 띠와 차트 워터마크로 표시한다(운영 신호에는 쓰지 않는다).
+// opts.strategy: A/B 전략 카드용(strategy.js의 STRATEGIES 항목 + reasons). 전략명·방향을 크게, 근거는 2~3개, 모의매매·미검증 표시, 라벨은 진입가/손절가/TP1/TP2.
 export function buildSignalSvg(symbol, ev, c15, opts = {}) {
+  const S = opts.strategy ?? null;
   const bars = validateInputs(symbol, ev, c15), n = bars.length;
   const L = ev.dir === 'LONG', accent = DIR_COLOR[ev.dir], dec = priceDecimals(ev.entry), f = v => fmtPrice(v, dec);
   const levels = [ev.entry, ev.stop, ev.t1.price, ...(ev.t2 ? [ev.t2.price] : [])];
@@ -59,6 +61,20 @@ export function buildSignalSvg(symbol, ev, c15, opts = {}) {
 
   add(`<rect width="${W}" height="${H}" fill="${C.bg}"/>`);
   // 헤더: 종목·방향 배지·상태·시각
+  if (S) {
+    add(`<rect x="0" y="0" width="${W}" height="92" fill="${S.color}"/>`);
+    add(`<text x="${X0}" y="64" font-size="46" font-weight="700" fill="#0b1220">${esc(S.name)}</text>`);
+    add(`<text x="${W - X0}" y="64" font-size="28" font-weight="700" text-anchor="end" fill="#0b1220">모의매매 신호</text>`);
+    add(`<text x="${X0}" y="176" font-size="72" font-weight="700" fill="${C.text}">${esc(baseName(symbol))}</text>`);
+    const sx = X0 + 40 + textW(baseName(symbol), 72) * 1.02;
+    add(`<rect x="${sx}" y="114" width="230" height="84" rx="42" fill="${accent}"/>`);
+    add(`<text x="${sx + 115}" y="172" font-size="50" font-weight="700" text-anchor="middle" fill="#ffffff">${ev.dir}</text>`);
+    add(`<text x="${W - X0}" y="150" font-size="24" text-anchor="end" fill="${C.muted}">15분봉 확정 · OKX 선물</text>`);
+    add(`<text x="${W - X0}" y="186" font-size="24" text-anchor="end" fill="${C.muted}">유효 ~${esc(kst(ev.validUntil))} KST</text>`);
+    const chips = [['모의매매 · 미검증 전략', '#3b1d22', '#fecaca'], [`손익비 ${ev.t1.net.toFixed(2)}R(비용 반영)`, C.panel, C.text], [`손절폭 ${ev.riskPct.toFixed(2)}%`, C.panel, C.text]];
+    let cx = X0;
+    for (const [t, bg, fg] of chips) { const w = 36 + textW(t, 26); add(`<rect x="${cx}" y="222" width="${w}" height="56" rx="28" fill="${bg}" stroke="${C.grid}"/>`); add(`<text x="${cx + w / 2}" y="260" font-size="26" font-weight="700" text-anchor="middle" fill="${fg}">${esc(t)}</text>`); cx += w + 12; }
+  } else {
   add(`<text x="${X0}" y="76" font-size="58" font-weight="700" fill="${C.text}">${esc(baseName(symbol))}</text>`);
   const bx = X0 + 40 + textW(baseName(symbol), 58) * 1.02;
   add(`<rect x="${bx}" y="30" width="170" height="64" rx="32" fill="${accent}"/>`);
@@ -74,6 +90,7 @@ export function buildSignalSvg(symbol, ev, c15, opts = {}) {
     add(`<text x="${cx + 20}" y="204" font-size="22" fill="${C.muted}">${esc(k)}</text>`);
     add(`<text x="${cx + 20}" y="262" font-size="52" font-weight="700" fill="${col}">${esc(v)}</text>`);
   });
+  }
 
   // 가격 패널
   add(`<rect x="${X0}" y="${PY0}" width="${X1 - X0}" height="${PY1 - PY0}" fill="${C.panel}"/>`);
@@ -91,16 +108,16 @@ export function buildSignalSvg(symbol, ev, c15, opts = {}) {
   const xl = xi(n - 1);
   add(`<rect x="${xl - cw * 0.5}" y="${PY0}" width="${cw}" height="${PY1 - PY0}" fill="${accent}" fill-opacity="0.12"/>`);
   // 가격선(오른쪽까지 연장) + 오른쪽 태그(겹치면 간격 확보)
-  const lines = [...(ev.t2 ? [{ key: '2차 목표', v: ev.t2.price, col: C.tp, sub: `${signPct(ev.t2.pct)} · ${ev.t2.net.toFixed(2)}R` }] : []),
-    { key: '1차 목표', v: ev.t1.price, col: C.tp, sub: `${signPct(ev.t1.pct)} · ${ev.t1.net.toFixed(2)}R` },
-    { key: '진입 관심가', v: ev.entry, col: C.entry, sub: '확정 종가' },
-    { key: '손절 기준', v: ev.stop, col: C.stop, sub: signPct((ev.stop - ev.entry) / ev.entry * 100) }].map(l => ({ ...l, y: y(l.v) }));
+  const lines = [...(ev.t2 ? [{ key: S ? 'TP2' : '2차 목표', v: ev.t2.price, col: C.tp, sub: `${signPct(ev.t2.pct)} · ${ev.t2.net.toFixed(2)}R` }] : []),
+    { key: S ? 'TP1' : '1차 목표', v: ev.t1.price, col: C.tp, sub: `${signPct(ev.t1.pct)} · ${ev.t1.net.toFixed(2)}R` },
+    { key: S ? '진입가' : '진입 관심가', v: ev.entry, col: C.entry, sub: '확정 종가' },
+    { key: S ? '손절가' : '손절 기준', v: ev.stop, col: C.stop, sub: signPct((ev.stop - ev.entry) / ev.entry * 100) }].map(l => ({ ...l, y: y(l.v) }));
   lines.sort((a, b) => a.y - b.y);
   const GAP = 76;
   for (let i = 0; i < lines.length; i++) lines[i].ty = Math.max(lines[i].y, i ? lines[i - 1].ty + GAP : PY0 + 34);
   for (let i = lines.length - 1; i >= 0; i--) lines[i].ty = Math.min(lines[i].ty, i < lines.length - 1 ? lines[i + 1].ty - GAP : PY1 - 34);
   for (const l of lines) {
-    add(`<line x1="${X0}" x2="${X1}" y1="${l.y}" y2="${l.y}" stroke="${l.col}" stroke-width="2.5" stroke-dasharray="${l.key === '진입 관심가' ? '0' : '10 6'}"/>`);
+    add(`<line x1="${X0}" x2="${X1}" y1="${l.y}" y2="${l.y}" stroke="${l.col}" stroke-width="2.5" stroke-dasharray="${l.key === '진입 관심가' || l.key === '진입가' ? '0' : '10 6'}"/>`);
     add(`<line x1="${X1}" x2="${XT}" y1="${l.y}" y2="${l.ty}" stroke="${l.col}" stroke-width="1.5"/>`);
     add(`<rect x="${XT}" y="${l.ty - 33}" width="${W - XT - 14}" height="66" rx="10" fill="${C.bg}" stroke="${l.col}" stroke-width="2"/>`);
     add(`<text x="${XT + 12}" y="${l.ty - 6}" font-size="20" fill="${l.col}">${esc(l.key)}</text>`);
@@ -120,16 +137,17 @@ export function buildSignalSvg(symbol, ev, c15, opts = {}) {
 
   // 진입 근거 3줄
   add(`<text x="${X0}" y="1176" font-size="30" font-weight="700" fill="${C.text}">진입 근거</text>`);
-  reasonRows(ev).forEach((r, i) => {
+  (S ? S.reasons.map(v => ({ k: null, v })) : reasonRows(ev)).forEach((r, i) => {
     const yy = 1190 + i * 82;
     add(`<rect x="${X0}" y="${yy}" width="${W - 2 * X0}" height="68" rx="14" fill="${C.panel}" stroke="${C.grid}"/>`);
     add(`<rect x="${X0}" y="${yy}" width="8" height="68" rx="4" fill="${accent}"/>`);
+    if (r.k === null) { add(`<text x="${X0 + 28}" y="${yy + 45}" font-size="30" fill="${C.text}">${esc(r.v)}</text>`); return; }
     add(`<text x="${X0 + 28}" y="${yy + 43}" font-size="26" font-weight="700" fill="${accent}">${esc(r.k)}</text>`);
     add(`<text x="${X0 + 220}" y="${yy + 43}" font-size="26" fill="${C.text}">${esc(r.v)}</text>`);
   });
   // 위험·무효화·면책
   add(`<text x="${X0}" y="1472" font-size="24" fill="${C.text}">무효화: 15분 종가 ${esc(f(ev.stop))} ${L ? '하향' : '상향'} 이탈 또는 유효시간 경과</text>`);
-  add(`<text x="${X0}" y="1512" font-size="21" fill="${C.muted}">판단 보조용 · 주문 권고 아님 · 백테스트로 우위 미검증 · 왕복 비용 ${ev.costPct.toFixed(2)}% 가정</text>`);
+  add(`<text x="${X0}" y="1512" font-size="21" fill="${C.muted}">${S ? '모의매매 · 미검증 전략 · ' : ''}판단 보조용 · 주문 권고 아님${S ? '' : ' · 백테스트로 우위 미검증'} · 왕복 비용 ${ev.costPct.toFixed(2)}% 가정</text>`);
   if (opts.test) {
     add(`<rect x="0" y="0" width="${W}" height="28" fill="#b91c1c"/><text x="${W / 2}" y="22" font-size="21" font-weight="700" text-anchor="middle" fill="#ffffff">${esc(TEST_BANNER)}</text>`);
     add(`<text x="${(X0 + X1) / 2}" y="${(PY0 + PY1) / 2}" font-size="60" font-weight="700" text-anchor="middle" fill="#ffffff" fill-opacity="0.14" transform="rotate(-24 ${(X0 + X1) / 2} ${(PY0 + PY1) / 2})">${esc(TEST_BANNER)}</text>`);
