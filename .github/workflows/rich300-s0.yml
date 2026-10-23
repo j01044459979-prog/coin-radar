@@ -1,0 +1,29 @@
+name: rich300-s0
+# RICH 300 S0 실측(일회용). 개발 브랜치 전용·읽기 전용·스케줄 없음·radar와 무관. 시험용 Apps Script 배포 URL(Secret RICH300_S0_API_URL)에만 요청한다.
+# Secret이 없으면 아무것도 하지 않고 성공 종료한다. 로그에는 URL·본문을 출력하지 않고 집계 결과만 남긴다.
+on:
+  push:
+    branches: [feature/rich300-journal]
+    paths: ['.github/workflows/rich300-s0.yml', 'rich300/s0/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rich300-s0
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/feature/rich300-journal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Probe tests (offline)
+        run: node --test rich300/test/*.test.mjs
+      - name: S0 probe against test deployment
+        env:
+          RICH300_S0_API_URL: ${{ secrets.RICH300_S0_API_URL }}
+        run: node rich300/s0/probe.mjs
