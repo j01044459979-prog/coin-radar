@@ -545,6 +545,60 @@ function findWiredCol_(sh){
 }
 
 
+/*
+ * 보험·필수팩·동판 관리 열 (읽기 전용)
+ * 1~9행 헤더 글자가 정확히 '보험' / '필수팩' / '동판'인 열 (실제 장표: AO / AP / AQ, 8행)
+ * 항목마다 1개 열일 때만 사용, 없거나 여러 개면 그 항목은 0 (화면 표시·저장 안 함)
+ */
+var ADDON_FIELDS_=[
+  {key:'insurance', label:'보험'},
+  {key:'addon',     label:'필수팩'},
+  {key:'wired',     label:'동판'}
+];
+
+var CHANGE_LOG_SHEET_='무선_변경기록';
+
+var CHANGE_LOG_HEADERS_=[
+  '변경일시','변경자','장표','행','고객명','CTN','항목','열','이전값','수정값'
+];
+
+function findAddonCols_(sh){
+
+  var head=
+    sh.getRange(1,1,9,44)
+    .getDisplayValues();
+
+  var out={};
+
+  ADDON_FIELDS_.forEach(
+    function(f){
+
+      var hits=[];
+
+      for(var c=1;c<=44;c++){
+
+        if(
+          head.some(
+            function(r){
+              return norm(r[c-1])===norm(f.label);
+            }
+          )
+        ){
+          hits.push(c);
+        }
+      }
+
+      out[f.key]=
+        hits.length===1
+          ?hits[0]
+          :0;
+    }
+  );
+
+  return out;
+}
+
+
 /* =========================================================
    월 장표 읽기
 ========================================================= */
@@ -601,6 +655,9 @@ function readCases_(
 
       var benefitCol=
         findBenefitCol_(sh);
+
+      var addonCols=
+        findAddonCols_(sh);
 
       if(!benefitCol){
 
@@ -986,7 +1043,31 @@ function readCases_(
             benefitSecured:
               benefitCol
                 ?amount(r[benefitCol-1])
-                :0
+                :0,
+
+
+            /*
+             * 보험·필수팩·동판 원래 값 그대로 (화면 관리용, 집계에는 사용 안 함)
+             * 열을 확인하지 못한 항목은 null
+             */
+
+            addons:
+              ADDON_FIELDS_.reduce(
+                function(o,f){
+
+                  o[f.key]=
+                    addonCols[f.key]
+                      ?String(
+                        safeCell(
+                          r[addonCols[f.key]-1]
+                        )
+                      ).trim()
+                      :null;
+
+                  return o;
+                },
+                {}
+              )
           });
         }
       );
@@ -4245,6 +4326,273 @@ function saveCaseRecord_(x){
 
       data:
         x
+    };
+
+  }finally{
+
+    lock.releaseLock();
+  }
+}
+
+
+/* =========================================================
+   보험·필수팩·동판 관리 저장
+   x = {month, row, name, phone, field, value, expected, by}
+   - 행 번호는 참고만: 고객명+CTN이 그 행과 일치하는지 다시 확인하고,
+     다르면(정렬 등으로 이동) 장표 전체에서 같은 고객을 찾아 1건일 때만 저장
+   - expected(화면에서 본 값)와 현재 셀 값이 다르면 덮어쓰지 않음
+   - 변경 내역은 '무선_변경기록' 시트에 남김 (처음 저장할 때 생성)
+========================================================= */
+
+function addonValue_(v){
+
+  var s=
+    String(v==null?'':v)
+    .replace(/[\r\n\t]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+
+  if(/^o$/i.test(s)) return 'O';
+  if(/^x$/i.test(s)) return 'X';
+
+  if(!s){
+    throw new Error('값을 선택하거나 입력해주세요.');
+  }
+
+  if(s.length>30){
+    throw new Error('특이사항은 30자 이내로 입력해주세요.');
+  }
+
+  if(/^[=+\-@]/.test(s)){
+    throw new Error('특이사항은 = + - @ 로 시작할 수 없습니다.');
+  }
+
+  return s;
+}
+
+function saveCaseAddon(x){
+
+  x=x||{};
+
+  var field=
+    ADDON_FIELDS_.filter(
+      function(f){
+        return f.key===x.field;
+      }
+    )[0];
+
+  if(!field){
+    throw new Error('변경할 항목을 확인할 수 없습니다.');
+  }
+
+  var by=
+    String(x.by||'')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,20);
+
+  if(!by){
+    throw new Error('변경자를 선택해주세요.');
+  }
+
+  var value=
+    addonValue_(x.value);
+
+  var tel=
+    phone(x.phone);
+
+  var name=
+    String(x.name||'').trim();
+
+  if(
+    !name||
+    !/^01\d{8,9}$/.test(tel)
+  ){
+    throw new Error('고객 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.');
+  }
+
+  var lock=
+    LockService.getScriptLock();
+
+  if(!lock.tryLock(20000)){
+    throw new Error('다른 저장이 진행 중입니다. 잠시 후 다시 시도해주세요.');
+  }
+
+  try{
+
+    var ss=
+      SpreadsheetApp.openById(
+        SPREADSHEET_ID
+      );
+
+    var target=
+      getMonthlySheets_(ss)
+      .filter(
+        function(info){
+          return info.key===String(x.month||'');
+        }
+      )[0];
+
+    if(!target){
+      throw new Error('해당 월 장표를 찾지 못했습니다.');
+    }
+
+    var sh=
+      target.sh;
+
+    var col=
+      findAddonCols_(sh)[field.key];
+
+    if(!col){
+      throw new Error(
+        target.title+
+        " 장표에서 '"+field.label+"' 헤더 열을 확인하지 못했습니다. 저장하지 않았습니다."
+      );
+    }
+
+    var last=
+      sh.getLastRow();
+
+    var same=
+      function(v){
+        return(
+          String(safeCell(v[0])).trim()===name&&
+          phone(v[1])===tel
+        );
+      };
+
+    var row=
+      Number(x.row);
+
+    var moved=false;
+
+    if(
+      !(
+        row>=10&&
+        row<=last&&
+        same(
+          sh.getRange(row,5,1,2)
+          .getValues()[0]
+        )
+      )
+    ){
+
+      var ids=
+        last>=10
+          ?sh.getRange(10,5,last-9,2).getValues()
+          :[];
+
+      var hits=[];
+
+      ids.forEach(
+        function(v,i){
+          if(same(v)) hits.push(10+i);
+        }
+      );
+
+      if(hits.length!==1){
+        throw new Error(
+          hits.length
+            ?'같은 고객이 장표에 여러 행 있습니다. 장표에서 직접 확인해주세요.'
+            :'장표에서 고객 행을 찾지 못했습니다. 새로고침 후 다시 시도해주세요.'
+        );
+      }
+
+      row=hits[0];
+      moved=true;
+    }
+
+    var cell=
+      sh.getRange(row,col);
+
+    var before=
+      String(
+        safeCell(
+          cell.getValue()
+        )
+      ).trim();
+
+    if(
+      x.expected!==undefined&&
+      x.expected!==null&&
+      String(x.expected).trim()!==before
+    ){
+      throw new Error(
+        '다른 곳에서 먼저 값이 바뀌었습니다 (현재: '+
+        (before||'빈칸')+
+        '). 새로고침 후 다시 확인해주세요.'
+      );
+    }
+
+    var letter=
+      sh.getRange(row,col)
+      .getA1Notation()
+      .replace(/\d+/,'');
+
+    if(before===value){
+      return{
+        ok:true,
+        unchanged:true,
+        row:row,
+        moved:moved,
+        column:letter,
+        before:before,
+        value:value
+      };
+    }
+
+    cell.setValue(value);
+
+    var log=
+      ss.getSheetByName(
+        CHANGE_LOG_SHEET_
+      );
+
+    if(!log){
+
+      log=
+        ss.insertSheet(
+          CHANGE_LOG_SHEET_
+        );
+
+      log.getRange(
+        1,1,1,
+        CHANGE_LOG_HEADERS_.length
+      )
+      .setValues([
+        CHANGE_LOG_HEADERS_
+      ]);
+
+      log.setFrozenRows(1);
+    }
+
+    var logRow=
+      Math.max(log.getLastRow(),1)+1;
+
+    log.getRange(logRow,1,1,CHANGE_LOG_HEADERS_.length)
+    .setNumberFormat('@')
+    .setValues([[
+      Utilities.formatDate(new Date(),TZ,'yyyy-MM-dd HH:mm:ss'),
+      by,
+      target.title,
+      String(row),
+      name,
+      tel,
+      field.label,
+      letter,
+      before,
+      value
+    ]]);
+
+    SpreadsheetApp.flush();
+
+    return{
+      ok:true,
+      row:row,
+      moved:moved,
+      column:letter,
+      before:before,
+      value:value
     };
 
   }finally{

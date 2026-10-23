@@ -323,6 +323,30 @@
       gap:12px;
     }
 
+    .case-tools{ display:grid; grid-template-columns:1fr; gap:8px; margin:-4px 0 12px; }
+    .case-tools input, .case-tools select{ width:100%; min-width:0; height:44px; border:1px solid #d1d5db; border-radius:12px; background:#fff; padding:0 12px; font-size:15px; }
+    .addon-row{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin-top:10px; }
+    .addon-chip{ min-width:0; min-height:48px; border:1px solid #d1d5db; border-radius:12px; background:#fff; padding:4px 6px; text-align:center; line-height:1.25; }
+    .addon-chip .k{ display:block; font-size:11px; font-weight:800; color:#6b7280; }
+    .addon-chip .v{ display:block; font-size:14px; font-weight:900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .addon-chip.st-o{ border-color:#16a34a; background:#f0fdf4; }
+    .addon-chip.st-o .v{ color:#15803d; }
+    .addon-chip.st-x .v{ color:#6b7280; }
+    .addon-chip.st-etc{ border-color:#f59e0b; background:#fffbeb; }
+    .addon-chip.st-etc .v{ color:#b45309; }
+    .addon-chip.st-none .v{ color:#9ca3af; }
+    .addon-chip:disabled{ opacity:.45; }
+    .addon-editor{ margin-top:8px; padding:12px; border-radius:14px; background:#f8fafc; border:1px solid #e5e7eb; }
+    .addon-editor .ae-title{ font-size:13px; font-weight:800; color:#374151; margin-bottom:8px; overflow-wrap:anywhere; }
+    .addon-editor .ae-btns{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .addon-editor button{ min-height:46px; border-radius:12px; border:1px solid #d1d5db; background:#fff; font-size:15px; font-weight:900; }
+    .addon-editor .ae-o{ border-color:#16a34a; color:#15803d; }
+    .addon-editor .ae-etc{ display:flex; gap:8px; margin-top:8px; }
+    .addon-editor .ae-etc input{ flex:1; min-width:0; height:46px; border:1px solid #d1d5db; border-radius:12px; padding:0 10px; font-size:15px; }
+    .addon-editor .ae-etc button{ flex:0 0 auto; padding:0 12px; }
+    #caseList .case-card, #caseList .case-head{ min-width:0; max-width:100%; }
+    .addon-editor .ae-close{ width:100%; margin-top:8px; min-height:40px; font-weight:700; color:#6b7280; }
+
     .case-card{
       background:#fff;
       border:1px solid #e5e7eb;
@@ -1091,6 +1115,13 @@
         </option>
       </select>
 
+    </div>
+
+    <div class="case-tools">
+      <input id="caseSearch" type="search" placeholder="고객명 또는 번호 검색" autocomplete="off" oninput="renderCases()">
+      <select id="addonBy" onchange="saveAddonBy()">
+        <option value="">변경자 선택 (보험·필수팩·동판 수정 시)</option>
+      </select>
     </div>
 
     <div
@@ -2019,6 +2050,144 @@ function miniStat(k,v){
    예산관리
 ========================= */
 
+/* =========================
+   보험·필수팩·동판 관리 (장표 AO·AP·AQ, 헤더로 확인한 열)
+   O = 가입, X = 미가입, 그 외 글자(1달·약동 등)는 특이사항으로 그대로 보존
+========================= */
+
+const ADDON_FIELDS=[
+  ['insurance','보험'],
+  ['addon','필수팩'],
+  ['wired','동판']
+];
+let ADDON_OPEN='';
+let ADDON_SAVING=false;
+
+function caseMatches(c){
+  const q=(document.getElementById('caseSearch')||{value:''}).value.trim();
+  if(!q) return true;
+  const qd=q.replace(/\D/g,'');
+  return String(c.name||'').includes(q)||(qd.length>=3&&String(c.phone||'').includes(qd));
+}
+
+function addonState(v){
+  const s=String(v==null?'':v).trim();
+  if(/^o$/i.test(s)) return {cls:'st-o',text:'O 가입'};
+  if(/^x$/i.test(s)) return {cls:'st-x',text:'X 미가입'};
+  if(!s) return {cls:'st-none',text:'미입력'};
+  return {cls:'st-etc',text:s};
+}
+
+function caseByKey(k){
+  return (DATA.cases||[]).find(c=>c.key===k);
+}
+
+function renderAddonRow(c){
+  const a=c.addons||{};
+  const k=esc(c.key);
+  const open=ADDON_OPEN.split('|f|');
+  return`
+    <div class="addon-row">
+      ${ADDON_FIELDS.map(([f,label])=>{
+        const ok=a[f]!==null&&a[f]!==undefined;
+        const st=addonState(a[f]);
+        return`<button type="button" class="addon-chip ${ok?st.cls:''}" ${ok?'':'disabled'} data-key="${k}" data-field="${f}" onclick="openAddon(this)"><span class="k">${label}</span><span class="v">${ok?esc(st.text):'열 확인 불가'}</span></button>`;
+      }).join('')}
+    </div>
+    ${ADDON_OPEN&&open[0]===c.key?renderAddonEditor(c,open[1]):''}
+  `;
+}
+
+function renderAddonEditor(c,f){
+  const label=(ADDON_FIELDS.find(x=>x[0]===f)||[])[1];
+  const cur=String((c.addons||{})[f]??'').trim();
+  const opts=[...new Set((DATA.cases||[]).map(x=>String((x.addons||{})[f]??'').trim()).filter(v=>v&&!/^[ox]$/i.test(v)))];
+  const k=esc(c.key);
+  return`
+    <div class="addon-editor">
+      <div class="ae-title">${esc(label)} · 현재: ${esc(cur||'미입력')}</div>
+      <div class="ae-btns">
+        <button type="button" class="ae-o" data-key="${k}" data-field="${f}" data-value="O" onclick="saveAddonBtn(this)">O 가입</button>
+        <button type="button" class="ae-x" data-key="${k}" data-field="${f}" data-value="X" onclick="saveAddonBtn(this)">X 미가입</button>
+      </div>
+      <div class="ae-etc">
+        <input id="addonEtc" list="addonList" maxlength="30" placeholder="특이사항 (예: 1달)" value="${addonState(cur).cls==='st-etc'?esc(cur):''}">
+        <datalist id="addonList">${opts.map(v=>`<option value="${esc(v)}">`).join('')}</datalist>
+        <button type="button" data-key="${k}" data-field="${f}" onclick="saveAddonBtn(this,true)">저장</button>
+      </div>
+      <button type="button" class="ae-close" onclick="closeAddon()">닫기</button>
+    </div>
+  `;
+}
+
+function openAddon(btn){
+  if(ADDON_SAVING) return;
+  const id=btn.dataset.key+'|f|'+btn.dataset.field;
+  ADDON_OPEN=ADDON_OPEN===id?'':id;
+  renderCases();
+}
+
+function closeAddon(){
+  ADDON_OPEN='';
+  renderCases();
+}
+
+function renderAddonBy(){
+  const el=document.getElementById('addonBy');
+  if(!el) return;
+  let saved='';
+  try{ saved=localStorage.getItem('wl_addon_by')||''; }catch(e){}
+  const cur=el.value||saved;
+  const staff=[...new Set(['전명석',...(DATA.cases||[]).map(x=>x.staff).filter(s=>s&&s!=='미지정')])].sort((a,b)=>a.localeCompare(b,'ko'));
+  el.innerHTML='<option value="">변경자 선택 (보험·필수팩·동판 수정 시)</option>'+staff.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  if(staff.includes(cur)) el.value=cur;
+}
+
+function saveAddonBy(){
+  try{ localStorage.setItem('wl_addon_by',document.getElementById('addonBy').value); }catch(e){}
+}
+
+function saveAddonBtn(btn,etc){
+  saveAddon(btn.dataset.key,btn.dataset.field,etc?document.getElementById('addonEtc').value:btn.dataset.value);
+}
+
+function saveAddon(key,f,raw){
+  if(ADDON_SAVING) return;
+  const c=caseByKey(key);
+  if(!c) return;
+  const by=document.getElementById('addonBy').value;
+  if(!by){
+    toast('변경자를 먼저 선택해주세요.');
+    document.getElementById('addonBy').focus();
+    return;
+  }
+  const value=String(raw||'').trim();
+  if(!value){
+    toast('특이사항을 입력해주세요.');
+    return;
+  }
+  const label=(ADDON_FIELDS.find(x=>x[0]===f)||[])[1];
+  const cur=String((c.addons||{})[f]??'').trim();
+  if(addonState(cur).cls==='st-etc'&&cur!==value&&!confirm(`${c.name} ${label}: 기존 '${cur}' 값을 '${value}'(으)로 바꿀까요?`)) return;
+  ADDON_SAVING=true;
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(r=>{
+      ADDON_SAVING=false;
+      showLoading(false);
+      c.addons=Object.assign({},c.addons,{[f]:r.value});
+      if(r.moved) c.row=r.row;
+      ADDON_OPEN='';
+      renderCases();
+      toast(r.unchanged?`${label} 변경 없음 (${r.value})`:`${c.name} ${label} '${r.value}' 저장 (${r.column}${r.row})`);
+    })
+    .withFailureHandler(e=>{
+      ADDON_SAVING=false;
+      fail(e);
+    })
+    .saveCaseAddon({month:c.month,row:c.row,name:c.name,phone:c.phone,field:f,value:value,expected:cur,by:by});
+}
+
 function renderCases(){
 
   const staff=
@@ -2032,7 +2201,10 @@ function renderCases(){
         c=>
           !staff||
           c.staff===staff
-      );
+      )
+      .filter(c=>caseMatches(c));
+
+  renderAddonBy();
 
   const el=
     document.getElementById(
@@ -2187,6 +2359,8 @@ function renderCases(){
                   </div>
 
                 </div>
+
+                ${renderAddonRow(c)}
 
               </div>
 
