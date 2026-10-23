@@ -134,7 +134,7 @@ png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, �
 });
 test('글꼴 부분집합이 모든 소스 한글·기호를 포함한다(차트 글자 깨짐 방지)', () => {
   const charset = new Set(readFileSync(new URL('../fonts/charset.txt', import.meta.url), 'utf8').trim());
-  const files = [...readdirSync(new URL('..', import.meta.url)).filter(f => f.endsWith('.mjs') && f !== 'probe-exchanges.mjs'), 'signal/chart.mjs'];
+  const files = [...readdirSync(new URL('..', import.meta.url)).filter(f => f.endsWith('.mjs') && f !== 'probe-exchanges.mjs'), 'signal/chart.mjs', 'signal/card.mjs'];
   const isEmoji = cp => (cp >= 0x2300 && cp <= 0x23ff) || (cp >= 0x2600 && cp <= 0x27bf) || (cp >= 0xfe00 && cp <= 0xfe0f) || cp >= 0x1f000;   // Telegram 텍스트 전용 이모지는 차트에 그리지 않음
   for (const f of files) {
     for (const ch of readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')) {
