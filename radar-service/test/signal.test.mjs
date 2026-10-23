@@ -253,7 +253,7 @@ test('운영 파일: radar.yml의 스케줄·권한·동시성은 그대로이�
   assert.ok(!/RADAR_OPPORTUNITY_(TOP|MIN_STAGE|MAX_PER_HOUR|MAX_PER_DAY|FIRST_RUN): .*vars\.RADAR_SIGNAL/.test(yml));
   const run = readFileSync(new URL('../run.mjs', import.meta.url), 'utf8');
   assert.match(run, /const signal = options => runSignalAfterCycle\(\{ state, save, env: process\.env, \.\.\.options \}\)\.catch\(\(\) => null\);/); assert.equal((run.match(/await signal\(/g) ?? []).length, 2);
-  assert.ok(run.indexOf('await opportunity({ send });\n    await signal({ send });') > 0, '기회 레이더 뒤에서만 호출');
+  assert.ok(run.indexOf('await opportunity({ send });\n    await signal({ send, sendPhoto });') > 0, '기회 레이더 뒤에서만 호출');
 });
 test('주문·계정 API 흔적이 없다: 신호 모듈은 공개 시세 GET과 Telegram 전송만 사용', () => {
   const dir = new URL('../signal/', import.meta.url), files = readdirSync(dir).filter(f => f.endsWith('.mjs'));
