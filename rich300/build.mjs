@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const ENGINE_MODULES = ['decimal', 'time', 'compound', 'dedupe', 'pnl', 'risk', 'ledger'];
+export const ENGINE_MODULES = ['decimal', 'time', 'compound', 'dedupe', 'pnl', 'risk', 'ledger', 'schema', 'store'];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 
 export function stripModule(src, name) {
@@ -20,13 +20,20 @@ export function topLevelNames(code) {
   const names = []; const re = /^(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm; let m;
   while ((m = re.exec(code))) names.push(m[1]); return names;
 }
+export function exportedNames(src) {
+  const names = []; const re = /^export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm; let m;
+  while ((m = re.exec(src))) names.push(m[1]); return names;
+}
 export function buildEngine() {
-  const seen = new Map(), parts = [`// RICH 300 engine bundle — 자동 생성 파일(rich300/build.mjs). 직접 수정하지 마세요.\n`];
+  const seen = new Map(), exported = [], parts = [`// RICH 300 engine bundle — 자동 생성 파일(rich300/build.mjs). 직접 수정하지 마세요.\n`];
   for (const name of ENGINE_MODULES) {
-    const code = stripModule(readFileSync(libUrl(name), 'utf8'), name);
+    const raw = readFileSync(libUrl(name), 'utf8'); exported.push(...exportedNames(raw));
+    const code = stripModule(raw, name);
     for (const n of topLevelNames(code)) { if (seen.has(n)) throw new Error(`최상위 이름 충돌: ${n} (${seen.get(n)} / ${name})`); seen.set(n, name); }
     parts.push(`// ── ${name}.mjs ──\n${code}`);
   }
+  // 최상위 const는 vm/google.script.run에서 전역 속성으로 보이지 않으므로, 내보낸 모든 이름을 한 객체로도 제공한다.
+  parts.push(`// ── exports ──\nvar RICH300_ENGINE = { ${exported.join(', ')} };\n`);
   return parts.join('\n');
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

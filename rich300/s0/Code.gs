@@ -59,7 +59,8 @@ function s0Compat() {
 }
 /** 엔진 번들(Engine.gs)을 같은 프로젝트에 붙여 넣은 경우: 1년 치 일별 계산 시간을 잰다 */
 function s0EngineBench() {
-  if (typeof ledgerBuildDaily !== 'function') return { engine: false };
+  if (typeof RICH300_ENGINE === 'undefined') return { engine: false };
+  var ledgerBuildDaily = RICH300_ENGINE.ledgerBuildDaily, addDays = RICH300_ENGINE.addDays, dayStartMs = RICH300_ENGINE.dayStartMs;
   var fills = [], eq = [], start = '2026-01-01', i, k, base, day, t0 = Date.now(), r;
   for (i = 0; i < 365; i++) {
     day = addDays(start, i); base = dayStartMs(day);

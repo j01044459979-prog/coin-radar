@@ -16,8 +16,8 @@ const ctxFor = () => { const ctx = { console }; vm.createContext(ctx); vm.runInC
 test('번들: import/export/require 없음, 최상위 이름 중복 없음, 모든 모듈 포함', () => {
   assert.ok(!/^\s*(import|export)\s/m.test(code)); assert.ok(!/\brequire\s*\(/.test(code));
   const names = topLevelNames(code); assert.equal(new Set(names).size, names.length);
-  for (const n of ['dec', 'ledgerBuildDaily', 'pnlComputeTrade', 'compoundNextTarget', 'dedupeAppend', 'kstDayOf', 'riskTrade']) assert.ok(names.includes(n), n);
-  assert.equal(ENGINE_MODULES.length, 7); assert.doesNotThrow(() => new vm.Script(code));
+  for (const n of ['dec', 'ledgerBuildDaily', 'pnlComputeTrade', 'compoundNextTarget', 'dedupeAppend', 'kstDayOf', 'riskTrade', 'storeCreate', 'storeBuildLedger', 'schemaDecString']) assert.ok(names.includes(n), n);
+  assert.equal(ENGINE_MODULES.length, 9); assert.doesNotThrow(() => new vm.Script(code)); assert.ok(/var RICH300_ENGINE = \{[^}]*\bstoreCreate\b/.test(code));
 });
 test('번들 변환 규칙: 금지 구문 거부(export default, export { }, 동적 import, process)', () => {
   assert.throws(() => stripModule('export default 1;', 'x'), /export default/); assert.throws(() => stripModule('const a=1;\nexport { a };', 'x'), /export \{/);
@@ -39,4 +39,13 @@ test('패리티: 번들(전역 스코프, 모듈 없음)과 ESM이 같은 입력
   assert.equal(ser(api.riskTrade(r)), ser(riskTrade(r)));
   const c = { startMicro: 300000000n, startDay: D1, schedule: input.challenge.rateSchedule, throughDay: '2027-01-01' };
   assert.equal(ser(api.compoundIdealSeries(c)), ser(compoundIdealSeries(c)));
+});
+
+import { readFileSync } from 'node:fs';
+test('S0용 Engine.gs는 현재 엔진 번들과 같다(S0 종료 시 함께 삭제). 다르면: node rich300/build.mjs rich300/s0/Engine.gs', () => {
+  assert.equal(readFileSync(new URL('../s0/Engine.gs', import.meta.url), 'utf8'), buildEngine());
+});
+test('S0 엔진 벤치(s0EngineBench): 번들을 붙인 프로젝트를 흉내 낸 vm에서 1년 일별 계산이 끝까지 실행된다', () => {
+  const ctx = { console, Date }; vm.createContext(ctx); vm.runInContext(buildEngine() + '\n' + readFileSync(new URL('../s0/Code.gs', import.meta.url), 'utf8').replace(/var S0_TEST_KEY[^\n]*\n/, "var S0_TEST_KEY = 'x';\n"), ctx);
+  const r = JSON.parse(JSON.stringify(ctx.s0EngineBench())); assert.equal(r.engine, true); assert.equal(r.days, 365); assert.equal(r.fills, 3285); assert.ok(r.ms < 5000);
 });

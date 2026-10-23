@@ -1,6 +1,6 @@
 // 중복 기록 방지와 수정 이력(추가 전용). 같은 키의 동일 내용은 무시(재전송 안전), 다른 내용은 충돌로 거부한다. 삭제는 없고 취소는 void 리비전이다.
-function dedupeStable(v) { return JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? `${x}n` : x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x)); }
-export const dedupeSame = (a, b) => dedupeStable(a) === dedupeStable(b);
+export function dedupeCanonical(v) { return JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? `${x}n` : x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x)); }
+export const dedupeSame = (a, b) => dedupeCanonical(a) === dedupeCanonical(b);
 export function dedupeAppend(list, rec, keyField) {
   const key = rec?.[keyField];
   if (key === undefined || key === null || key === '') throw new Error(`${keyField} 필요`);
