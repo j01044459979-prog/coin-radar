@@ -118,14 +118,14 @@ if (args.has('--gate')) {
     await save(state);
     console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
     await opportunity({ send });
-    await signal({ send });
+    await signal({ send, sendPhoto });
   } else {
     let stopped = false;
     let timer;
     let wake;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopped = true; clearTimeout(timer); wake?.(); });
     while (!stopped) {
-      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); await signal({ send }); }
+      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); await signal({ send, sendPhoto }); }
       catch { console.error('분석/알림 처리 실패: 다음 주기에 재확인'); }
       // Start shortly after each 5-minute boundary, never overlap cycles.
       if (!stopped) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, 300000 - Date.now() % 300000 + 5000); });

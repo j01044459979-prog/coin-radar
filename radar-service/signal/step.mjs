@@ -13,12 +13,14 @@ import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { candidateMessage, invalidatedMessage, summaryLine } from './message.mjs';
 import { signalTransition } from './transition.mjs';
 import { normalizePaper, paperStep, paperSummary } from './paper.mjs';
+import { renderSignalChart, signalCaption } from './chart.mjs';
 
 export const SETTLE_MS = 20000;            // 15분봉 마감 직후 거래소가 확정할 시간
 export const MAX_ATTEMPTS = 2;             // 같은 메시지를 (전달 여부가 불확실한 채로) 보내 보는 최대 횟수
 export const INFLIGHT_TTL_MS = 3600000;
 export const PRUNE_MS = 7 * 24 * H1;
 export const MAX_MESSAGES_PER_RUN = 6;
+export const CHART_TIMEOUT_MS = 15000;
 class DeadlineError extends Error { constructor() { super('signal deadline passed'); this.code = 'DEADLINE'; } }
 
 const fresh = () => ({ v: 1, coins: {}, slot: null, retryAt: 0, failures: 0, lastError: null, inflight: null, daily: {}, health: null });
@@ -48,7 +50,7 @@ export function watchlist(state, sg, now, paper = null) {
   return [...set].sort();
 }
 
-export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, analyze = analyzeCoin, paperRunner = paperStep, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
+export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode;
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
@@ -134,7 +136,29 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   attach();
   for (const [sym, next] of Object.entries(commitNow)) sg.coins[sym] = next;
   for (const [sym, c] of Object.entries(sg.coins)) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.coins[sym];
+  // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).
+  if (sendPhoto) {
+    for (const x of msgs) {
+      if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
+      let timer;
+      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev) }; }
+      catch (error) { x.m.chartError = String(error.message).slice(0, 80); base.chartFailed = (base.chartFailed ?? 0) + 1; }
+      finally { clearTimeout(timer); }
+    }
+  }
   const guardedSend = async (text, o) => { if (expired('beforeRequest')) throw new DeadlineError(); return send(text, o); };
+  const guardedPhoto = async (png, caption) => { if (expired('beforeRequest')) throw new DeadlineError(); return sendPhoto(png, caption); };
+  // 사진 우선, 같은 신호를 이미 한 번 시도했거나(전달 불확실 재시도) 사진이 거절(HTTP 4xx)되면 텍스트로 대체한다. 429·5xx·네트워크 오류는 장부 규칙대로 재시도한다.
+  async function dispatch(part, attempts) {
+    if (!part.photo || !sendPhoto || attempts > 1) return sendText(guardedSend, part);
+    try { await guardedPhoto(part.photo.png, part.photo.caption); base.photoSent = (base.photoSent ?? 0) + 1; }
+    catch (error) {
+      const rejected = error.status >= 400 && error.status < 500 && !RESTRICTED.includes(error.status);
+      if (!rejected) throw error;
+      base.photoFallback = (base.photoFallback ?? 0) + 1;
+      return sendText(guardedSend, part);
+    }
+  }
   let sendFail = null, timedOut = false;
   async function deliver(part, key, onDelivered) {
     if (expired('beforeSend')) return 'deadline';
@@ -142,7 +166,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     if (attempts > MAX_ATTEMPTS) { sg.inflight = null; onDelivered(true); dy.assumed += 1; return (await safeSave()) ? 'assumed' : 'nosave'; }   // 두 번 시도했는데 확정되지 않음: 전달된 것으로 간주(무한 반복 방지)
     sg.inflight = { key, attempts, at: now };
     if (!(await safeSave())) return 'nosave';                                                  // 장부를 쓸 수 없으면 보내지 않는다
-    try { await sendText(guardedSend, part); }
+    try { await dispatch(part, attempts); }
     catch (error) {
       if (error.code === 'DEADLINE') { sg.inflight = null; return 'deadline'; }
       sendFail = error;

@@ -9,12 +9,12 @@ const W = 1200, H = 940;
 export const LAYOUT = { X0: 28, X1: 848, XP0: 860, XP1: 952, XT: 962, Y0: 150, Y1: 622, VY0: 640, VY1: 760, TIME_Y: 788, W, H };
 const { X0, X1, XP0, XP1, XT, Y0, Y1, VY0, VY1, TIME_Y } = LAYOUT;
 const FONT = 'Noto Sans KR';
-const C = { bg: '#0e1621', panel: '#131d2a', grid: '#1e2b3a', text: '#e8edf3', muted: '#93a1b3', up: '#2dd4bf', down: '#fb7185',
+export const C = { bg: '#0e1621', panel: '#131d2a', grid: '#1e2b3a', text: '#e8edf3', muted: '#93a1b3', up: '#2dd4bf', down: '#fb7185',
   entry: '#fbbf24', stop: '#ef4444', tp: '#4ade80', now: '#60a5fa', zone: '#fbbf24', struct: '#a78bfa', poc: '#c084fc', prof: '#8da2c0' };
 const TF_NAME = { '5m': '5분', '15m': '15분', '1H': '1시간', '4H': '4시간' };
-const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const kstTime = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(5, 16);
-const kstFull = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
+export const kstFull = n => new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 16);
 export const PROFILE_NOTE = '캔들 거래량 기반 추정 매물대 · 실제 호가 잔량 아님 · POC는 관찰 가격';
 const dirKo = d => (d === 'LONG' ? '롱' : d === 'SHORT' ? '숏' : '시장');
 
@@ -71,7 +71,7 @@ function spreadTags(tags, gap = 32, lo = Y0 + 4, hi = Y1 - 4) {
 export const fmtVol = q => (q >= 1e9 ? `${Math.round(q / 1e8)}억` : q >= 1e8 ? `${(q / 1e8).toFixed(1)}억` : q >= 1e4 ? `${Math.round(q / 1e4)}만` : `${Math.round(q)}`);
 
 // 글자 폭 추정(한글·전각은 1em, 그 외 0.58em): 태그 박스가 글자보다 좁아지지 않게 한다.
-const textW = (str, size) => [...String(str)].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e80 ? size : size * 0.58), 0);
+export const textW = (str, size) => [...String(str)].reduce((w, ch) => w + (ch.codePointAt(0) > 0x2e80 ? size : size * 0.58), 0);
 
 export function buildSvg(spec) {
   const dec = priceDecimals(spec.price), fmt = v => fmtPrice(v, dec); // 가격 표시 자릿수는 자산 가격대에 맞추고 계산값은 바꾸지 않는다
@@ -240,12 +240,12 @@ export function buildSvg(spec) {
 }
 
 // SVG → PNG. 의존성(@resvg/resvg-js)이나 글꼴이 없으면 예외를 던지며, 호출자가 텍스트 전용으로 계속 진행한다.
-export async function renderPng(svg) {
+export async function renderPng(svg, width = W) {
   const { Resvg } = await import('@resvg/resvg-js');
   const font = name => decodeURIComponent(new URL(`./fonts/${name}`, import.meta.url).pathname);
   const resvg = new Resvg(svg, {
     font: { fontFiles: [font('NotoSansKR-Regular.subset.ttf'), font('NotoSansKR-Bold.subset.ttf')], loadSystemFonts: false, defaultFontFamily: FONT },
-    fitTo: { mode: 'width', value: W },
+    fitTo: { mode: 'width', value: width },
   });
   return resvg.render().asPng();
 }
