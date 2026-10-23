@@ -26,4 +26,21 @@ jobs:
       - name: S0 probe against test deployment
         env:
           RICH300_S0_API_URL: ${{ secrets.RICH300_S0_API_URL }}
-        run: node rich300/s0/probe.mjs
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { run } from './rich300/s0/probe.mjs';
+          const r = await run({ url: process.env.RICH300_S0_API_URL });
+          assert.equal(r.skipped, undefined, 'S0 URL must be configured');
+          const c = r.checks;
+          assert.equal(c.signature?.sigOk, true, 'Unicode HMAC');
+          assert.equal(c.signature?.tsOk, true, 'timestamp');
+          assert.equal(c.tamperRejected, true, 'tamper rejection');
+          assert.equal(c.staleTsRejected, true, 'stale timestamp rejection');
+          assert.equal(c.executionsForThreePosts, 3, 'no duplicate POST on redirect');
+          assert.equal(c.lockAndCounter?.lockedCorrectly, true, 'parallel lock/counter');
+          assert.equal(c.appendMsSample?.n, 8, 'authenticated writes');
+          assert.equal(c.postRedirect?.firstStatus, 302);
+          assert.equal(c.postRedirect?.finalStatus, 200);
+          assert.ok(Array.isArray(c.headersVisible?.eventKeys), 'successful handler evidence');
+          JS
