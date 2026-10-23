@@ -188,14 +188,14 @@ test('[3][5] --gate CLI: 캐시 판정 stale이면 quiet 기록, ok면 기록 �
     const dir = mkdtempSync(join(tmpdir(), 'q-')); execFileSync('mkdir', ['-p', join(dir, 's')]);
     writeFileSync(join(dir, 's', 'state.json'), JSON.stringify(preset ?? { lastAttempt: Date.now() - 600000, lastSlot: 1, seq: 3 }));
     const out = join(dir, 'o'); writeFileSync(out, '');
-    execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, RADAR_SOURCE_EVENT: 'cloudflare', RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slotOfTime(Date.now())), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
+    execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'), RADAR_SOURCE_EVENT: 'cloudflare', RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slotOfTime(Date.now())), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
     return JSON.parse(readFileSync(join(dir, 's', 'state.json'), 'utf8'));
   };
   assert.equal(run('stale').quiet.reason, 'cache-stale'); assert.equal(run('ok').quiet, undefined);
   assert.equal(run('unverified').quiet.reason, 'cache-unverified');                                              // lastSlot=1은 현재 슬롯과 이어지지 않음
   assert.equal(run('unverified', { lastAttempt: Date.now() - 300000, lastSlot: slotOfTime(Date.now()) - 1 }).quiet, undefined); // 직전 슬롯과 이어짐 → 진행
   const dir = mkdtempSync(join(tmpdir(), 'cc-')); const out = join(dir, 'o'); writeFileSync(out, '');
-  execFileSync(process.execPath, [new URL('../cache-check.mjs', import.meta.url).pathname], { env: { ...process.env, GITHUB_REF: 'refs/heads/feature/x', GITHUB_OUTPUT: out, GITHUB_REPOSITORY: 'a/b', GITHUB_TOKEN: 'x' }, encoding: 'utf8' });
+  execFileSync(process.execPath, [new URL('../cache-check.mjs', import.meta.url).pathname], { env: { ...process.env, GITHUB_REF: 'refs/heads/feature/x', GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'), GITHUB_REPOSITORY: 'a/b', GITHUB_TOKEN: 'x' }, encoding: 'utf8' });
   assert.match(readFileSync(out, 'utf8'), /status=skipped/);
 });
 test('--gate는 Run 단계가 같은 슬롯을 다시 처리하지 않도록 lastSlot을 쓰는 경로(--once)와 같은 슬롯 규칙을 사용한다', () => {
@@ -254,7 +254,7 @@ test('[A] 토큰은 Authorization 헤더로만 전달되고 출력에 포함되�
 function viaGate({ cacheStatus, preset, source = 'cloudflare', slot }) {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-')); execFileSync('mkdir', ['-p', join(dir, 's')]);
   writeFileSync(join(dir, 's', 'state.json'), JSON.stringify(preset)); const out = join(dir, 'o'); writeFileSync(out, '');
-  execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, RADAR_SOURCE_EVENT: source, RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slot), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
+  execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'), RADAR_SOURCE_EVENT: source, RADAR_SCHEDULER: 'cloudflare', RADAR_SLOT: String(slot), RADAR_CACHE_STATUS: cacheStatus }, encoding: 'utf8' });
   return JSON.parse(readFileSync(join(dir, 's', 'state.json'), 'utf8'));
 }
 const hr = hourOf(T0);

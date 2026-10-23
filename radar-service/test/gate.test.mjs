@@ -47,7 +47,7 @@ test('한 슬롯(5분)에 두 스케줄러가 모두 발화해도 수집은 한 
 // ── CLI(--gate) 통합: 실제 run.mjs와 GITHUB_OUTPUT ──
 const runGate = (dir, env) => {
   const out = join(dir, 'gh_output'); writeFileSync(out, '');
-  const log = execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, ...env }, encoding: 'utf8' });
+  const log = execFileSync(process.execPath, [new URL('../run.mjs', import.meta.url).pathname, '--gate'], { env: { ...process.env, RADAR_STATE_DIR: join(dir, 's'), GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: join(dir, 'summary.md'), ...env }, encoding: 'utf8' });
   return { log, out: readFileSync(out, 'utf8') };
 };
 test('--gate: 상태 없음 → 실행, 최근 시도 → 건너뜀, GITHUB_OUTPUT에 run= 기록', () => {
