@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const ENGINE_MODULES = ['decimal', 'time', 'compound', 'dedupe', 'pnl', 'risk', 'ledger', 'schema', 'store'];
+export const ENGINE_MODULES = ['decimal', 'time', 'compound', 'dedupe', 'pnl', 'risk', 'ledger', 'schema', 'store', 'auth', 'ingest'];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 
 export function stripModule(src, name) {

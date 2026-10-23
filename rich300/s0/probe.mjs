@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 export const TEST_KEY = 's0-throwaway-key-not-a-secret';
 export const sign = (v, ts, nonce, body, key = TEST_KEY) => createHmac('sha256', key).update(`${v}.${ts}.${nonce}.${JSON.stringify(body)}`).digest('hex');
-export const makeBody = (body = { hello: 'rich300' }, ts = Date.now(), nonce = randomUUID()) => JSON.stringify({ v: 1, ts, nonce, body, sig: sign(1, ts, nonce, body) });
+export const makeBody = (body = { hello: 'rich300', note: '한글 확인 💹 é' }, ts = Date.now(), nonce = randomUUID()) => JSON.stringify({ v: 1, ts, nonce, body, sig: sign(1, ts, nonce, body) });
 const stats = a => { const s = [...a].sort((x, y) => x - y), q = p => s[Math.min(s.length - 1, Math.floor(p * s.length))]; return { n: s.length, min: s[0], p50: q(0.5), p90: q(0.9), max: s.at(-1) }; };
 
 // 한 번의 POST를 리다이렉트 수동 처리로 관찰: 1차 응답 상태·Location 유무, 최종 본문

@@ -16,8 +16,8 @@ const ctxFor = () => { const ctx = { console }; vm.createContext(ctx); vm.runInC
 test('번들: import/export/require 없음, 최상위 이름 중복 없음, 모든 모듈 포함', () => {
   assert.ok(!/^\s*(import|export)\s/m.test(code)); assert.ok(!/\brequire\s*\(/.test(code));
   const names = topLevelNames(code); assert.equal(new Set(names).size, names.length);
-  for (const n of ['dec', 'ledgerBuildDaily', 'pnlComputeTrade', 'compoundNextTarget', 'dedupeAppend', 'kstDayOf', 'riskTrade', 'storeCreate', 'storeBuildLedger', 'schemaDecString']) assert.ok(names.includes(n), n);
-  assert.equal(ENGINE_MODULES.length, 9); assert.doesNotThrow(() => new vm.Script(code)); assert.ok(/var RICH300_ENGINE = \{[^}]*\bstoreCreate\b/.test(code));
+  for (const n of ['dec', 'ledgerBuildDaily', 'pnlComputeTrade', 'compoundNextTarget', 'dedupeAppend', 'kstDayOf', 'riskTrade', 'storeCreate', 'storeBuildLedger', 'schemaDecString', 'authVerify', 'ingestHandle']) assert.ok(names.includes(n), n);
+  assert.equal(ENGINE_MODULES.length, 11); assert.doesNotThrow(() => new vm.Script(code)); assert.ok(/var RICH300_ENGINE = \{[^}]*\bstoreCreate\b/.test(code));
 });
 test('번들 변환 규칙: 금지 구문 거부(export default, export { }, 동적 import, process)', () => {
   assert.throws(() => stripModule('export default 1;', 'x'), /export default/); assert.throws(() => stripModule('const a=1;\nexport { a };', 'x'), /export \{/);

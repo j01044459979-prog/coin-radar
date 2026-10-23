@@ -3,23 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { buildEngine } from '../build.mjs';
 
-function fakeSheetsServices() {
-  const book = new Map(); let held = false;
-  const mkSheet = name => ({ name, cells: [], fmt: [], frozen: 0, max: 1000,
-    getLastRow() { return this.cells.length; }, getLastColumn() { return this.cells.reduce((m, r) => Math.max(m, r.length), 0); }, getMaxRows() { return this.max; }, insertRowsAfter(_, n) { this.max += n; }, setFrozenRows(n) { this.frozen = n; },
-    getRange(r, c, nr, nc) { const sh = this; return {
-      setNumberFormat(f) { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) { (sh.fmt[r - 1 + i] ||= [])[c - 1 + j] = f; } return this; },
-      setValues(vals) { vals.forEach((row, i) => row.forEach((v, j) => { const R = r - 1 + i, C = c - 1 + j, text = sh.fmt[R]?.[C] === '@'; (sh.cells[R] ||= [])[C] = text ? String(v) : (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(v) : v); })); return this; },
-      getValues() { const out = []; for (let i = 0; i < nr; i++) { const row = []; for (let j = 0; j < nc; j++) row.push(sh.cells[r - 1 + i]?.[c - 1 + j] ?? ''); out.push(row); } return out; } }; } });
-  const ss = { getSheetByName: n => book.get(n) ?? null, insertSheet: n => { const s = mkSheet(n); book.set(n, s); return s; } };
-  return { book, ctx: {
-    SpreadsheetApp: { openById: () => ss, flush() {} }, LockService: { getScriptLock: () => ({ tryLock: () => { if (held) return false; held = true; return true; }, releaseLock() { held = false; } }) },
-    Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (a, s) => [...createHash('sha256').update(s).digest()].map(b => (b > 127 ? b - 256 : b)) } } };
-}
+import { fakeSheetsServices } from './helpers/gasfakes.mjs';
 const load = () => {
   const svc = fakeSheetsServices(), ctx = { console, Date, ...svc.ctx }; vm.createContext(ctx);
   vm.runInContext(buildEngine() + '\n' + readFileSync(new URL('../gas/Adapters.gs', import.meta.url), 'utf8'), ctx);
