@@ -63,3 +63,13 @@ test('S0 Code.gs: 시험 키는 비밀이 아님을 명시하고, Telegram·토�
   assert.equal(sign(1, 1, 'n', { a: 1 }), createHmac('sha256', 's0-throwaway-key-not-a-secret').update('1.1.n.{"a":1}').digest('hex'));
   assert.ok(makeBody().includes('"sig"'));
 });
+
+test('S0 호환성 프로브(s0Compat): V8 문법·BigInt·SHA-256 검사 함수가 동작하고 기대 항목을 모두 보고한다', async () => {
+  const { createHash } = await import('node:crypto');
+  const gas = loadGas(); gas.ctx.Utilities.DigestAlgorithm = { SHA_256: 'sha256' }; gas.ctx.Utilities.Charset = { UTF_8: 'utf8' };
+  gas.ctx.Utilities.computeDigest = (alg, str) => [...createHash('sha256').update(str).digest()].map(b => (b > 127 ? b - 256 : b));
+  const r = JSON.parse(gas.ctx.doGet({ parameter: { action: 'compat' } }).text);
+  assert.equal(r.bigintLiteralAndPow, '3000000000000000000000000'); assert.equal(r.bigintDivRound, '3,-1'); assert.equal(r.optionalChaining, true); assert.equal(r.nullish, true);
+  assert.equal(r.padEnd, '700'); assert.equal(r.objectFromEntries, '{"a":1}'); assert.equal(r.mapSet, true); assert.equal(r.bigintJsonThrows, 'throws'); assert.equal(r.numberFromBigint, 315000000); assert.equal(r.toFixed12, '0.100000000000');
+  assert.equal(r.sha256Hex, r.expectedSha256Abc); assert.equal(JSON.stringify(gas.ctx.s0EngineBench()), '{"engine":false}');
+});

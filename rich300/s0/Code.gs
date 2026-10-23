@@ -21,6 +21,7 @@ function eq_(a, b) { if (a.length !== b.length) return false; var r = 0; for (va
 /** UI 배포(방문자로 실행) 실측: 방문자 이메일이 보이는가(가정 ③), 시간대, 이벤트 키 */
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  if (p.action === 'compat') return json_(s0Compat());
   if (p.action === 'counter') return json_({ counter: Number(props_().getProperty('S0_COUNTER') || 0) });
   if (p.action === 'log') { var sh = logSheet_(), n = Math.min(sh.getLastRow(), 30); return json_({ rows: n ? sh.getRange(sh.getLastRow() - n + 1, 1, n, 3).getValues() : [] }); }
   var active = '', effective = '';
@@ -41,6 +42,34 @@ function doPost(e) {
     return json_({ ok: true, counter: c, sigOk: sigOk, tsOk: tsOk, eventKeys: Object.keys(e), headerLikeKeys: Object.keys(e).filter(function (k) { return /head/i.test(k); }),
       contentLength: e.contentLength, contentType: e.postData && e.postData.type, queryString: e.queryString || '', paramKeys: Object.keys(e.parameter || {}), appendMs: appendMs, handlerMs: Date.now() - t0 });
   } finally { lock.releaseLock(); }
+}
+
+/** 런타임 호환성 실측(⑥): R2 엔진이 쓰는 문법·기능이 Apps Script V8에서 동작하는가. 문법은 eval로 검사해 미지원이어도 프로젝트 전체가 깨지지 않게 한다. */
+function s0Compat() {
+  var out = {}, t = {
+    bigintLiteralAndPow: '(10n ** 24n * 3n).toString()', bigintDivRound: '(7n / 2n).toString() + "," + (-7n % 2n).toString()', optionalChaining: '({a:{b:1}}).a?.b === 1 && ({}).x?.y === undefined',
+    nullish: '(null ?? 5) === 5', padEnd: '"7".padEnd(3, "0")', objectFromEntries: 'JSON.stringify(Object.fromEntries([["a",1]]))', mapSet: 'new Map([[1,2]]).get(1) === 2 && new Set([1,1]).size === 1',
+    arrayAt: 'typeof [].at', structuredClone: 'typeof structuredClone', bigintJsonThrows: '(function(){ try { JSON.stringify({a:1n}); return "no-throw"; } catch (e) { return "throws"; } })()',
+    numberFromBigint: 'Number(315000000n)', toFixed12: '(0.1).toFixed(12)'
+  };
+  Object.keys(t).forEach(function (k) { try { out[k] = eval(t[k]); } catch (e) { out[k] = 'ERR:' + e.message; } });
+  try { out.sha256Hex = hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'abc', Utilities.Charset.UTF_8)); } catch (e) { out.sha256Hex = 'ERR:' + e.message; }
+  out.expectedSha256Abc = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+  return out;
+}
+/** 엔진 번들(Engine.gs)을 같은 프로젝트에 붙여 넣은 경우: 1년 치 일별 계산 시간을 잰다 */
+function s0EngineBench() {
+  if (typeof RICH300_ENGINE === 'undefined') return { engine: false };
+  var ledgerBuildDaily = RICH300_ENGINE.ledgerBuildDaily, addDays = RICH300_ENGINE.addDays, dayStartMs = RICH300_ENGINE.dayStartMs;
+  var fills = [], eq = [], start = '2026-01-01', i, k, base, day, t0 = Date.now(), r;
+  for (i = 0; i < 365; i++) {
+    day = addDays(start, i); base = dayStartMs(day);
+    for (k = 0; k < 3; k++) { var sid = 'S' + i + '-' + k, f = { origin: 'real', sid: sid, dir: 'LONG', fee: { state: 'entered', amount: '0.1' }, funding: { state: 'missing' } };
+      fills.push(Object.assign({ fillId: sid + 'a', kind: 'entry', at: base + 3600000 * (1 + k), price: '100', qty: '2' }, f), Object.assign({ fillId: sid + 'b', kind: 'reduce', at: base + 3600000 * (2 + k), price: '101.5', qty: '1' }, f), Object.assign({ fillId: sid + 'c', kind: 'close', at: base + 3600000 * (3 + k), price: '102.25', qty: '1' }, f)); }
+    eq.push({ day: day, equity: String(300 + i) });
+  }
+  r = ledgerBuildDaily({ challenge: { startEquity: '300', startDay: start, rateSchedule: [{ from: start, rate: '0.05' }] }, throughDay: addDays(start, 364), fills: fills, equityInputs: eq });
+  return { engine: true, days: r.rows.length, fills: fills.length, ms: Date.now() - t0 };
 }
 
 /** 트리거 실측: 1분 트리거(지연·실행시간)와 매일 0시 트리거(0~1시 창 내 실제 실행 시각) */
