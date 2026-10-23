@@ -106,3 +106,22 @@ test('결정성: 같은 입력이면 항상 같은 BigInt 결과(부동소수 �
   assert.deepEqual(a.rows, b.rows); assert.equal(a.rows.length, 200); assert.ok(a.rows.every((r, i) => i === 0 || r.startMicro === a.rows[i - 1].closeMicro));
   assert.ok(a.rows.every(r => r.pnlMicro === r.closeMicro - r.startMicro - r.cashflowMicro));
 });
+
+test('검토 반영: 범위 밖 입력(시작 전·종료 후 체결/입출금/조정, 범위 밖 평가액)은 조용히 버리지 않고 개수 경고', () => {
+  const edge = dayStartMs(D1);
+  const r = ledgerBuildDaily({ challenge: ch(), throughDay: D2,
+    fills: [fill({ fillId: 'old', sid: 'OLD', at: edge - 1000 }), fill({ fillId: 'late', sid: 'LATE', at: dayStartMs('2026-10-27') })],
+    cashflows: [{ cfId: 'cb', at: edge - 5, amount: '5' }, { cfId: 'ca', at: dayStartMs('2026-10-28'), amount: '5' }],
+    adjustments: [{ adjId: 'ab', at: edge - 5, amount: '1', reason: 'x' }],
+    equityInputs: [{ day: '2026-10-20', equity: '1' }, { day: '2026-10-30', equity: '1' }, { day: D1, equity: '300' }] });
+  const by = Object.fromEntries(r.flags.map(f => [f.type, f.count]));
+  assert.deepEqual(by, { 'fills-before-start': 1, 'fills-after-through': 1, 'cashflows-before-start': 1, 'cashflows-after-through': 1, 'adjustments-before-start': 1, 'equity-outside-range': 2 });
+  assert.equal(r.rows[0].cashflowMicro, 0n); assert.equal(r.rows[0].realizedGrossMicro, 0n);                   // 범위 밖은 계산에 반영되지 않음
+  assert.deepEqual(ledgerBuildDaily({ challenge: ch(), throughDay: D1, equityInputs: [{ day: D1, equity: '300' }] }).flags, []);
+});
+test('성능: 365일·체결 3천 건 전체 재계산이 1초 이내(일별 미결제 상태는 한 번만 훑어 갱신)', () => {
+  const fills = [], eq = []; let d = D1;
+  for (let i = 0; i < 365; i++) { const base = dayStartMs(d); for (let k = 0; k < 3; k++) { const sid = `P${i}-${k}`; fills.push(fill({ fillId: `${sid}a`, sid, at: base + 3600000 * (1 + k), qty: '2' }), fill({ fillId: `${sid}b`, sid, kind: 'reduce', at: base + 3600000 * (2 + k), price: '101', qty: '1' }), fill({ fillId: `${sid}c`, sid, kind: 'close', at: base + 3600000 * (3 + k), price: '102', qty: '1' })); } eq.push({ day: d, equity: String(300 + i) }); d = new Date(Date.parse(d + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10); }
+  const t0 = performance.now(); const r = ledgerBuildDaily({ challenge: ch(), throughDay: d, fills, equityInputs: eq }); const ms = performance.now() - t0;
+  assert.ok(ms < 1000, `${ms}ms`); assert.equal(r.rows.length, 366);
+});

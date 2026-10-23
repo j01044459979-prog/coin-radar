@@ -28,19 +28,34 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
   // opening 포지션 → 시작일 00:00 KST의 기준가 체결(수수료·펀딩 0 입력)
   const startMs = dayStartMs(startDay), openingSids = new Map(), allFills = [...uFills];
   for (const o of openingPositions) { allFills.push({ origin: 'real', fillId: `${o.sid}:opening`, sid: o.sid, kind: 'opening', dir: o.dir, at: startMs, price: o.startMark, qty: o.qty, fee: { state: 'entered', amount: '0' }, funding: { state: 'entered', amount: '0' } }); openingSids.set(o.sid, o); }
-  const usable = allFills.filter(f => f.at >= startMs), trades = pnlComputeAll(usable, {}), flows = pnlDailyFlows(trades);
+  // 범위 밖 입력은 조용히 버리지 않고 경고로 알린다(개수만, 값은 노출하지 않음)
+  const endAll = dayEndMs(throughDay), inputFlags = [], flag = (type, n) => { if (n) inputFlags.push({ type, count: n }); };
+  flag('fills-before-start', uFills.filter(f => f.at < startMs).length); flag('fills-after-through', uFills.filter(f => f.at >= endAll).length);
+  flag('cashflows-before-start', uCash.filter(c => c.at < startMs).length); flag('cashflows-after-through', uCash.filter(c => c.at >= endAll).length);
+  flag('adjustments-before-start', uAdj.filter(a => a.at < startMs).length); flag('adjustments-after-through', uAdj.filter(a => a.at >= endAll).length);
+  flag('equity-outside-range', equityInputs.filter(e => dayToIndex(e.day) < dayToIndex(startDay) || dayToIndex(e.day) > dayToIndex(throughDay)).length);
+  const usable = allFills.filter(f => f.at >= startMs && f.at < endAll), trades = pnlComputeAll(usable, {}), flows = pnlDailyFlows(trades);
   const days = dayRange(startDay, throughDay), ideal = compoundIdealSeries({ startMicro, startDay, schedule, throughDay });
   const rows = []; let prevClose = startMicro, ledgerWallet = startMicro;
+  // 한 번만 훑는 색인: 일별 입출금·조정 합계, 체결 시간순 이벤트(미결제 상태 갱신), 일별 미입력 수수료·펀딩 표시
+  const cashByDay = new Map(), adjByDay = new Map(), missingByDay = new Map(), evs = [];
+  for (const c of uCash) { const k = kstDayOf(c.at); cashByDay.set(k, (cashByDay.get(k) ?? 0n) + ledgerMicro(c.amount)); }
+  for (const a of uAdj) { const k = kstDayOf(a.at); adjByDay.set(k, (adjByDay.get(k) ?? 0n) + ledgerMicro(a.amount)); }
+  for (const t of trades.values()) for (const e of t.events) {
+    evs.push({ at: e.at, sid: t.sid, dir: t.dir, qtyAfter: e.qtyAfter });
+    if (e.feeState === 'missing' || e.fundingState === 'missing') { const m = missingByDay.get(e.day) ?? new Set(); if (e.feeState === 'missing') m.add('fee-missing'); if (e.fundingState === 'missing') m.add('funding-missing'); missingByDay.set(e.day, m); }
+  }
+  evs.sort((a, b) => a.at - b.at); let evPtr = 0; const openQty = new Map();
   for (let i = 0; i < days.length; i++) {
     const day = days[i], endMs = dayEndMs(day), rate = compoundRateOn(day, schedule);
     const fl = flows.get(day) ?? { netEnteredMicro: 0n, grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n };
-    let cash = 0n; for (const c of uCash) if (kstDayOf(c.at) === day) cash += ledgerMicro(c.amount);
-    let adj = 0n; for (const a of uAdj) if (kstDayOf(a.at) === day) adj += ledgerMicro(a.amount);
+    const cash = cashByDay.get(day) ?? 0n, adj = adjByDay.get(day) ?? 0n;
     ledgerWallet += fl.netEnteredMicro + cash + adj;
     const target = compoundNextTarget(prevClose, rate);
     const eq = eqByDay.get(day) ?? null, equityIn = eq ? ledgerMicro(eq.equity) : null;
     // 그날 끝 미결제 포지션과 opening 기준 미실현 보정
-    const openNow = [...pnlComputeAll(usable, { cutoffMs: endMs }).values()].filter(t => t.status === 'open');
+    while (evPtr < evs.length && evs[evPtr].at < endMs) { const e = evs[evPtr++]; if (e.qtyAfter > 0n) openQty.set(e.sid, { dir: e.dir, qty: e.qtyAfter }); else openQty.delete(e.sid); }
+    const openNow = [...openQty.entries()].map(([sid, v]) => ({ sid, dir: v.dir, openQtyDec: v.qty }));
     let openingU = 0n, openingUnknown = false;
     for (const t of openNow) {
       const o = openingSids.get(t.sid); if (!o) continue;
@@ -66,7 +81,7 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
     const closeSource = equityIn !== null ? 'input' : 'ledger';
     if (closeSource === 'ledger') rowFlags.push('close-from-ledger');
     if (fl.feeEstimatedMicro || fl.fundingEstimatedMicro) rowFlags.push('has-estimates');
-    for (const t of trades.values()) if (t.events.some(e => e.day === day)) for (const f of t.flags) if (f.endsWith('-missing') && !rowFlags.includes(f)) rowFlags.push(f);
+    for (const f of missingByDay.get(day) ?? []) if (!rowFlags.includes(f)) rowFlags.push(f);
     const pnl = close - prevClose - cash;
     rows.push({ day, n: i + 1, rate, startMicro: prevClose, targetCloseMicro: target.targetCloseMicro, targetProfitMicro: target.targetProfitMicro,
       idealMicro: ideal[i + 1].idealMicro, closeMicro: close, closeSource, cashflowMicro: cash, adjustmentMicro: adj, pnlMicro: pnl,
@@ -75,7 +90,7 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
       realizedGrossMicro: fl.grossMicro, feesEnteredMicro: fl.feeEnteredMicro, fundingEnteredMicro: fl.fundingEnteredMicro, openPositions: openNow.length, flags: rowFlags });
     prevClose = close;
   }
-  return { rows, summary: ledgerSummarize(rows, startMicro), flags: [], trades };
+  return { rows, summary: ledgerSummarize(rows, startMicro), flags: inputFlags, trades };
 }
 
 // 요약: 누적 수익률(시작 자금 대비 단순), 최고 평가액, 최대 낙폭(입출금을 제거한 곡선 기준)

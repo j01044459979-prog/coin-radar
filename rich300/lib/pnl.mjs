@@ -1,13 +1,14 @@
 // 실제 매매 손익 계산(LONG/SHORT, 부분청산·추가 진입, 수수료·펀딩 3상태). 모의매매(origin≠real)는 거부한다 — 모의와 실제는 섞지 않는다.
-//  · 평균 진입가는 체결 순서의 가중평균(원가 합계 방식). 청산 시 비례 원가를 제거해 실현손익을 계산하고 체결마다 마이크로 USDT로 반올림.
+//  · 평균 진입가는 체결 순서의 가중평균(원가 합계 방식). 원가는 가격×수량을 *반올림 없이* 24자리(10^-24)로 누적하고, 청산 시 비례 원가를 제거해 실현손익을 정확히 계산한 뒤 체결마다 마이크로 USDT로 *한 번만* 반올림한다(검토 결과: 중간 12자리 반올림은 드물게 1마이크로 어긋남).
 //  · 수수료(fee): 양수 비용. 펀딩(funding): 부호 있는 현금흐름(+받음 −지급). 상태: entered(실제 입력) / estimated(추정, 별도 집계) / missing(미입력, 합계 제외 + 경고).
 //  · 순손익(net) = 총손익 − 수수료 + 펀딩. 기본값(netEntered)은 *실제 입력된 값만* 반영하고, 추정치를 더한 값은 netWithEstimates로 따로 낸다.
-import { dec, decAdd, decSub, decMul, decDiv, decSign, decToMicro, decFormat, microToDec, decRoundDiv } from './decimal.mjs';
+import { dec, decAdd, decSub, decSign, decToMicro, decFormat, microToDec, decRoundDiv } from './decimal.mjs';
 import { kstDayOf } from './time.mjs';
 
 export const PNL_ENTRY_KINDS = ['opening', 'entry', 'add'];
 export const PNL_EXIT_KINDS = ['reduce', 'close'];
 const PNL_STATES = ['entered', 'estimated', 'missing'];
+const PNL_E24_TO_MICRO = 10n ** 18n;                    // 10^-24 단위 → 마이크로(10^-6) 변환 나눗수
 
 function pnlNormalizeAmount(a, name, nonNegative) {
   const state = a?.state ?? 'missing';
@@ -49,16 +50,16 @@ export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
     first = false;
     let grossMicro = 0n;
     if (PNL_ENTRY_KINDS.includes(f.kind)) {
-      qty = decAdd(qty, f.qty); cost = decAdd(cost, decMul(f.price, f.qty));
+      qty = decAdd(qty, f.qty); cost += f.price * f.qty;                                     // 원가: 반올림 없는 10^-24 단위
       if (f.kind !== 'opening') { if (f.margin === null) marginAll = false; else marginMicro += decToMicro(f.margin); }
     } else {
       if (f.qty > qty) throw new Error(`청산 수량(${decFormat(f.qty, 8)})이 보유 수량(${decFormat(qty, 8)})보다 큼: ${f.fillId}`);
       if (f.kind === 'close' && f.qty !== qty) throw new Error(`close는 잔량 전체여야 함: ${f.fillId}`);
-      const removed = f.qty === qty ? cost : decDiv(decMul(cost, f.qty), qty);
-      grossMicro = decToMicro(sign === 1n ? decSub(decMul(f.price, f.qty), removed) : decSub(removed, decMul(f.price, f.qty)));
+      const removed = f.qty === qty ? cost : decRoundDiv(cost * f.qty, qty), proceeds = f.price * f.qty;   // 비례 원가(10^-24 단위, 오차 < 1e-24)
+      grossMicro = decRoundDiv(sign === 1n ? proceeds - removed : removed - proceeds, PNL_E24_TO_MICRO);
       qty = decSub(qty, f.qty); cost = decSub(cost, removed);
     }
-    events.push({ fillId: f.fillId, at: f.at, day: kstDayOf(f.at), kind: f.kind, grossMicro, feeMicro: f.fee.micro, feeState: f.fee.state, fundingMicro: f.funding.micro, fundingState: f.funding.state });
+    events.push({ fillId: f.fillId, at: f.at, day: kstDayOf(f.at), kind: f.kind, grossMicro, feeMicro: f.fee.micro, feeState: f.fee.state, fundingMicro: f.funding.micro, fundingState: f.funding.state, qtyAfter: qty });
   }
   const t = { grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, feeMissingCount: 0, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n, fundingMissingCount: 0 };
   for (const e of events) {
@@ -73,7 +74,7 @@ export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
   if (events.some(e => e.fundingState === 'estimated')) flags.add('funding-estimated');
   const status = qty === 0n ? 'closed' : 'open';
   const margin = marginAll && marginMicro > 0n ? marginMicro : null;
-  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > 0n ? decFormat(decDiv(cost, qty), 10) : null, costDec: cost, marginMicro: margin,
+  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > 0n ? decFormat(decRoundDiv(cost, qty), 10) : null, costE24: cost, marginMicro: margin,
     roePpm: margin && status === 'closed' ? decRoundDiv(t.netEnteredMicro * 1000000n, margin) : null, totals: t, events, flags: [...flags] };
 }
 // 여러 sid의 체결 → 포지션 맵
