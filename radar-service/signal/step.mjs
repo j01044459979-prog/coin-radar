@@ -3,6 +3,7 @@
 // 상태는 state.signal 아래에만 쓰며 state.opportunity 와 기존 정기 보고 상태는 읽기만 한다(관찰 후보 목록).
 // 안정성 계약은 기회 레이더와 같다: 제한 시간이 지나면 새 요청·새 전송·새 상태 변경을 시작하지 않고, 전송 전에 장부(inflight)를 저장하며(최대 2회 시도),
 // 저장이 안 되면 보내지 않고, 어떤 예외도 기존 레이더 실행에 번지지 않는다. 주문·계정 API는 사용하지 않는다.
+import { createHash } from 'node:crypto';
 import { RESTRICTED, sendText, waitMs } from '../service.mjs';
 import { analyzeCoin } from '../opportunity/analysis.mjs';
 import { collectOpportunity } from '../opportunity/collect.mjs';
@@ -112,6 +113,10 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     evaluations.push({ symbol: r.symbol, ev, a: r.a, c15: c.c15 }); barsMap[r.symbol] = c.c15;
     if (ev.status === 'OBSERVE') base.observing++;
     const tr = signalTransition(prev, ev, { symbol: r.symbol, a: r.a, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
+    if (ev.status === 'CANDIDATE' && !tr.event) {                                                // 중복 방지로 알리지 않은 후보(관측용 집계만, 동작 변화 없음)
+      const why = prev?.status === 'active' ? 'active' : prev && prev.triggerT === ev.triggerT && ev.triggerT <= prev.lastBar15 ? 'same-bar' : 'cooldown';
+      (base.suppressed ??= {})[why] = (base.suppressed[why] ?? 0) + 1;
+    }
     if (tr.event) items.push({ symbol: r.symbol, event: tr.event, committed: tr.committed, score: ev.score ?? 0, rr: ev.t1?.net ?? 0 });
     else if (JSON.stringify(tr.next) !== JSON.stringify(prev)) commitNow[r.symbol] = tr.next;
   }
@@ -150,12 +155,13 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const guardedPhoto = async (png, caption) => { if (expired('beforeRequest')) throw new DeadlineError(); return sendPhoto(png, caption); };
   // 사진 우선, 같은 신호를 이미 한 번 시도했거나(전달 불확실 재시도) 사진이 거절(HTTP 4xx)되면 텍스트로 대체한다. 429·5xx·네트워크 오류는 장부 규칙대로 재시도한다.
   async function dispatch(part, attempts) {
-    if (!part.photo || !sendPhoto || attempts > 1) return sendText(guardedSend, part);
-    try { await guardedPhoto(part.photo.png, part.photo.caption); base.photoSent = (base.photoSent ?? 0) + 1; }
+    if (!part.photo || !sendPhoto || attempts > 1) { part.via = attempts > 1 ? 'text-retry' : part.chartError ? 'text-after-chart-fail' : 'text'; return sendText(guardedSend, part); }
+    try { await guardedPhoto(part.photo.png, part.photo.caption); base.photoSent = (base.photoSent ?? 0) + 1; part.via = 'photo'; }
     catch (error) {
       const rejected = error.status >= 400 && error.status < 500 && !RESTRICTED.includes(error.status);
       if (!rejected) throw error;
       base.photoFallback = (base.photoFallback ?? 0) + 1;
+      part.via = 'text-after-photo-reject';
       return sendText(guardedSend, part);
     }
   }
@@ -179,14 +185,16 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     return (await safeSave()) ? 'sent' : 'nosave';
   }
   let sent = 0;
+  const deliveries = [];                                                                       // 전달 관측 기록(공개 로그용: 종목·가격 없이 해시 ID·방향·경로·차트 상태·결과만)
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
     const out = await deliver(m, key, () => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1; });
+    deliveries.push({ id: createHash('sha256').update(key).digest('hex').slice(0, 8), type: i.event.type, dir: i.event.ev?.dir ?? i.event.dir ?? null, via: m.via ?? null, chart: m.kind !== 'candidate' ? 'n/a' : !sendPhoto ? 'no-photo-sender' : m.chartError ? `failed:${m.chartError}` : m.photo ? 'ok' : 'skipped', result: out });
     if (out === 'deadline') { timedOut = true; break; }
     if (out === 'failed' || out === 'nosave') break;
     sent++;
   }
-  if (timedOut || expired('beforeFinalize')) return { ...base, sentMessages: sent, timedOut: true, saveError };
+  if (timedOut || expired('beforeFinalize')) return { ...base, sentMessages: sent, timedOut: true, saveError, ...(deliveries.length ? { deliveries } : {}) };
   if (sendFail) { sg.failures += 1; dy.failures += 1; sg.lastError = `Telegram: ${String(sendFail.message).slice(0, 80)}`; sg.retryAt = Math.max(sg.retryAt, now + Math.min(300000 * sg.failures, 1800000)); }
   else if (!saveError) { sg.failures = 0; sg.lastError = m15.stopped ? `거래소 제한 응답(${m15.stopped.status})` : null; }
   if (m15.stopped) sg.retryAt = Math.max(sg.retryAt, now + waitMs(m15.stopped.status, m15.stopped.retryAfter));
@@ -194,7 +202,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const k of Object.keys(sg.daily)) if (!Array.from({ length: 14 }, (_, d) => dayKey(now - d * 86400000)).includes(k)) delete sg.daily[k];
   sg.health = { at: now, analyzed: base.analyzed, candidates: base.candidates, calls: base.calls };
   await safeSave();
-  const summary = { ...base, sentMessages: sent, sendError: sendFail ? String(sendFail.message).slice(0, 80) : null, saveError, dailySent: dy.candidates };
+  const summary = { ...base, sentMessages: sent, sendError: sendFail ? String(sendFail.message).slice(0, 80) : null, saveError, dailySent: dy.candidates, ...(deliveries.length ? { deliveries } : {}) };
   log(JSON.stringify({ signal: summary }));
   return summary;
 }

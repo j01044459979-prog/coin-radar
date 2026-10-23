@@ -13,8 +13,9 @@ export async function runSignalAfterCycle({ state, save, send = null, env = proc
   if (remaining < MIN_RUN_MS) { const skipped = { mode, skipped: 'time-budget', elapsedMs: Math.round(elapsedMs) }; out('SIGNAL ' + JSON.stringify(skipped)); return skipped; }
   const timeoutMs = Math.min(MAX_RUN_MS, remaining), budgetMs = Math.max(5000, Math.min(40000, timeoutMs - 30000));
   const result = await runSignalSafe({ now, state, save, send, env, log: () => {}, timeoutMs, budgetMs, ...options });
-  const { preview, paper, ...rest } = result;
+  const { preview, paper, deliveries, ...rest } = result;
   if (rest.skipped !== 'off') out('SIGNAL ' + JSON.stringify(rest));
+  for (const d of deliveries ?? []) out('SIGNAL-DELIVERY ' + JSON.stringify(d));                  // 실제 전달 관측: 경로(photo/text…)·차트 상태·결과. 종목·가격·메시지는 출력하지 않는다(공개 로그)
   if (paper) out('SIGNAL-PAPER ' + paperLine(paper));                                    // 모의 성과(미검증 표시 포함). 전송하지 않는다
   if (mode === 'preview' && !rest.skipped) out('SIGNAL ※ preview: 전송 없음 · 이 규칙은 백테스트로 우위가 확인되지 않은 미검증 규칙입니다');
   if (preview) { preview.lines.forEach(l => out('SIGNAL ' + l)); preview.messages.forEach((m, i) => out('===== SIGNAL message ' + (i + 1) + '/' + preview.messages.length + ' =====\n' + m)); }

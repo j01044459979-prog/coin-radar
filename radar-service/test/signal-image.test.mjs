@@ -100,3 +100,30 @@ test('telegramPhotoSender 재사용: 캡션 1024자 초과·이미지 없음은 
   const send = telegramPhotoSender('t', '123', async () => new Response('{}', { status: 200 }));
   await assert.rejects(send(Buffer.from([1]), 'x'.repeat(1025)), /캡션/); await assert.rejects(send(Buffer.alloc(0), ''), /이미지 없음/);
 });
+
+// ── 관측 로그: 실제 신호 발송 검증용(공개 로그에는 종목·가격·메시지를 쓰지 않는다) ──
+import { runSignalAfterCycle } from '../signal/integrate.mjs';
+const logRun = async (o = {}) => { const r = mk(o), outs = []; const res = await runSignalAfterCycle({ ...r.args, elapsedMs: 1000, out: m => outs.push(m) }); return { r, outs, res, del: outs.filter(l => l.startsWith('SIGNAL-DELIVERY ')).map(l => JSON.parse(l.slice(16))) }; };
+test('SIGNAL-DELIVERY 로그: 사진 전송 성공 — 경로 photo, 차트 ok, 종목·가격·메시지는 출력하지 않음', async () => {
+  const ph = photoSender(), { outs, del } = await logRun({ sendPhoto: ph.fn, renderChart: fakePng });
+  assert.equal(del.length, 1); assert.deepEqual({ ...del[0], id: 'x' }, { id: 'x', type: 'candidate', dir: 'LONG', via: 'photo', chart: 'ok', result: 'sent' }); assert.match(del[0].id, /^[0-9a-f]{8}$/);
+  const all = outs.join('\n'); assert.ok(!/ETH|100\.15|97\.5|105\.0|진입 후보 ·/.test(all), '공개 로그에 종목·가격 노출 금지'); assert.ok(/"photoSent":1/.test(all));
+});
+test('SIGNAL-DELIVERY 로그: 차트 실패 → 텍스트 대체(text-after-chart-fail), 사진 거절 → text-after-photo-reject, 사진 미지원 → text', async () => {
+  let d = (await logRun({ sendPhoto: photoSender().fn, renderChart: async () => { throw new Error('boom'); } })).del[0]; assert.equal(d.via, 'text-after-chart-fail'); assert.equal(d.chart, 'failed:boom'); assert.equal(d.result, 'sent');
+  d = (await logRun({ sendPhoto: photoSender({ fail: Object.assign(new Error('bad'), { status: 400 }) }).fn, renderChart: fakePng })).del[0]; assert.equal(d.via, 'text-after-photo-reject'); assert.equal(d.chart, 'ok');
+  d = (await logRun()).del[0]; assert.equal(d.via, 'text'); assert.equal(d.chart, 'no-photo-sender');
+});
+test('SIGNAL-DELIVERY 로그: 전달 불확실 실패는 result=failed, 재시도는 via=text-retry', async () => {
+  const net = photoSender({ fail: new Error('network') }), first = await logRun({ sendPhoto: net.fn, renderChart: fakePng }); assert.equal(first.del[0].result, 'failed'); assert.equal(first.del[0].via, null);
+  const outs = []; await runSignalAfterCycle({ ...first.r.args, now: NOW + 6 * 60000, force: true, elapsedMs: 1000, out: m => outs.push(m) });
+  const d = outs.filter(l => l.startsWith('SIGNAL-DELIVERY ')).map(l => JSON.parse(l.slice(16)))[0]; assert.equal(d.via, 'text-retry'); assert.equal(d.result, 'sent');
+});
+test('중복 방지 관측: 같은 신호는 다시 알리지 않고 suppressed로 집계(동작 변화 없음)', async () => {
+  const ph = photoSender(), first = await logRun({ sendPhoto: ph.fn, renderChart: fakePng }); assert.equal(first.res.suppressed, undefined);
+  const again = await runSignalAfterCycle({ ...first.r.args, now: NOW + 15 * 60000 + 60000, elapsedMs: 1000, out: () => {} });
+  assert.equal(again.candidates, 0); assert.equal(ph.sent.length, 1); assert.deepEqual(again.suppressed, { active: 1 });
+});
+test('SIGNAL 요약 JSON에는 deliveries 본문이 섞이지 않는다(별도 줄로 출력)', async () => {
+  const { outs } = await logRun({ sendPhoto: photoSender().fn, renderChart: fakePng }); const line = outs.find(l => l.startsWith('SIGNAL {')); assert.ok(line && !line.includes('deliveries'));
+});

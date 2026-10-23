@@ -76,6 +76,13 @@
 - **자동 전환**: 차트 생성 실패·15초 초과면 그 신호는 기존 텍스트 알림으로 보낸다. 사진이 HTTP 4xx로 거절되면 같은 시도에서 텍스트로 대체한다. 429·5xx·네트워크 오류는 기존 장부 규칙(최대 2회, 재시도는 텍스트)을 따른다. 무효화 알림은 항상 텍스트다.
 - 판정·임계값·중복 방지·장부·모의매매 로직은 변경하지 않았다. `sendPhoto`가 없으면 이전과 완전히 같게 동작한다. 로그의 `SIGNAL {...}`에 `photoSent`·`photoFallback`·`chartFailed`가 있으면 표시된다.
 
+### 전달 관측 로그 (공개 Actions 로그용)
+진입 후보·무효화가 실제로 전달될 때마다 `SIGNAL-DELIVERY {"id":"해시8자","type":"candidate","dir":"LONG","via":"photo","chart":"ok","result":"sent"}` 한 줄이 남는다. 종목·가격·메시지는 출력하지 않는다(저장소가 공개).
+- `via`: `photo` / `text` / `text-after-chart-fail`(차트 생성 실패) / `text-after-photo-reject`(사진 HTTP 4xx 거절) / `text-retry`(전달 불확실 재시도) / `null`(전송 실패)
+- `chart`: `ok` / `failed:사유` / `no-photo-sender` / `n/a`(무효화) · `result`: `sent` / `failed` / `assumed` / `nosave` / `deadline`
+- 중복 방지: `SIGNAL {...}`에 `suppressed`(`active` 활성 중 · `same-bar` 같은 트리거 봉 · `cooldown` 쿨다운)가 있으면 후보가 나왔지만 중복 방지로 알리지 않은 것. `photoSent`·`photoFallback`·`chartFailed`는 그대로.
+- 후보가 없으면 위 줄은 나오지 않는다(정상 대기). 이 로그는 관측용이며 판정·임계값·중복 방지 동작을 바꾸지 않는다.
+
 ## 5. 검증 상태 (그대로 읽을 것)
 - **15분봉 트리거 포함 신호 규칙의 123일·19종목 백테스트 결과는 `docs/SIGNAL-BACKTEST.md`.** 신호 104건, 평균 순손익비 +0.21R(95% 신뢰구간 [−0.11, +0.53])로 **0과 구별되지 않았고**, 15분 트리거·거래량을 뺀 같은 맥락의 대조군(+0.04R, 1,398건)과도 구별되지 않았다. 후반 기간으로 갈수록 약해졌다(+0.35 → +0.06).
 - 상위 조건(기회 레이더 2·3단계)의 270일 백테스트도 우위가 없었다(`docs/OPPORTUNITY-BACKTEST.md`).
