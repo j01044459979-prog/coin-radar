@@ -49,3 +49,8 @@ test('S0 엔진 벤치(s0EngineBench): 번들을 붙인 프로젝트를 흉내 �
   const ctx = { console, Date }; vm.createContext(ctx); vm.runInContext(buildEngine() + '\n' + readFileSync(new URL('../s0/Code.gs', import.meta.url), 'utf8').replace(/var S0_TEST_KEY[^\n]*\n/, "var S0_TEST_KEY = 'x';\n"), ctx);
   const r = JSON.parse(JSON.stringify(ctx.s0EngineBench())); assert.equal(r.engine, true); assert.equal(r.days, 365); assert.equal(r.fills, 3285); assert.ok(r.ms < 5000);
 });
+
+test('S0-All.gs(붙여 넣기 1회용) = Code.gs + Engine.gs. 다르면: node rich300/s0/make-all.mjs', () => {
+  const code = readFileSync(new URL('../s0/Code.gs', import.meta.url), 'utf8'), engine = readFileSync(new URL('../s0/Engine.gs', import.meta.url), 'utf8');
+  assert.equal(readFileSync(new URL('../s0/S0-All.gs', import.meta.url), 'utf8'), code + '\n' + engine);
+});
