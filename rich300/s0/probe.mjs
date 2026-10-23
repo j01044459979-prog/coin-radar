@@ -47,6 +47,15 @@ export async function run({ url, fetcher = fetch, log = console.log, n = 8 } = {
   res.checks.appendMsSample = stats(par.map(p => p.finalJson?.appendMs).filter(Number.isFinite));
   // GET(UI 배포가 아니라 API 배포의 doGet): 익명 접근 가능 여부
   const g = await fetcher(url, { redirect: 'manual' }); res.checks.anonymousGetStatus = g.status;
+  // 302의 도착지가 정상 실행 리다이렉트인지 로그인 페이지인지: 호스트·최종 상태·본문 종류만 기록(경로·본문은 기록 안 함)
+  try {
+    const loc = g.headers.get('location');
+    const hop = loc ? await fetcher(loc, { redirect: 'follow' }) : null;
+    const txt = hop ? await hop.text() : '';
+    let json = false; try { JSON.parse(txt); json = true; } catch { /* html */ }
+    res.checks.anonymousGetRedirect = { locationHost: loc ? new URL(loc).host : null, finalStatus: hop?.status ?? null,
+      contentType: (hop?.headers.get('content-type') ?? '').split(';')[0], bodyIsJson: json, looksLikeLogin: /accounts\.google\.com|ServiceLogin|Sign in/i.test(txt) || (loc ? /accounts\.google\.com/.test(loc) : false) };
+  } catch (e) { res.checks.anonymousGetRedirect = { error: String(e?.message ?? e).slice(0, 80) }; }
   log('S0_RESULT ' + JSON.stringify(res));
   return res;
 }
