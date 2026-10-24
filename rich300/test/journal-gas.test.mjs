@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { buildEngine } from '../build.mjs';
 import { fakeSheetsServices, fakeCache } from './helpers/gasfakes.mjs';
@@ -11,7 +11,7 @@ const read = f => readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8'),
 const DAY = 86400000, H = 3600000;
 function load({ email = 'me@example.com', now = Date.UTC(2026, 9, 25, 3, 0) - 9 * H + 9 * H, approved = false, closeNotify = false } = {}) {
   const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], triggers: [], pages: [] };
-  const pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', RICH300_TG_TOKEN: FAKE_TOKEN, ...(approved ? { RICH300_CLOSE_SEND_APPROVED: 'yes' } : {}) }));
+  const pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', RICH300_TG_TOKEN: FAKE_TOKEN, RICH300_ENV: 'test', RICH300_TEST_TG_ALLOW: 'yes', ...(approved ? { RICH300_CLOSE_SEND_APPROVED: 'yes' } : {}) }));
   const props = { getProperty: k => (pm.has(k) ? pm.get(k) : null), setProperty: (k, v) => { pm.set(k, String(v)); }, deleteProperty: k => { pm.delete(k); }, getKeys: () => [...pm.keys()] };
   const ContentService = { MimeType: { JSON: 'json', TEXT: 'text' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) };
   const HtmlService = { createHtmlOutput: h => { const o = { html: h, title: '', setTitle(x) { this.title = x; return this; }, addMetaTag() { return this; } }; spy.pages.push(o); return o; } };
@@ -19,7 +19,7 @@ function load({ email = 'me@example.com', now = Date.UTC(2026, 9, 25, 3, 0) - 9 
   const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Logger: { log: (...a) => spy.logs.push(a.join(' ')) }, Date: class extends Date { static now() { return ctx.__now; } }, __now: now, ...sheets.ctx, ContentService, HtmlService, CacheService: cache.service, PropertiesService: { getScriptProperties: () => props }, Session: { getActiveUser: () => ({ getEmail: () => email }) },
     Utilities: { ...sheets.ctx.Utilities, getUuid: () => randomUUID(), sleep: () => {} }, ScriptApp: { getService: () => ({ getUrl: () => 'https://script.example/exec' }), getProjectTriggers: () => spy.triggers.filter(t => !t.deleted).map(t => ({ ...t, getHandlerFunction: () => t.fn })), deleteTrigger: t => { const r = spy.triggers.find(x => x === t || x.fn === t.fn && !x.deleted); if (r) r.deleted = true; }, newTrigger: fn => { const { t, b } = trig(); t.fn = fn; return b; } },
     UrlFetchApp: { fetch: (url, opt) => { const m = /\/bot[^/]+\/(\w+)$/.exec(url)[1]; const r = tele.http.call(m, JSON.parse(opt.payload)); return { getResponseCode: () => r.status, getContentText: () => JSON.stringify(r.body) }; } } };
-  vm.createContext(ctx); vm.runInContext(['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Journal.gs'].map(read).reduce((a, b) => `${a}\n${b}`, buildEngine()), ctx);
+  vm.createContext(ctx); vm.runInContext(['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Journal.gs', 'Deploy.gs'].filter(f => existsSync(new URL(`../gas/${f}`, import.meta.url))).map(read).reduce((a, b) => `${a}\n${b}`, buildEngine()), ctx);
   const E = ctx.RICH300_ENGINE, se = () => ctx.rich300GasEnv_('sheet');
   const setupChallenge = (start = '2026-10-24') => { E.storeInit(se()); E.storeSetupChallenge(se(), { startEquity: '300', startDay: start, rate: '0.05' }, { actor: 't' }); if (closeNotify) E.storeCreate(se(), 'setting', { name: 'closeNotify', value: 'on' }, { actor: 't' }); };
   return { ctx, tele, spy, pm, E, se, setupChallenge, rows: n => j(E.storeList(se(), n).map(r => r.data)), pair: () => { const r = ctx.rich300TgPairCode(); tele.say(OWNER, `/pair ${r.code}`); ctx.rich300TgPoll(); } };
