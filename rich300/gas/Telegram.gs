@@ -23,6 +23,9 @@ function rich300TgEnv_() {
     },
     http: {
       call: function (method, payload) {
+        // 환경 가드(Deploy.gs): 운영 승인 전·테스트 허용 전에는 어떤 Telegram 호출도 나가지 않는다. 가드가 없으면 차단(fail-closed).
+        var gate = typeof rich300TgGate_ === 'function' ? rich300TgGate_(method) : 'guard-missing';
+        if (gate) return { status: 403, body: { ok: false, description: 'blocked: ' + gate } };
         var token = props.getProperty('RICH300_TG_TOKEN'); if (!token) throw new Error('token missing');
         var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
         var body = null; try { body = JSON.parse(res.getContentText()); } catch (e) { body = null; }

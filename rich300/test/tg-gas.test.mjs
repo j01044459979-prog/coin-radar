@@ -11,7 +11,7 @@ const j = v => JSON.parse(JSON.stringify(v));      // vm 컨텍스트 객체는 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 const SIG = { sid: 'A-BTC-1', strategy: 'A', symbolId: 'BTCUSDT', dir: 'LONG', signalAt: 1790000000000, entry: '100', stop: '98', tp1: '103' };
 function load({ email = 'me@example.com', token = FAKE_TOKEN, fetchThrows = false } = {}) {
-  const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], urls: [], triggers: [], pages: [] }, pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', ...(token ? { RICH300_TG_TOKEN: token } : {}) }));
+  const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], urls: [], triggers: [], pages: [] }, pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', RICH300_ENV: 'test', RICH300_TEST_TG_ALLOW: 'yes', ...(token ? { RICH300_TG_TOKEN: token } : {}) }));
   const props = { getProperty: k => (pm.has(k) ? pm.get(k) : null), setProperty: (k, v) => { pm.set(k, String(v)); }, deleteProperty: k => { pm.delete(k); }, getKeys: () => [...pm.keys()] };
   const ContentService = { MimeType: { JSON: 'json', TEXT: 'text' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) };
   const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Logger: { log: (...a) => spy.logs.push(a.join(' ')) }, ...sheets.ctx, ContentService, CacheService: cache.service, PropertiesService: { getScriptProperties: () => props },
@@ -21,7 +21,7 @@ function load({ email = 'me@example.com', token = FAKE_TOKEN, fetchThrows = fals
     ScriptApp: { getProjectTriggers: () => spy.triggers.filter(t => !t.deleted), deleteTrigger: t => { t.deleted = true; }, newTrigger: fn => { const t = { fn, getHandlerFunction: () => fn, deleted: false }; return { timeBased: () => ({ everyMinutes: n => ({ create: () => { t.every = n; spy.triggers.push(t); } }) }) }; } },
     HtmlService: { createTemplateFromFile: name => { const t = { name, evaluate: () => { const o = { title: '', meta: [], setTitle(x) { this.title = x; return this; }, addMetaTag(a, b) { this.meta.push([a, b]); return this; }, preset: t.preset }; spy.pages.push(o); return o; } }; return t; } } };
   vm.createContext(ctx);
-  vm.runInContext([buildEngine(), read('gas/Adapters.gs'), read('gas/Api.gs'), read('gas/Telegram.gs')].join('\n'), ctx);
+  vm.runInContext([buildEngine(), read('gas/Adapters.gs'), read('gas/Api.gs'), read('gas/Telegram.gs'), read('gas/Deploy.gs')].join('\n'), ctx);
   const E = () => ctx.RICH300_ENGINE;
   const storeEnv = () => ctx.rich300GasEnv_('sheet');
   return { ctx, tele, spy, pm, sheets, E, storeEnv, rows: n => { const env = storeEnv(); return j(E().storeList(env, n).map(r => r.data)); } };
