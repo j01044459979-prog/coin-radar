@@ -3,7 +3,7 @@
  *  · 하는 일: GitHub(공개 저장소)에서 MANIFEST.txt 와 설치 파일 3개를 받아 → SHA-256 이 MANIFEST 와 같은지 확인 → 실제 Apps Script V8 에서 문법 검사(실행하지 않음)
  *    → 매니페스트가 '나만 접근·접속한 사용자로 실행'인지 확인 → 이 프로젝트의 내용을 교체(Apps Script API). 하나라도 어긋나면 아무것도 바꾸지 않는다.
  *  · 하지 않는 일: Telegram 호출, 웹 앱 배포, 시트·Drive 접근, 다른 프로젝트 변경, 삭제. 토큰·키는 다루지 않는다.
- *  · 사전 1회: https://script.google.com/home/usersettings 에서 "Google Apps Script API" 를 켠다.
+ *  · 반영 경로 2개를 차례로 시도한다: ① Apps Script API(스크립트의 Cloud 프로젝트에서 API 가 켜져 있어야 함) ② Drive API(이 프로젝트 파일 하나만, 쓴 뒤 다시 읽어 확인). 실패 원인은 Google 응답 문구와 함께 분류해 보여 준다.
  *  · 실행: rich300BootstrapCheck()(받기·검증만, 변경 없음) → rich300Bootstrap()(검증 후 반영). 반영하면 이 파일은 설치 파일로 대체되어 사라진다.
  */
 var RICH300_BOOT_REPO = 'j01044459979-prog/coin-radar';
@@ -53,13 +53,48 @@ function rich300BootFinish_(steps, ok, extra) {
   return { ok: ok, steps: steps };
 }
 function rich300BootstrapCheck() { var v = rich300BootVerify_(); return rich300BootFinish_(v.steps, v.ok, v.ok ? '변경 없음. 이제 rich300Bootstrap 을 실행하면 이 프로젝트에 반영됩니다.' : ''); }
+/** Google 오류 응답에서 사람이 읽을 문구만 뽑는다(토큰·본문 없음). Google 자신의 콘솔·설정 링크만 남기고 나머지 URL 은 가린다. */
+function rich300BootErr_(res) {
+  var msg = ''; try { msg = String((JSON.parse(res.getContentText()).error || {}).message || ''); } catch (err) { msg = ''; }
+  return msg.replace(/https?:\/\/\S+/g, function (u) { return /^https:\/\/(console\.(developers|cloud)\.google\.com|script\.google\.com\/home\/usersettings|myaccount\.google\.com)/.test(u) ? u : '[url]'; }).replace(/\s+/g, ' ').slice(0, 300);
+}
+/** 403 원인 분류: 사용자 설정(usersettings) ≠ 스크립트의 Cloud 프로젝트에서 API 꺼짐 ≠ 권한 범위 부족 */
+function rich300BootClassify_(code, msg) {
+  if (/usersettings/i.test(msg)) return { kind: 'user-toggle', hint: '사용자 설정의 Apps Script API 가 꺼져 있습니다(https://script.google.com/home/usersettings)' };
+  if (/has not been used in project|SERVICE_DISABLED|API .*is disabled|accessNotConfigured/i.test(msg)) return { kind: 'cloud-project', hint: '이 스크립트의 Google Cloud 프로젝트에서 Apps Script API 가 꺼져 있습니다. 사용자 설정 토글과는 별개이며, 기본(자동 생성) 프로젝트는 사용자가 켤 수 없습니다' };
+  if (code === 401 || code === 403) return { kind: 'permission', hint: '권한이 없습니다(권한 동의를 다시 승인하거나 매니페스트의 권한 범위를 확인하세요)' };
+  return { kind: 'http', hint: 'HTTP ' + code };
+}
+/** 경로 1: Apps Script API(projects.updateContent). 스크립트 자신의 Cloud 프로젝트에서 API 가 켜져 있어야 한다. */
+function rich300BootViaApi_(v) {
+  var body = { files: RICH300_BOOT_FILES.map(function (f) { return { name: f.name, type: f.type, source: v.files[f.raw].text }; }) };
+  var res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + '/content', { method: 'put', contentType: 'application/json', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, payload: JSON.stringify(body), muteHttpExceptions: true });
+  var code = res.getResponseCode(); if (code === 200) return { ok: true };
+  var msg = rich300BootErr_(res), c = rich300BootClassify_(code, msg); return { ok: false, text: 'Apps Script API 경로 실패 — ' + c.hint + (msg ? ' [Google 응답: ' + msg + ']' : ''), kind: c.kind };
+}
+/** 경로 2: Drive API(이 프로젝트 파일 하나만 내보내기·덮어쓰기). 쓰기 뒤에 다시 내보내 세 파일 내용이 기대와 같은지 확인한다. 이 프로젝트 ID 외의 파일은 건드리지 않는다. */
+function rich300BootViaDrive_(v) {
+  var id = ScriptApp.getScriptId(), auth = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, mime = 'application/vnd.google-apps.script+json';
+  var exportNow = function () { return UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=' + encodeURIComponent(mime), { headers: auth, muteHttpExceptions: true }); };
+  var fail = function (what, res) { var code = res.getResponseCode(), msg = rich300BootErr_(res), c = rich300BootClassify_(code, msg); return { ok: false, text: 'Drive 경로 실패(' + what + ') — ' + c.hint + (msg ? ' [Google 응답: ' + msg + ']' : '') }; };
+  var r0 = exportNow(); if (r0.getResponseCode() !== 200) return fail('현재 내용 읽기', r0);
+  var cur; try { cur = JSON.parse(r0.getContentText()).files || []; } catch (err) { return { ok: false, text: 'Drive 경로 실패(현재 내용 해석)' }; }
+  var ids = {}; cur.forEach(function (f) { ids[f.name] = f.id; });
+  var files = RICH300_BOOT_FILES.map(function (f) { var o = { name: f.name, type: f.type.toLowerCase(), source: v.files[f.raw].text }; if (ids[f.name]) o.id = ids[f.name]; return o; });
+  var r1 = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', { method: 'patch', contentType: mime, headers: auth, payload: JSON.stringify({ files: files }), muteHttpExceptions: true });
+  if (r1.getResponseCode() !== 200) return fail('덮어쓰기', r1);
+  var r2 = exportNow(); if (r2.getResponseCode() !== 200) return fail('쓴 뒤 확인', r2);
+  var after = {}; try { JSON.parse(r2.getContentText()).files.forEach(function (f) { after[f.name] = f.source; }); } catch (err) { after = {}; }
+  var bad = RICH300_BOOT_FILES.filter(function (f) { return after[f.name] !== v.files[f.raw].text; }).map(function (f) { return f.name; });
+  return bad.length ? { ok: false, text: 'Drive 경로: 쓴 뒤 내용이 기대와 다릅니다(' + bad.join(', ') + ') — 편집기를 새로 고쳐 확인하세요' } : { ok: true };
+}
 function rich300Bootstrap() {
   var v = rich300BootVerify_(); if (!v.ok) return rich300BootFinish_(v.steps, false, '아무것도 바꾸지 않았습니다.');
-  var steps = v.steps, body = { files: RICH300_BOOT_FILES.map(function (f) { return { name: f.name, type: f.type, source: v.files[f.raw].text }; }) };
-  var res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + '/content', { method: 'put', contentType: 'application/json', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, payload: JSON.stringify(body), muteHttpExceptions: true });
-  var code = res.getResponseCode(), msg = ''; try { msg = String((JSON.parse(res.getContentText()).error || {}).message || ''); } catch (err) { msg = ''; }
-  if (code === 200) { steps.push({ id: 'B4', status: 'PASS', text: '이 프로젝트의 내용을 설치 파일 3개로 교체했습니다. 편집기를 새로 고침하세요' }); return rich300BootFinish_(steps, true, '다음: 편집기를 새로 고침 → 함수 rich300Install 실행 → (승인 후) 배포.'); }
-  var hint = code === 403 && /not been used|disabled|API/i.test(msg) ? 'Apps Script API 가 꺼져 있습니다. https://script.google.com/home/usersettings 에서 켜고 다시 실행하세요' : code === 401 || code === 403 ? '권한이 없습니다. 권한 동의(script.projects)를 다시 승인하세요' : 'HTTP ' + code;
-  steps.push({ id: 'B4', status: 'FAIL', text: '프로젝트 내용을 교체하지 못했습니다 — ' + hint });
-  return rich300BootFinish_(steps, false, '아무것도 바꾸지 않았습니다.');
+  var steps = v.steps, a = rich300BootViaApi_(v);
+  if (a.ok) { steps.push({ id: 'B4', status: 'PASS', text: '이 프로젝트의 내용을 설치 파일 3개로 교체했습니다(Apps Script API). 편집기를 새로 고침하세요' }); return rich300BootFinish_(steps, true, '다음: 편집기를 새로 고침 → 함수 rich300Install 실행 → (승인 후) 배포.'); }
+  steps.push({ id: 'B4', status: 'FAIL', text: a.text });
+  var d = rich300BootViaDrive_(v);
+  if (d.ok) { steps.push({ id: 'B5', status: 'PASS', text: '대체 경로(Drive)로 이 프로젝트의 내용을 설치 파일 3개로 교체하고, 다시 읽어 내용이 같음을 확인했습니다. 편집기를 새로 고침하세요' }); return rich300BootFinish_(steps, true, '다음: 편집기를 새로 고침 → 함수 rich300Install 실행 → (승인 후) 배포. 끝나면 https://myaccount.google.com/permissions 에서 이 스크립트의 Drive 권한을 철회해도 됩니다.'); }
+  steps.push({ id: 'B5', status: 'FAIL', text: d.text });
+  return rich300BootFinish_(steps, false, '프로젝트가 바뀌지 않았을 수 있습니다(이 프로젝트 외에는 아무것도 건드리지 않았습니다).');
 }
