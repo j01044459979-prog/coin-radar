@@ -26,7 +26,7 @@ test('자가 점검: 정상 상태는 실패 0·경고 0, 각 위험은 해당 �
     [{ flags: { closeSendApproved: true, prodApproved: false, testTgAllow: true } }, 'test-no-prod-flags'], [{ flags: { closeSendApproved: false, prodApproved: true, testTgAllow: true } }, 'test-no-prod-flags'], [{ integrity: { ok: false, issues: ['tampered-view'] } }, 'integrity'], [{ integrity: null }, 'integrity'],
     [{ envMarker: { ok: false, actual: 'prod', expected: 'test' } }, 'env-marker'], [{ envMarker: null }, 'env-marker']];
   for (const [over, id] of failing) { const r = deploySelfTest(ok(over)), it = r.items.find(i => i.id === id); assert.ok(it && !it.ok && it.level === 'fail' && r.fail >= 1, id); }
-  const warn = [[{ has: { ...ok().has, tgToken: false } }, 'telegram-token'], [{ has: { ...ok().has, ingestKey: false } }, 'ingest-key'], [{ has: { ...ok().has, uiUrl: false } }, 'ui-url'], [{ owner: { activeEmailVisible: false, matchesOwner: false } }, 'owner-visible'], [{ triggers: [] }, 'trigger-rich300CloseTick'], [{ backupCount: 0 }, 'backup']];
+  const warn = [[{ has: { ...ok().has, tgToken: false } }, 'telegram-token'], [{ has: { ...ok().has, uiUrl: false } }, 'ui-url'], [{ owner: { activeEmailVisible: false, matchesOwner: false } }, 'owner-visible'], [{ triggers: [] }, 'trigger-rich300CloseTick'], [{ backupCount: 0 }, 'backup']];
   for (const [over, id] of warn) { const it = deploySelfTest(ok(over)).items.find(i => i.id === id); assert.ok(it && !it.ok && it.level === 'warn', id); }
   const prod = deploySelfTest(ok({ env: 'prod', flags: { closeSendApproved: false, prodApproved: false, testTgAllow: false }, envMarker: { ok: true, actual: 'prod', expected: 'prod' } })); assert.equal(prod.fail, 0); assert.match(prod.items.find(i => i.id === 'prod-gate').text, /운영 승인 전: Telegram 호출이 차단/);
   assert.equal(deploySelfTest(ok({ expectTriggers: ['rich300TgPoll'], triggers: ['rich300TgPoll'] })).warn, 0);                          // 설치 대상이 아닌 트리거는 요구하지 않음
@@ -44,7 +44,7 @@ test('배포 묶음: Code.gs 한 파일(엔진+gas)·HTML·매니페스트, 문�
 test('매니페스트: 시간대 Asia/Seoul·V8·최소 권한 범위(스프레드시트·트리거·외부 요청·이메일·drive.file), 넓은 권한 없음', () => {
   const m = JSON.parse(readFileSync(new URL('../deploy/appsscript.json', import.meta.url), 'utf8')); assert.deepEqual([m.timeZone, m.runtimeVersion], ['Asia/Seoul', 'V8']);
   assert.deepEqual([...m.oauthScopes].sort(), ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/script.external_request', 'https://www.googleapis.com/auth/script.scriptapp', 'https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/userinfo.email']);
-  assert.ok(!m.oauthScopes.some(s => /\/auth\/drive$|gmail|mail\.google|calendar|contacts|cloud-platform/.test(s))); assert.equal(m.webapp.executeAs, 'USER_DEPLOYING');
+  assert.ok(!m.oauthScopes.some(s => /\/auth\/drive$|gmail|mail\.google|calendar|contacts|cloud-platform/.test(s))); assert.equal(m.webapp.executeAs, 'USER_ACCESSING'); assert.equal(m.webapp.access, 'MYSELF');
 });
 test('저장소 비밀값 점검: rich300 안의 파일에 토큰·키·이메일·시트 ID 형태의 실제 값이 없다(테스트 센티넬 제외)', () => {
   const root = new URL('../', import.meta.url).pathname, bad = [];
@@ -60,14 +60,14 @@ test('화면이 부르는 서버 함수(google.script.run)는 모두 번들에 �
   assert.ok(n >= 1);
 });
 
-test('배포 묶음 환경별: prod 묶음에는 검증 하니스가 없고, test 묶음에는 rich300LiveStart 가 있으며 두 묶음 모두 문법 유효·이름 충돌 없음', () => {
-  const prod = makeBundle().files['Code.gs'], test = makeBundle({ env: 'test' }).files['Code.gs'];
-  assert.ok(!/function rich300LiveStart\(/.test(prod) && !/function rich300LiveHook_\(/.test(prod)); assert.doesNotThrow(() => new vm.Script(prod));
-  for (const fn of ['rich300LiveStart', 'rich300LiveReport', 'rich300LiveStop', 'rich300LiveBackground', 'rich300LiveHook_']) assert.match(test, new RegExp(`function ${fn}\\(`), fn);
-  assert.doesNotThrow(() => new vm.Script(test)); const names = [...test.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1]); assert.deepEqual(names.filter((n, i) => names.indexOf(n) !== i), []);
-  assert.throws(() => makeBundle({ env: 'dev' }), /test 또는 prod/); assert.ok(!/AAF[A-Za-z0-9_-]{20,}/.test(test)); assert.ok(test.length < 700000);
+test('배포 묶음: 문법 유효·함수 이름 충돌 없음·설치·검증 진입점 포함, 시험 하니스(봇 시험용)는 없다', () => {
+  const prod = makeBundle().files['Code.gs'];
+  assert.doesNotThrow(() => new vm.Script(prod)); const names = [...prod.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1]); assert.deepEqual(names.filter((n, i) => names.indexOf(n) !== i), []);
+  for (const fn of ['rich300Install', 'rich300VerifyStart', 'rich300PageCheck_', 'rich300PageSignals_', 'rich300PageDash_', 'rich300TgPoll', 'doGet']) assert.match(prod, new RegExp(`function ${fn}\\(`), fn);
+  assert.ok(!/rich300Live|LiveVerify|TEST_CLOSE_SEND/.test(prod)); assert.ok(!/AAF[A-Za-z0-9_-]{20,}/.test(prod)); assert.ok(prod.length < 700000);
+  assert.throws(() => makeBundle({ env: 'dev' }), /test 또는 prod/);
 });
 
-test('live-kit(사용자가 붙여 넣는 파일)은 현재 코드의 test 묶음과 같다 — 다르면: node rich300/deploy/make-bundle.mjs --env test rich300/live-kit (병합 전 이 폴더는 제거)', () => {
-  const { files } = makeBundle({ env: 'test' }); for (const n of ['Code.gs', 'Fill.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../live-kit/${n}`, import.meta.url), 'utf8'), files[n], n);
+test('apps-script(사용자가 붙여 넣는 파일)는 현재 코드의 운영 묶음과 같다 — 다르면: node rich300/deploy/make-bundle.mjs rich300/apps-script', () => {
+  const { files } = makeBundle(); for (const n of ['Code.gs', 'Fill.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../apps-script/${n}`, import.meta.url), 'utf8'), files[n], n);
 });

@@ -333,7 +333,6 @@ function tgOnCallback(env, ev) {
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
-  if (parts[0] === 'lv' && env.live && typeof env.live.onCallback === 'function') return env.live.onCallback(env, ev, parts, cb, answer);      // 검증 하니스(테스트 환경 전용) 확장점
   answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button' };
 }
 function tgOnResponse(env, ev, sid, choice, cb, answer) {
