@@ -60,7 +60,7 @@ function rich300PageCheck_(e) {
   var html, appUrl = rich300AppUrl_();
   try {
     var p = rich300VerifyProps_(), st = rich300VerifyJson_('tg:stats', null), self = RICH300_ENGINE.checkFromSelfTest(rich300SelfTestRun_());
-    var sections = [{ title: '설치 점검', items: self }, { title: '실환경 자동 검증(호환성·계산·시트·백업)', items: rich300VerifyItems_() }, { title: 'Telegram 폴링 실측', items: RICH300_ENGINE.checkPollItems(st) },
+    var sections = [{ title: '설치 점검', items: self }, { title: '실환경 자동 검증(호환성·계산·시트·백업)', items: rich300VerifyItems_() }, { title: '봇 사전 점검(읽기 전용)', items: RICH300_ENGINE.checkBotItems(rich300VerifyJson_('botcheck:last', null)) }, { title: 'Telegram 폴링 실측', items: RICH300_ENGINE.checkPollItems(st, { last: rich300VerifyJson_('tg:last', null) }) },
       { title: '트리거', items: [{ id: 'T1', status: 'PASS', text: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).sort().join(', ') || '없음' }] }];
     var notes = []; if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') notes.push('운영 승인 전: Telegram 호출이 모두 차단되어 있습니다(정상). 승인 후 rich300Install 을 다시 실행하세요.');
     html = RICH300_ENGINE.checkRenderHtml({ sections: sections, generatedAt: Date.now(), notes: notes }, { appUrl: appUrl });

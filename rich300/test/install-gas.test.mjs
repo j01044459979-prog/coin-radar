@@ -53,5 +53,31 @@ test('?p=check: 검증을 시작하지 않았으면 안내, 폴링 전이면 WAI
   const E = g.ctx.RICH300_ENGINE; assert.equal(E.checkPollItems(null)[0].status, 'WAIT'); assert.equal(E.checkSummary([{ status: 'PASS' }, { status: 'WARN' }]).verdict, 'WARN'); assert.equal(E.checkSummary([{ status: 'PASS' }]).verdict, 'PASS'); assert.equal(E.checkSummary([{ status: 'FAIL' }, { status: 'WAIT' }]).verdict, 'FAIL');
 });
 test('Install.gs·Verify.gs 는 값(토큰·키·이메일)을 로그에 쓰지 않고 삭제 호출이 없다', () => {
-  for (const f of ['Install.gs', 'Verify.gs']) { const s = read(f); assert.ok(!/getProperty\('RICH300_TG_TOKEN'\)[^;]*Logger/.test(s)); assert.ok(!/\.setTrashed\(|deleteSheet|removeFile|deleteFile|trashFile/.test(s), f); }
+  for (const f of ['Install.gs', 'Verify.gs']) { const s = read(f); assert.ok(!/Logger\.log\([^\n]*\bgetProperty\(/.test(s), f); assert.ok(!/\.setTrashed\(|deleteSheet|removeFile|deleteFile|trashFile/.test(s), f); }
+});
+
+test('읽기 전용 봇 점검: 승인 속성 없으면 호출 0건, READONLY_OK 면 getMe·getWebhookInfo 두 호출만(메시지·수신·웹훅 변경 없음)', () => {
+  const g = load({ props: {} }); let r = g.ctx.rich300BotCheck(); assert.equal(r.error, 'not-approved'); assert.equal(g.spy.fetches, 0);
+  const h = load({ props: { RICH300_TG_READONLY_OK: 'yes' } }); h.ctx.rich300Setup_('prod'); r = h.ctx.rich300BotCheck(); assert.equal(r.ok, true); assert.deepEqual(h.tele.calls.map(c => c.method), ['getMe', 'getWebhookInfo']); assert.equal(h.tele.sent.length, 0);
+  assert.ok(r.items.every(i => i.status === 'PASS')); const j = JSON.parse(h.pm.get('botcheck:last')); assert.deepEqual(Object.keys(j.wh).sort(), ['hasAllowed', 'hasUrl', 'lastErrorAt', 'ok', 'pending']);
+  assert.ok(!JSON.stringify(h.spy.logs).includes(FAKE_TOKEN));
+  // 읽기 전용 승인으로는 그 밖의 호출(메시지·폴링)이 계속 차단된다
+  h.tele.say(OWNER, 'hi'); const poll = h.ctx.rich300TgPoll(); assert.equal(poll.status, 'error'); assert.ok(!h.tele.calls.some(c => c.method === 'getUpdates')); assert.equal(h.tele.sent.length, 0);
+});
+test('읽기 전용 봇 점검: 웹훅·대기 업데이트·오류 기록을 보고만 하고 아무것도 지우거나 바꾸지 않는다', () => {
+  const g = load({ props: { RICH300_TG_READONLY_OK: 'yes' } }); g.ctx.rich300Setup_('prod'); g.tele.webhookUrl = 'https://other.example/hook'; g.tele.updates.push({ update_id: 1, message: { message_id: 1, from: { id: 5, is_bot: false }, chat: { id: 5, type: 'private' }, text: 'x' } });
+  const r = g.ctx.rich300BotCheck(); assert.equal(r.ok, false); assert.equal(r.items.find(i => i.id === 'B2').status, 'FAIL'); assert.deepEqual(g.tele.calls.map(c => c.method), ['getMe', 'getWebhookInfo']); assert.equal(g.tele.webhookUrl, 'https://other.example/hook');
+  assert.equal(g.tele.updates.length, 1);
+  const E = g.ctx.RICH300_ENGINE; assert.equal(E.checkBotItems({ me: { ok: true }, wh: { ok: true, hasUrl: false, pending: 7, lastErrorAt: 1 } }).filter(i => i.status === 'WARN').length, 2); assert.equal(E.checkBotItems(null)[0].status, 'WAIT');
+  assert.equal(E.checkPollItems({ runs: 3, totalMs: 3, maxMs: 1 }, { last: { r: { status: 'error', code: 'conflict' } } })[0].status, 'FAIL');       // 폴링이 409를 받으면 다른 소비자·웹훅 의심으로 표시
+});
+test('?p=ping: 소유자는 OK, 다른 계정은 DENY, 이메일 불명은 BLOCKED(값 없이 상태 단어만)', () => {
+  const ok = load({}).ctx.doGet({ parameter: { p: 'ping' } }).text; assert.match(ok, /reachable: yes/); assert.match(ok, /owner-match: yes/); assert.match(ok, /verdict: OK/); assert.ok(!/@|me@example/.test(ok));
+  assert.match(load({ email: 'other@example.com' }).ctx.doGet({ parameter: { p: 'ping' } }).text, /verdict: DENY/); const an = load({ email: '' }).ctx.doGet({ parameter: { p: 'ping' } }).text; assert.match(an, /visitor-email: hidden/); assert.match(an, /BLOCKED/); assert.ok(!/@/.test(an));
+});
+
+test('승인 전이라도 읽기 전용 승인(RICH300_TG_READONLY_OK)이 있으면 설치가 봇 사전 점검까지 하고, 쓰기·수신 호출은 0건', () => {
+  const g = load({ props: { RICH300_TG_READONLY_OK: 'yes' } }), r = g.ctx.rich300Install(); assert.equal(statusOf(r, 'I6a'), 'PASS'); assert.equal(statusOf(r, 'I6'), 'WAIT');
+  assert.deepEqual(g.tele.calls.map(c => c.method), ['getMe', 'getWebhookInfo']); assert.ok(!g.spy.triggers.some(t => t.fn === 'rich300TgPoll')); assert.equal(g.tele.sent.length, 0);
+  const w = load({ props: { RICH300_TG_READONLY_OK: 'yes' } }); w.tele.webhookUrl = 'https://other.example/h'; const r2 = w.ctx.rich300Install(); assert.equal(statusOf(r2, 'I6a'), 'FAIL'); assert.equal(r2.ok, false); assert.equal(w.tele.webhookUrl, 'https://other.example/h');
 });

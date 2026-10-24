@@ -883,7 +883,7 @@ function backupSwitchChecks(env, newId, { expectEnv } = {}) {
 const DEPLOY_ENVS = Object.freeze(['test', 'prod']);
 function deployGate(p, method) {                    // 허용이면 null, 차단이면 사유 문자열
   if (p.env !== 'test' && p.env !== 'prod') return 'env-unset';
-  if (p.env === 'prod') return p.prodApproved === 'yes' ? null : 'prod-not-approved';
+  if (p.env === 'prod') return p.prodApproved === 'yes' || (p.readOnlyOk === 'yes' && (method === 'getMe' || method === 'getWebhookInfo')) ? null : 'prod-not-approved';       // 읽기 전용 점검(RICH300_TG_READONLY_OK=yes)은 getMe·getWebhookInfo 두 호출만 허용(메시지·수신·설정 변경 없음)
   return p.testTgAllow === 'yes' ? null : 'test-tg-off';
 }
 function deployMarkEnv(se, name) {                   // 최초 1회만 기록(이미 있으면 같은 값인지 확인)
@@ -1960,7 +1960,8 @@ function checkSummary(items) {
 // selfTest 항목({id,level,ok,text})을 같은 형식으로
 const checkFromSelfTest = r => (r && Array.isArray(r.items) ? r.items.map(i => ({ id: `S-${i.id}`, status: i.ok ? 'PASS' : i.level === 'fail' ? 'FAIL' : 'WARN', text: i.ok ? i.text.replace(/\s*\(.*$/, '') : i.text })) : []);
 // 폴링 통계(tg:stats)를 실측 항목으로: 평균·최대 실행 시간, 간격 이상, 느린 실행
-function checkPollItems(st, { minRuns = 20 } = {}) {
+function checkPollItems(st, { minRuns = 20, last = null } = {}) {
+  if (last && last.r && last.r.status === 'error' && last.r.code === 'conflict') return [{ id: 'P0', status: 'FAIL', text: '다른 곳에서 같은 봇의 업데이트를 가져가고 있거나 웹훅이 켜져 있습니다(409). 폴링이 동작하지 않습니다 — 설정은 건드리지 않았습니다' }];
   if (!st || !st.runs) return [{ id: 'P1', status: 'WAIT', text: 'Telegram 폴링이 아직 한 번도 실행되지 않았습니다(승인·페어링 후 시작)' }];
   const avg = Math.round(st.totalMs / st.runs), out = [];
   out.push({ id: 'P1', status: st.runs >= minRuns ? 'PASS' : 'WAIT', text: `폴링 ${st.runs}회 실행${st.runs >= minRuns ? '' : `(판정은 ${minRuns}회 이상부터)`}` });
@@ -1985,6 +1986,18 @@ ${sections.map(sec).join('\n')}
 ${dashFooter({ generatedAt })}</main></body></html>`;
 }
 const checkRenderError = appUrl => `${dashHead('RICH300 점검')}<body><main><header><h1>RICH 300 · 설치 점검</h1></header>${dashNav('check', appUrl)}<section class="card"><p>점검 결과를 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
+
+// 봇 사전 점검(읽기 전용 getMe·getWebhookInfo 결과의 요약 info: {me:{ok,code}, wh:{ok, hasUrl, pending, lastErrorAt, hasAllowed}})
+function checkBotItems(info) {
+  if (!info) return [{ id: 'B0', status: 'WAIT', text: '봇 사전 점검 전(rich300BotCheck 실행, 읽기 전용 승인 또는 운영 승인 필요)' }];
+  const out = [];
+  out.push({ id: 'B1', status: info.me && info.me.ok ? 'PASS' : 'FAIL', text: info.me && info.me.ok ? '봇 토큰 유효(getMe)' : `봇 토큰을 확인하지 못했습니다(${info.me ? info.me.code : 'error'})` });
+  if (!info.wh || !info.wh.ok) { out.push({ id: 'B2', status: 'FAIL', text: '웹훅 상태를 확인하지 못했습니다' }); return out; }
+  out.push({ id: 'B2', status: info.wh.hasUrl ? 'FAIL' : 'PASS', text: info.wh.hasUrl ? '이 봇에는 웹훅이 설정되어 있습니다 — 다른 수신 서비스가 있다는 뜻이며 폴링을 쓸 수 없습니다(설정은 지우지 않음)' : '웹훅 없음(폴링 사용 가능)' });
+  out.push({ id: 'B3', status: info.wh.pending > 0 ? 'WARN' : 'PASS', text: info.wh.pending > 0 ? `아직 가져가지 않은 업데이트 ${info.wh.pending}건 — 첫 폴링에서 처리됩니다(페어링 전에는 모두 무시, 기록 없음)` : '대기 중인 업데이트 없음' });
+  out.push({ id: 'B4', status: info.wh.lastErrorAt ? 'WARN' : 'PASS', text: info.wh.lastErrorAt ? '웹훅 전달 오류 기록이 있습니다(과거 웹훅 사용 흔적)' : '웹훅 오류 기록 없음' });
+  return out;
+}
 
 // ── livevectors.mjs ──
 // 자동 생성 파일 — 수정하지 마세요. 생성: python3 rich300/test/fixtures/gen_live_vectors.py
@@ -2169,7 +2182,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -2239,7 +2252,13 @@ function rich300UiWho_() {                              // 'owner' | 'other'(이
 }
 function rich300AppUrl_() { try { var u = ScriptApp.getService().getUrl(); return /^https:\/\/\S+\/exec$/.test(u) ? u : ''; } catch (err) { return ''; } }
 function rich300IsOwner_() { return rich300UiWho_() === 'owner'; }
+function rich300Ping_() {                              // 배포·본인 인증 진단: 값 없이 상태 단어만(이메일·ID 없음). 접근 제한(나만)이 걸려 있으면 소유자만 여기에 닿는다.
+  var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim(), who = rich300UiWho_();
+  var lines = ['RICH300 ping', 'reachable: yes', 'visitor-email: ' + (who === 'anon' ? 'hidden' : 'visible'), 'owner-setting: ' + (owner.length > 3 ? 'set' : 'unset'), 'owner-match: ' + (who === 'owner' ? 'yes' : who === 'other' ? 'no' : 'unknown'), 'verdict: ' + (who === 'owner' ? 'OK(소유자 확인됨)' : who === 'other' ? 'DENY(다른 계정)' : 'BLOCKED(이메일을 읽지 못함: 실행 계정·배포 설정 확인)')];
+  return ContentService.createTextOutput(lines.join('\n')).setMimeType(ContentService.MimeType.TEXT);
+}
 function doGet(e) {
+  if (e && e.parameter && e.parameter.p === 'ping') return rich300Ping_();
   var name = e && e.parameter && e.parameter.p, fn = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? RICH300_PAGES_[name] : null;
   if (fn && typeof globalThis[fn] === 'function') {
     var who = rich300UiWho_();
@@ -2547,7 +2566,7 @@ function rich300BackupSwitchFromProps() {
  */
 function rich300TgGate_(method) {
   var p = PropertiesService.getScriptProperties();
-  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
+  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), readOnlyOk: p.getProperty('RICH300_TG_READONLY_OK'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
 }
 /** 초기 설정(멱등): 환경 이름·소유자 이메일 기록, 시트가 없으면 새로 만들고 저장소 초기화·환경 표식. 트리거·승인 플래그는 건드리지 않는다. */
 function rich300SetupTest() { return rich300Setup_('test'); }
@@ -2650,7 +2669,7 @@ function rich300PageCheck_(e) {
   var html, appUrl = rich300AppUrl_();
   try {
     var p = rich300VerifyProps_(), st = rich300VerifyJson_('tg:stats', null), self = RICH300_ENGINE.checkFromSelfTest(rich300SelfTestRun_());
-    var sections = [{ title: '설치 점검', items: self }, { title: '실환경 자동 검증(호환성·계산·시트·백업)', items: rich300VerifyItems_() }, { title: 'Telegram 폴링 실측', items: RICH300_ENGINE.checkPollItems(st) },
+    var sections = [{ title: '설치 점검', items: self }, { title: '실환경 자동 검증(호환성·계산·시트·백업)', items: rich300VerifyItems_() }, { title: '봇 사전 점검(읽기 전용)', items: RICH300_ENGINE.checkBotItems(rich300VerifyJson_('botcheck:last', null)) }, { title: 'Telegram 폴링 실측', items: RICH300_ENGINE.checkPollItems(st, { last: rich300VerifyJson_('tg:last', null) }) },
       { title: '트리거', items: [{ id: 'T1', status: 'PASS', text: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).sort().join(', ') || '없음' }] }];
     var notes = []; if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') notes.push('운영 승인 전: Telegram 호출이 모두 차단되어 있습니다(정상). 승인 후 rich300Install 을 다시 실행하세요.');
     html = RICH300_ENGINE.checkRenderHtml({ sections: sections, generatedAt: Date.now(), notes: notes }, { appUrl: appUrl });
@@ -2684,7 +2703,9 @@ function rich300Install() {
   else add('I5', 'PASS', '자동 검증은 이미 시작되어 있습니다');
   var link = null;
   if (!p.getProperty('RICH300_TG_TOKEN')) add('I6', 'WAIT', '스크립트 속성 RICH300_TG_TOKEN(기존 운영 봇 토큰)이 없습니다');
-  else if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') add('I6', 'WAIT', '운영 승인 대기: 스크립트 속성 RICH300_PROD_APPROVED=yes 를 넣고 이 함수를 다시 실행하면 봇 연결이 시작됩니다(그 전에는 Telegram 호출 0건)');
+  else if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') {
+    if (p.getProperty('RICH300_TG_READONLY_OK') === 'yes') { var bc = rich300BotCheck(); add('I6a', bc.ok ? 'PASS' : 'FAIL', bc.ok ? '봇 사전 점검(읽기 전용): 토큰 유효·웹훅 없음' : '봇 사전 점검(읽기 전용)에서 문제 발견 — 점검 화면(?p=check)의 봇 사전 점검 항목 참고'); }
+    add('I6', 'WAIT', '운영 승인 대기: 스크립트 속성 RICH300_PROD_APPROVED=yes 를 넣고 이 함수를 다시 실행하면 봇 연결이 시작됩니다(그 전에는 쓰기 호출 0건)'); }
   else link = rich300InstallTelegram_(p, add);
   return rich300InstallFinish_(steps, link);
 }
@@ -2705,4 +2726,17 @@ function rich300InstallFinish_(steps, link) {
   var fail = steps.filter(function (s) { return s.status === 'FAIL'; }).length, wait = steps.filter(function (s) { return s.status === 'WAIT'; }).length;
   Logger.log('RICH300 설치: ' + (fail ? '실패 ' + fail : wait ? '진행 중(할 일 ' + wait + ')' : '완료') + '\n' + steps.map(function (s) { return '[' + s.status + '] ' + s.id + ' ' + s.text; }).join('\n') + (link ? '\n페어링 링크: ' + link : ''));
   return { ok: fail === 0, steps: steps, pairLink: link };
+}
+
+/** 봇 사전 점검(읽기 전용): getMe·getWebhookInfo 두 호출만. 메시지 전송·getUpdates·웹훅 변경·삭제 없음. 승인 전이면 RICH300_TG_READONLY_OK=yes(또는 운영 승인)가 필요하다. 결과는 점검 화면(?p=check)에도 나온다. */
+function rich300BotCheck() {
+  var p = PropertiesService.getScriptProperties();
+  if (!p.getProperty('RICH300_TG_TOKEN')) { Logger.log('RICH300 봇 점검: 스크립트 속성 RICH300_TG_TOKEN 이 없습니다'); return { ok: false, error: 'no-token' }; }
+  if (p.getProperty('RICH300_TG_READONLY_OK') !== 'yes' && p.getProperty('RICH300_PROD_APPROVED') !== 'yes') { Logger.log('RICH300 봇 점검: 읽기 전용 점검 승인 전입니다. 스크립트 속성 RICH300_TG_READONLY_OK=yes 를 넣고 다시 실행하세요(getMe·getWebhookInfo 두 호출만 합니다)'); return { ok: false, error: 'not-approved' }; }
+  var env = rich300TgEnv_(), me = RICH300_ENGINE.tgCall(env, 'getMe', {}), wh = RICH300_ENGINE.tgCall(env, 'getWebhookInfo', {}), r = wh.result || {};
+  var info = { at: Date.now(), me: { ok: !!me.ok, code: me.ok ? null : String(me.code || 'error') }, wh: { ok: !!wh.ok, hasUrl: !!r.url, pending: Number(r.pending_update_count || 0), lastErrorAt: r.last_error_date ? 1 : 0, hasAllowed: !!(r.allowed_updates && r.allowed_updates.length) } };
+  p.setProperty('botcheck:last', JSON.stringify(info));
+  var items = RICH300_ENGINE.checkBotItems(info);
+  Logger.log('RICH300 봇 점검(읽기 전용)\n' + items.map(function (i) { return '[' + i.status + '] ' + i.id + ' ' + i.text; }).join('\n'));
+  return { ok: items.every(function (i) { return i.status !== 'FAIL'; }), items: items };
 }

@@ -6,7 +6,7 @@
  */
 function rich300TgGate_(method) {
   var p = PropertiesService.getScriptProperties();
-  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
+  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), readOnlyOk: p.getProperty('RICH300_TG_READONLY_OK'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
 }
 /** 초기 설정(멱등): 환경 이름·소유자 이메일 기록, 시트가 없으면 새로 만들고 저장소 초기화·환경 표식. 트리거·승인 플래그는 건드리지 않는다. */
 function rich300SetupTest() { return rich300Setup_('test'); }
