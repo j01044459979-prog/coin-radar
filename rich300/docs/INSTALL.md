@@ -7,6 +7,16 @@
 - 기존 Google 계정(Apps Script·Sheets·Drive 사용)
 - 기존 Telegram 봇 토큰(GitHub Secret `TELEGRAM_BOT_TOKEN` 과 같은 값 — 값을 어디에도 붙여 넣어 공유하지 마세요)
 
+## 가장 쉬운 설치: 복사 없이(권장) — 부트스트랩
+큰 `Code.gs`(약 2,700줄)를 손으로 복사하면 끝부분이 잘리는 사고가 날 수 있습니다(`SyntaxError: Unexpected end of input`). 아래 방법은 **작은 파일 2개(합쳐 7KB)만** 붙여 넣고, 나머지는 프로젝트가 스스로 GitHub 에서 받아 **SHA-256 확인 → 문법 검사 → 자기 자신에 반영**합니다. 하나라도 어긋나면 아무것도 바꾸지 않습니다.
+| # | 할 일 |
+|---|---|
+| A | (최초 1회) <https://script.google.com/home/usersettings> 에서 **Google Apps Script API** 를 켭니다 |
+| B | 기존 `RICH300` 프로젝트에서 `Code.gs` 전체를 `rich300/apps-script-bootstrap/Code.gs`(Raw) 내용으로 교체, 프로젝트 설정 → "appsscript.json 매니페스트 파일 표시" 후 `appsscript.json` 을 `rich300/apps-script-bootstrap/appsscript.json` 내용으로 교체 |
+| C | 함수 `rich300BootstrapCheck` 실행(권한 동의) → 실행 로그에 `[PASS] B1 B2 B3`(변경 없음) |
+| D | 함수 `rich300Bootstrap` 실행 → `[PASS] B4` → 편집기를 새로 고침하면 `Code.gs`·`Fill.html`·`appsscript.json` 이 설치 파일로 바뀌어 있습니다 |
+이후는 아래 순서의 **3번(배포)** 부터 이어서 합니다(1~2번은 이미 끝난 것). 부트스트랩은 Telegram·시트·Drive 에 접근하지 않고 웹 앱 배포도 하지 않습니다. 설치 후 Google 계정의 "서드파티 앱 액세스"에서 이 스크립트의 `script.projects` 권한을 철회해도 됩니다(최종 매니페스트에는 없는 권한입니다).
+
 ## 순서
 | # | 할 일 | 소요 |
 |---|---|---|

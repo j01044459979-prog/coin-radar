@@ -1917,7 +1917,7 @@ function siglogBuild(env, { now = env.now(), filter = 'all' } = {}) {
   const se = env.storeEnv(), data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = new Map(data('response').map(r => [r.sid, r])), fills = data('fill');
   const trades = pnlComputeAll(fills, {}), fillsBy = new Map();
   for (const f of fills) { if (!fillsBy.has(f.sid)) fillsBy.set(f.sid, []); fillsBy.get(f.sid).push(f); }
-  const f = Object.hasOwn(SIGLOG_FILTERS, filter) ? filter : 'all';
+  const f = Object.prototype.hasOwnProperty.call(SIGLOG_FILTERS, filter) ? filter : 'all';
   const rows = signals.sort((a, b) => b.signalAt - a.signalAt || (a.sid < b.sid ? 1 : -1)).map(s => {
     const r = responses.get(s.sid), t = trades.get(s.sid), choice = r ? r.choice : 'none', closed = t && t.status === 'closed', net = closed ? t.totals.netEnteredMicro : null;
     return { sid: s.sid, atLabel: sgKst(s.signalAt), symbol: s.symbolId.replace(/USDT$/, ''), dir: s.dir, strategy: s.strategy, strategyName: AN_STRATEGY_NAME[s.strategy] ?? s.strategy, score: s.score ?? null,
@@ -1954,7 +1954,7 @@ const siglogRenderError = appUrl => `${dashHead('RICH300 추천 기록')}<body><
 const CHECK_STATUS_LABEL = Object.freeze({ PASS: '통과', FAIL: '실패', WARN: '주의', WAIT: '진행 중', SKIP: '건너뜀' });
 // items: [{id,status,text}] (status: PASS|FAIL|WARN|WAIT|SKIP)
 function checkSummary(items) {
-  const c = { PASS: 0, FAIL: 0, WARN: 0, WAIT: 0, SKIP: 0 }; for (const i of items) if (Object.hasOwn(c, i.status)) c[i.status]++;
+  const c = { PASS: 0, FAIL: 0, WARN: 0, WAIT: 0, SKIP: 0 }; for (const i of items) if (Object.prototype.hasOwnProperty.call(c, i.status)) c[i.status]++;
   return { ...c, verdict: c.FAIL ? 'FAIL' : c.WAIT ? 'WAIT' : c.WARN ? 'WARN' : 'PASS' };
 }
 // selfTest 항목({id,level,ok,text})을 같은 형식으로
