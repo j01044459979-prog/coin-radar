@@ -42,8 +42,10 @@ test('패리티: 번들(전역 스코프, 모듈 없음)과 ESM이 같은 입력
 });
 
 import { readFileSync } from 'node:fs';
-test('S0용 Engine.gs는 현재 엔진 번들과 같다(S0 종료 시 함께 삭제). 다르면: node rich300/build.mjs rich300/s0/Engine.gs', () => {
-  assert.equal(readFileSync(new URL('../s0/Engine.gs', import.meta.url), 'utf8'), buildEngine());
+test('S0용 Engine.gs는 S0 시점의 엔진 스냅샷: 문법이 유효하고 핵심 함수를 내보낸다(현재 번들과 같을 필요 없음 — 모듈이 늘어도 S0 키트를 다시 만들지 않는다. S0 종료 시 함께 삭제)', () => {
+  const src = readFileSync(new URL('../s0/Engine.gs', import.meta.url), 'utf8'); assert.doesNotThrow(() => new vm.Script(src));
+  const ctx = { console, Date }; vm.createContext(ctx); vm.runInContext(src, ctx);
+  for (const n of ['ledgerBuildDaily', 'storeCreate', 'ingestHandle', 'compoundIdealSeries']) assert.equal(typeof ctx.RICH300_ENGINE[n], 'function', n);
 });
 test('S0 엔진 벤치(s0EngineBench): 번들을 붙인 프로젝트를 흉내 낸 vm에서 1년 일별 계산이 끝까지 실행된다', () => {
   const ctx = { console, Date }; vm.createContext(ctx); vm.runInContext(buildEngine() + '\n' + readFileSync(new URL('../s0/Code.gs', import.meta.url), 'utf8').replace(/var S0_TEST_KEY[^\n]*\n/, "var S0_TEST_KEY = 'x';\n"), ctx);
