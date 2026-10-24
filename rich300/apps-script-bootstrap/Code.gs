@@ -3,7 +3,7 @@
  *  · 하는 일: GitHub(공개 저장소)에서 MANIFEST.txt 와 설치 파일 3개를 받아 → SHA-256 이 MANIFEST 와 같은지 확인 → 실제 Apps Script V8 에서 문법 검사(실행하지 않음)
  *    → 매니페스트가 '나만 접근·접속한 사용자로 실행'인지 확인 → 이 프로젝트의 내용을 교체(Apps Script API). 하나라도 어긋나면 아무것도 바꾸지 않는다.
  *  · 하지 않는 일: Telegram 호출, 웹 앱 배포, 시트·Drive 접근, 다른 프로젝트 변경, 삭제. 토큰·키는 다루지 않는다.
- *  · 반영 경로 2개를 차례로 시도한다: ① Apps Script API(스크립트의 Cloud 프로젝트에서 API 가 켜져 있어야 함) ② Drive API(이 프로젝트 파일 하나만, 쓴 뒤 다시 읽어 확인). 실패 원인은 Google 응답 문구와 함께 분류해 보여 준다.
+ *  · 반영 경로 2개를 차례로 시도한다: ① Apps Script API(스크립트의 Cloud 프로젝트에서 API 가 켜져 있어야 함) ② Drive API(이 프로젝트 파일 하나만, 쓴 뒤 다시 읽어 확인; 권한은 drive.scripts·drive.file 만, 전체 Drive 아님 — 실제 동작은 미검증). 실패 원인은 Google 응답 문구와 함께 분류해 보여 준다.
  *  · 실행: rich300BootstrapCheck()(받기·검증만, 변경 없음) → rich300Bootstrap()(검증 후 반영). 반영하면 이 파일은 설치 파일로 대체되어 사라진다.
  */
 var RICH300_BOOT_REPO = 'j01044459979-prog/coin-radar';

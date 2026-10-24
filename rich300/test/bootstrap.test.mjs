@@ -86,8 +86,8 @@ test('다운로드 실패(404·네트워크 예외)는 중단, PUT 없음', () =
   let w = world({ serve: () => undefined }); assert.equal(w.ctx.rich300Bootstrap().ok, false); assert.equal(w.spy.puts.length, 0);
   w = world({ serve: () => { throw new Error('boom https://raw.githubusercontent.com/secret'); } }); const r = w.ctx.rich300Bootstrap(); assert.equal(r.ok, false); assert.ok(!JSON.stringify(r).includes('raw.githubusercontent.com')); assert.equal(w.spy.puts.length, 0);
 });
-test('부트스트랩 파일 자체: 작고(15KB 미만), 권한 범위 3개(script.projects·drive·외부 요청), 삭제·Telegram·시트·Drive 접근 없음, 설치 대상은 release 브랜치의 3개 파일', () => {
+test('부트스트랩 파일 자체: 작고(15KB 미만), 권한 범위 4개(script.projects·drive.scripts·drive.file·외부 요청, 전체 drive 아님), 삭제·Telegram·시트·Drive 접근 없음, 설치 대상은 release 브랜치의 3개 파일', () => {
   assert.ok(BOOT.length < 15000); const man = JSON.parse(readFileSync(new URL('../apps-script-bootstrap/appsscript.json', import.meta.url), 'utf8'));
-  assert.deepEqual(man.oauthScopes, ['https://www.googleapis.com/auth/script.projects', 'https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/script.external_request']); assert.equal(man.runtimeVersion, 'V8'); assert.equal(man.timeZone, 'Asia/Seoul'); assert.equal(man.webapp, undefined);
+  assert.deepEqual(man.oauthScopes, ['https://www.googleapis.com/auth/script.projects', 'https://www.googleapis.com/auth/drive.scripts', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/script.external_request']); assert.ok(!man.oauthScopes.includes('https://www.googleapis.com/auth/drive'));       // 전체 Drive 권한은 요청하지 않는다 assert.equal(man.runtimeVersion, 'V8'); assert.equal(man.timeZone, 'Asia/Seoul'); assert.equal(man.webapp, undefined);
   assert.ok(!/SpreadsheetApp|DriveApp|api\.telegram|PropertiesService|deleteTrigger|setTrashed|method: 'delete'|deployments|\/files\?|files\.list|\/trash/.test(BOOT)); assert.match(BOOT, /RICH300_BOOT_REF = 'release\/rich300-prod'/);
 });

@@ -7,13 +7,29 @@
 - 기존 Google 계정(Apps Script·Sheets·Drive 사용)
 - 기존 Telegram 봇 토큰(GitHub Secret `TELEGRAM_BOT_TOKEN` 과 같은 값 — 값을 어디에도 붙여 넣어 공유하지 마세요)
 
-## 가장 쉬운 설치: 복사 없이(권장) — 부트스트랩
+## 설치 방법 (권장 순서)
+| 우선 | 방법 | 사용자 작업 | 권한 | 비고 |
+|---|---|---|---|---|
+| **1 (권장)** | **clasp 설치 스크립트** (`rich300/deploy/clasp-install.sh`, Cloud Shell) | Cloud Shell 열기 → 명령 1줄 붙여 넣기 → Google 로그인·승인 | clasp 공식 권한(`script.projects`·`drive.file` 등), **전체 Drive 아님**, 끝나면 자동 로그아웃 | 사용자 설정의 Apps Script API 토글이 이 경로에서 쓰입니다(이미 켬) |
+| 2 | 부트스트랩 v2 (작은 파일 2개 붙여 넣기 + 실행) | 붙여 넣기 2개 + 실행 + 권한 승인 | `script.projects`·`drive.scripts`·`drive.file`(전체 Drive 아님) | Apps Script API 경로는 기본 Cloud 프로젝트 문제로 막힐 수 있고, Drive 대체 경로는 실제 동작 미검증 |
+| 3 (최후) | 큰 `Code.gs` 한 번 붙여 넣기(**Copy raw file** 버튼) | 붙여 넣기 3개 | 없음 | 가장 단순하지만 손 복사 |
+
+### 1) clasp 설치 스크립트 (권장)
+1. <https://shell.cloud.google.com> 을 열고(프로젝트 편집기를 연 Google 계정으로 로그인, 처음이면 약관 동의) 아래 한 줄을 붙여 넣어 실행합니다. `<커밋>` 은 보고서에 적힌 커밋 해시입니다.
+   ```
+   curl -fsSL https://raw.githubusercontent.com/j01044459979-prog/coin-radar/<커밋>/rich300/deploy/clasp-install.sh | bash
+   ```
+2. 안내에 따라 로그인 주소를 열어 승인하고, 마지막에 나오는(열리지 않는) 주소창의 URL 전체를 복사해 터미널에 붙여 넣습니다.
+3. `[PASS] 반영 완료` 가 나오면 끝입니다. 스크립트는 설치 파일 3개의 SHA-256·문법·매니페스트(나만 접근·접속한 사용자로 실행)를 먼저 확인하고, 이 프로젝트(`RICH300`)에만 쓰며, 다시 내려받아 내용이 같음을 확인한 뒤 로그아웃(토큰 삭제)합니다. 새 프로젝트 생성·삭제·배포·Telegram 호출은 없습니다.
+4. 편집기를 새로 고침 → 함수 `rich300Install` 실행.
+
+### 2) 부트스트랩 v2
 큰 `Code.gs`(약 2,700줄)를 손으로 복사하면 끝부분이 잘리는 사고가 날 수 있습니다(`SyntaxError: Unexpected end of input`). 아래 방법은 **작은 파일 2개(합쳐 7KB)만** 붙여 넣고, 나머지는 프로젝트가 스스로 GitHub 에서 받아 **SHA-256 확인 → 문법 검사 → 자기 자신에 반영**합니다. 하나라도 어긋나면 아무것도 바꾸지 않습니다.
 | # | 할 일 |
 |---|---|
 | A | (선택) <https://script.google.com/home/usersettings> 의 **Google Apps Script API** 토글. 이 토글은 `clasp` 같은 외부 도구용이고, 스크립트가 자기 자신을 고치는 호출은 **스크립트의 Cloud 프로젝트**에서 API 가 켜져 있어야 합니다(기본 프로젝트는 사용자가 켤 수 없음). 그래서 이 토글을 켜도 B4 가 실패할 수 있고, 그때는 부트스트랩이 자동으로 **Drive 경로(B5)** 로 넘어갑니다 |
-| B | 기존 `RICH300` 프로젝트에서 `Code.gs` 전체를 `rich300/apps-script-bootstrap/Code.gs`(Raw, 12KB) 내용으로 교체, `appsscript.json` 을 `rich300/apps-script-bootstrap/appsscript.json`(302바이트) 내용으로 교체. GitHub 파일 화면 오른쪽 위의 **Copy raw file** 버튼을 쓰면 끝부분이 잘리지 않습니다 |
-| C | 함수 `rich300Bootstrap` 실행(권한 동의 — 이 임시 설치 도구는 Drive 권한을 요청합니다. 이 프로젝트 파일 하나만 읽고 덮어쓰며, 설치 후 최종 매니페스트에는 없는 권한입니다) → 실행 로그에 `B1 B2 B3 PASS` 와 `B4` 또는 `B5` 결과 |
+| B | 기존 `RICH300` 프로젝트에서 `Code.gs` 전체를 `rich300/apps-script-bootstrap/Code.gs`(Raw, 12KB) 내용으로 교체, `appsscript.json` 을 `rich300/apps-script-bootstrap/appsscript.json`(약 350바이트) 내용으로 교체. GitHub 파일 화면 오른쪽 위의 **Copy raw file** 버튼을 쓰면 끝부분이 잘리지 않습니다 |
+| C | 함수 `rich300Bootstrap` 실행(권한 동의 — 이 임시 설치 도구는 `drive.scripts`·`drive.file` 권한(전체 Drive 아님)을 요청합니다. 이 프로젝트 파일 하나만 읽고 덮어쓰며, 설치 후 최종 매니페스트에는 없는 권한입니다) → 실행 로그에 `B1 B2 B3 PASS` 와 `B4` 또는 `B5` 결과 |
 | D | `B4 PASS`(Apps Script API) 또는 `B5 PASS`(Drive 경로, 쓴 뒤 다시 읽어 내용 일치 확인)이면 편집기를 새로 고침 → `Code.gs`·`Fill.html`·`appsscript.json` 이 설치 파일로 바뀌어 있습니다 |
 이후는 아래 순서의 **3번(배포)** 부터 이어서 합니다(1~2번은 이미 끝난 것). 부트스트랩은 Telegram·시트·Drive 에 접근하지 않고 웹 앱 배포도 하지 않습니다. 설치 후 <https://myaccount.google.com/permissions> 에서 이 스크립트의 `script.projects`·Drive 권한을 철회해도 됩니다(최종 매니페스트에는 없는 권한입니다).
 
