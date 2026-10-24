@@ -5,7 +5,24 @@
  *  · nonce: CacheService(최선 노력, 만료·퇴출될 수 있음 — 재전송 신호는 sid 유일키로 어차피 중복 기록되지 않는다).
  *  · 이 파일은 로그를 출력하지 않는다(Logger/console 없음). GET 요청에는 빈 응답.
  */
-function doGet() { return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT); }
+/**
+ * GET 라우터: 기본은 빈 응답(익명 GET에 아무 정보도 주지 않는다 — S0 실측: 익명 GET도 도달 가능).
+ *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
+ *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
+ */
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_' };
+function rich300IsOwner_() {
+  try {
+    var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
+    var me = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+    return owner.length > 3 && me === owner;
+  } catch (err) { return false; }
+}
+function doGet(e) {
+  var name = e && e.parameter && e.parameter.p, fn = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? RICH300_PAGES_[name] : null;
+  if (fn && typeof globalThis[fn] === 'function' && rich300IsOwner_()) return globalThis[fn](e);
+  return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT);
+}
 
 function doPost(e) {
   var out;
