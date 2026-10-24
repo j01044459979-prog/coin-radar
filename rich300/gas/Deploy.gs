@@ -6,7 +6,7 @@
  */
 function rich300TgGate_(method) {
   var p = PropertiesService.getScriptProperties();
-  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
+  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), readOnlyOk: p.getProperty('RICH300_TG_READONLY_OK'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
 }
 /** 초기 설정(멱등): 환경 이름·소유자 이메일 기록, 시트가 없으면 새로 만들고 저장소 초기화·환경 표식. 트리거·승인 플래그는 건드리지 않는다. */
 function rich300SetupTest() { return rich300Setup_('test'); }
@@ -24,7 +24,7 @@ function rich300Setup_(name) {
 }
 function rich300CallIf_(name) { if (typeof globalThis[name] === 'function') { globalThis[name](); return true; } return false; }
 function rich300InstallAllTriggers() { var done = ['rich300TgInstallPollTrigger', 'rich300InstallCloseTriggers', 'rich300BackupInstallTrigger'].filter(rich300CallIf_); return { ok: true, installed: done.length }; }
-function rich300RemoveAllTriggers() { var done = ['rich300TgRemovePollTrigger', 'rich300RemoveCloseTriggers', 'rich300BackupRemoveTrigger', 'rich300LiveClearBg_'].filter(rich300CallIf_); return { ok: true, removed: done.length }; }
+function rich300RemoveAllTriggers() { var done = ['rich300TgRemovePollTrigger', 'rich300RemoveCloseTriggers', 'rich300BackupRemoveTrigger'].filter(rich300CallIf_); return { ok: true, removed: done.length }; }
 
 /** 자가 점검: 상태만 반환(값 없음). 실행 로그에도 같은 요약을 남긴다. */
 function rich300SelfTestRun_() {
@@ -35,7 +35,7 @@ function rich300SelfTestRun_() {
   var key = p.getProperty('RICH300_INGEST_KEY') || '';
   info = { env: p.getProperty('RICH300_ENV'), tz: Session.getScriptTimeZone(), v8: typeof BigInt === 'function',
     has: { sheetId: has('RICH300_SHEET_ID'), ownerEmail: has('RICH300_OWNER_EMAIL'), tgToken: has('RICH300_TG_TOKEN'), ingestKey: key.length > 0, uiUrl: /^https:\/\//.test(p.getProperty('RICH300_UI_URL') || '') }, ingestKeyLen: key.length,
-    flags: { closeSendApproved: p.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes', prodApproved: p.getProperty('RICH300_PROD_APPROVED') === 'yes', testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') === 'yes', testCloseSend: p.getProperty('RICH300_TEST_CLOSE_SEND') === 'yes' },
+    flags: { closeSendApproved: p.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes', prodApproved: p.getProperty('RICH300_PROD_APPROVED') === 'yes', testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') === 'yes' },
     owner: { activeEmailVisible: email.length > 3, matchesOwner: email.length > 3 && email.toLowerCase() === String(p.getProperty('RICH300_OWNER_EMAIL') || '').toLowerCase() },
     triggers: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }), expectTriggers: [['rich300TgInstallPollTrigger', 'rich300TgPoll'], ['rich300InstallCloseTriggers', 'rich300CloseTick'], ['rich300BackupInstallTrigger', 'rich300BackupRun']].filter(function (x) { return typeof globalThis[x[0]] === 'function'; }).map(function (x) { return x[1]; }), integrity: integ, envMarker: marker, backupCount: backups };
   return RICH300_ENGINE.deploySelfTest(info);

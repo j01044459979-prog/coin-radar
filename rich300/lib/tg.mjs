@@ -12,7 +12,7 @@
 //   · Telegram 오류: 429(retry_after)·5xx·네트워크는 짧게 재시도(최대 3회), 400/401/403은 재시도하지 않고 분류만 반환. 오류 값에 본문·토큰을 넣지 않는다.
 //   · 자동 주문 기능 없음: 이 모듈은 기록만 한다.
 import { dec, decDiv, decMul, decFormat, decSign, decToMicro } from './decimal.mjs';
-import { kstDayOf } from './time.mjs';
+import { kstDayOf, dayStartMs, addDays } from './time.mjs';
 import { pnlComputeTrade, pnlComputeAll } from './pnl.mjs';
 import { riskTrade } from './risk.mjs';
 import { authTimingSafeEqual } from './auth.mjs';
@@ -20,6 +20,7 @@ import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecStri
 import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger } from './store.mjs';
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
+import { r9ParseSignal, r9StripLine } from './r9.mjs';
 
 export const TG_MAX_ATTEMPTS = 3;
 export const TG_MAX_WAIT_MS = 10000;                 // 이보다 긴 retry_after는 기다리지 않고 재시도 가능 오류로 반환(다음 트리거에서 재처리)
@@ -76,7 +77,9 @@ export function tgCall(env, method, payload) {
 }
 const tgPrefix = env => (typeof env.msgPrefix === 'string' ? env.msgPrefix : '');            // 테스트 환경은 모든 메시지 앞에 '[TEST] '
 const tgSend = (env, chatId, text, markup) => tgCall(env, 'sendMessage', { chat_id: chatId, text: tgPrefix(env) + text, disable_web_page_preview: true, ...(markup ? { reply_markup: markup } : {}) });
-const tgEdit = (env, cb, text, markup) => tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text: tgPrefix(env) + text, reply_markup: markup ?? { inline_keyboard: [] } });
+const tgEdit = (env, cb, text, markup) => (cb.photo      // 사진 메시지는 본문이 아니라 설명(caption)을 고친다(1024자 한도)
+  ? tgCall(env, 'editMessageCaption', { chat_id: cb.chatId, message_id: cb.messageId, caption: [...(tgPrefix(env) + text)].slice(0, 1024).join(''), reply_markup: markup ?? { inline_keyboard: [] } })
+  : tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text: tgPrefix(env) + text, reply_markup: markup ?? { inline_keyboard: [] } }));
 const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callback_query_id: cbId, ...(text ? { text: String(text).slice(0, 190) } : {}) });
 const tgOkOrBenign = r => r.ok || r.benign;
 export const tgSendMessage = tgSend;                  // 검증 하니스(테스트 환경 전용)가 임의 메시지를 보낼 때 사용
@@ -92,7 +95,7 @@ export function tgParseUpdate(u) {
   const m = u.message, c = u.callback_query;
   if (m && m.from && Number.isSafeInteger(m.from.id) && m.chat && Number.isSafeInteger(m.chat.id)) return { kind: 'message', updateId: u.update_id, fromId: m.from.id, chatId: m.chat.id, chatType: m.chat.type, isBot: m.from.is_bot === true, dateMs: Number.isFinite(m.date) ? m.date * 1000 : null, text: typeof m.text === 'string' ? m.text.slice(0, 500) : '' };
   if (c && typeof c.id === 'string' && c.from && Number.isSafeInteger(c.from.id)) {
-    const cm = c.message; return { kind: 'callback', updateId: u.update_id, fromId: c.from.id, chatId: cm?.chat && Number.isSafeInteger(cm.chat.id) ? cm.chat.id : null, chatType: cm?.chat?.type, isBot: c.from.is_bot === true, cbId: c.id, data: typeof c.data === 'string' ? c.data.slice(0, 64) : '', messageId: Number.isSafeInteger(cm?.message_id) ? cm.message_id : null };
+    const cm = c.message; return { kind: 'callback', updateId: u.update_id, fromId: c.from.id, chatId: cm?.chat && Number.isSafeInteger(cm.chat.id) ? cm.chat.id : null, chatType: cm?.chat?.type, isBot: c.from.is_bot === true, cbId: c.id, data: typeof c.data === 'string' ? c.data.slice(0, 64) : '', messageId: Number.isSafeInteger(cm?.message_id) ? cm.message_id : null, msgText: typeof (cm?.text ?? cm?.caption) === 'string' ? (cm.text ?? cm.caption).slice(0, 4096) : '', isPhoto: Array.isArray(cm?.photo) };
   }
   return null;
 }
@@ -102,6 +105,25 @@ export function tgParseCommand(text) {
   for (const p of parts.slice(1)) { const i = p.indexOf('='); if (i > 0) opt[p.slice(0, i).toLowerCase()] = p.slice(i + 1); else pos.push(p); }
   return { cmd, pos, opt };
 }
+// 체결 시각 입력(KST). 'HH:mm'(오늘, 미래면 어제) · 'MM-DD HH:mm' · 'YYYY-MM-DD HH:mm' (구분은 공백·T·_ 모두 허용). 비우면 undefined(=지금).
+export const TG_FUTURE_SLACK_MS = 5 * 60 * 1000;
+export function tgParseAt(raw, now) {
+  const t = String(raw ?? '').trim().replace(/[T_]/g, ' ').replace(/\s+/g, ' ');
+  if (!t) return undefined;
+  let m, ms;
+  const hm = (day, h, mi) => { if (+h > 23 || +mi > 59) throw tgUserErr('시각 형식이 맞지 않습니다(예: 14:30)'); return dayStartMs(day) + (+h * 60 + +mi) * 60000; };
+  const today = kstDayOf(now);
+  try {
+    if ((m = /^(\d{1,2}):(\d{2})$/.exec(t))) { ms = hm(today, m[1], m[2]); if (ms > now + TG_FUTURE_SLACK_MS) ms = hm(addDays(today, -1), m[1], m[2]); }
+    else if ((m = /^(\d{2})-(\d{2}) (\d{1,2}):(\d{2})$/.exec(t))) { const y = today.slice(0, 4); ms = hm(`${y}-${m[1]}-${m[2]}`, m[3], m[4]); if (ms > now + TG_FUTURE_SLACK_MS) ms = hm(`${+y - 1}-${m[1]}-${m[2]}`, m[3], m[4]); }
+    else if ((m = /^(\d{4}-\d{2}-\d{2}) (\d{1,2}):(\d{2})$/.exec(t))) ms = hm(m[1], m[2], m[3]);
+  } catch (e) { if (e instanceof StoreError) throw e; throw tgUserErr('시각 형식이 맞지 않습니다(예: 14:30 또는 10-24 14:30)'); }
+  if (ms === undefined || !Number.isFinite(ms)) throw tgUserErr('시각 형식이 맞지 않습니다(예: 14:30 또는 10-24 14:30)');
+  if (ms > now + TG_FUTURE_SLACK_MS) throw tgUserErr('미래 시각은 입력할 수 없습니다');
+  return ms;
+}
+const tgAtMs = (env, p) => (p.atMs === undefined || p.atMs === null || p.atMs === '' ? undefined : (Number.isSafeInteger(+p.atMs) && +p.atMs > 0 ? +p.atMs : (() => { throw tgUserErr('시각 값이 올바르지 않습니다'); })()));
+function tgNote(raw) { const t = String(raw ?? '').replace(/\s+/g, ' ').trim(); if (!t) return undefined; if (t.length > 300) throw tgUserErr('메모는 300자까지입니다'); return t; }
 function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
   if (raw === undefined || raw === '') return { state: 'missing' };
   const est = raw.startsWith('~'), v = est ? raw.slice(1) : raw;
@@ -167,38 +189,47 @@ export function tgBuildEntry(env, p) {                 // p: { sid, margin, leve
   const fills = tgFillsOf(se, p.sid), trade = fills.length ? tgTradeOrUserError(fills) : null;
   if (trade && trade.status === 'closed') throw tgUserErr('이미 청산된 신호입니다');
   const kind = trade ? 'add' : 'entry';
-  const margin = schemaDecString(p.margin, '증거금', { positive: true }), leverage = schemaDecString(p.leverage, '레버리지', { positive: true }), entry = schemaDecString(p.entry, '진입가', { positive: true }), stop = schemaDecString(p.stop, '손절가', { positive: true });
+  const margin = schemaDecString(p.margin, '증거금', { positive: true }), leverage = schemaDecString(p.leverage, '레버리지', { positive: true }), entry = schemaDecString(p.entry, '진입가', { positive: true }), stop = p.stop === undefined || p.stop === '' ? undefined : schemaDecString(p.stop, '손절가', { positive: true });
   let qty, qtySource = 'entered';
   if (p.qty !== undefined && p.qty !== '') qty = schemaDecString(p.qty, '수량', { positive: true });
   else { qty = decFormat(decDiv(decMul(dec(margin), dec(leverage)), dec(entry)), 8); qty = schemaDecString(qty, '수량(계산)', { positive: true }); qtySource = 'derived'; }
-  const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop, qty, margin, leverage, equityMicro: tgRiskEquityMicro(env) });
-  const fill = { origin: 'real', sid: p.sid, kind, dir, price: entry, qty, margin, leverage, plannedStop: stop, qtySource, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩') };
-  return { type: 'fill', fill, risk, summary: tgEntrySummary(fill, risk), params: { ...p }, force: p.force === true };
+  const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop: stop ?? entry, qty, margin, leverage, equityMicro: stop === undefined ? null : tgRiskEquityMicro(env) });
+  const atMs = tgAtMs(env, p), note = tgNote(p.note);
+  const fill = { origin: 'real', sid: p.sid, kind, dir, price: entry, qty, margin, leverage, ...(stop === undefined ? {} : { plannedStop: stop }), qtySource, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩'), ...(note ? { note } : {}) };
+  return { type: 'fill', fill, risk, summary: tgEntrySummary(fill, stop === undefined ? { ...risk, noStop: true } : risk, atMs), params: { ...p }, force: p.force === true };
 }
 export function tgBuildExit(env, p) {                  // p: { sid, price, qty?('all'), fee?, funding? }
   const se = env.storeEnv(), fills = tgFillsOf(se, p.sid), trade = fills.length ? tgTradeOrUserError(fills) : null;
   if (!trade) throw tgUserErr('이 신호의 진입 기록이 없습니다');
   if (trade.status !== 'open') throw tgUserErr('이미 전량 청산된 포지션입니다');
   const price = schemaDecString(p.price, '청산가', { positive: true });
-  const all = p.qty === undefined || p.qty === '' || String(p.qty).toLowerCase() === 'all';
-  const qty = all ? decFormat(trade.openQtyDec, 12).replace(/0+$/, '').replace(/\.$/, '') : schemaDecString(p.qty, '수량', { positive: true });
+  const rq = String(p.qty ?? '').trim(), pm = /^(\d+(?:\.\d+)?)%$/.exec(rq);
+  if (pm && !(+pm[1] > 0 && +pm[1] <= 100)) throw tgUserErr('청산 비율은 0 초과 100 이하(%)');
+  const all = rq === '' || rq.toLowerCase() === 'all' || (pm && +pm[1] === 100);
+  const trim12 = v => decFormat(v, 12).replace(/0+$/, '').replace(/\.$/, '');
+  const qty = all ? trim12(trade.openQtyDec) : pm ? trim12(decDiv(decMul(trade.openQtyDec, dec(pm[1])), dec(100))) : schemaDecString(rq, '수량', { positive: true });
+  if (!all && pm && !(dec(qty) > 0n)) throw tgUserErr('계산된 청산 수량이 0입니다');
   const qd = dec(qty); if (qd > trade.openQtyDec) throw tgUserErr(`보유 수량(${tgNum(decFormat(trade.openQtyDec, 8))})보다 큽니다`);
   const kind = qd === trade.openQtyDec ? 'close' : 'reduce';
-  const fill = { origin: 'real', sid: p.sid, kind, dir: trade.dir, price, qty, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩') };
-  const probe = tgTradeOrUserError([...fills, { ...fill, fillId: 'preview', at: tgNextAt(env, fills) }]), ev = probe.events[probe.events.length - 1];
-  return { type: 'exit', fill, summary: tgExitSummary(fill, ev, probe), params: { ...p }, force: p.force === true };
+  const atMs = tgAtMs(env, p), note = tgNote(p.note), lastAt = fills.reduce((m, f) => Math.max(m, f.at), 0);
+  if (atMs !== undefined && atMs <= lastAt) throw tgUserErr('청산 시각은 이전 체결보다 뒤여야 합니다');
+  const fill = { origin: 'real', sid: p.sid, kind, dir: trade.dir, price, qty, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩'), ...(note ? { note } : {}) };
+  const probe = tgTradeOrUserError([...fills, { ...fill, fillId: 'preview', at: atMs ?? tgNextAt(env, fills) }]), ev = probe.events[probe.events.length - 1];
+  return { type: 'exit', fill, summary: tgExitSummary(fill, ev, probe, atMs), params: { ...p }, force: p.force === true };
 }
 const tgM = m => decFormat(m * 1000000n, 2);
-function tgEntrySummary(f, r) {
-  const lines = [`${f.kind === 'add' ? '추가진입' : '진입'} ${f.dir} · ${f.sid}`, `진입 ${f.price} · 수량 ${f.qty}${f.qtySource === 'derived' ? '(계산)' : ''} · 손절 ${f.plannedStop}`, `증거금 ${f.margin} · ${f.leverage}x · 손절 시 손실 ${tgM(r.stopLossMicro)} USDT${r.riskPpmOfEquity !== null ? ` (${decFormat(BigInt(r.riskPpmOfEquity) * 100000000n, 2)}%)` : ''}`];
-  const w = [r.flags.includes('stop-on-wrong-side') && '손절가가 방향과 반대쪽', r.flags.includes('liquidation-before-stop') && '청산가(근사)가 손절보다 먼저', r.flags.includes('risk-over-2pct') && '손실 2% 초과', r.flags.includes('leverage-mismatch') && '레버리지 불일치'].filter(Boolean);
+const tgKstLabel = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
+function tgEntrySummary(f, r, atMs) {
+  const lines = [`${f.kind === 'add' ? '추가진입' : '진입'} ${f.dir} · ${f.sid}${atMs ? ` · ${tgKstLabel(atMs)} KST` : ''}`, `진입 ${f.price} · 수량 ${f.qty}${f.qtySource === 'derived' ? '(계산)' : ''} · 손절 ${f.plannedStop ?? '미입력'}`, r.noStop ? `증거금 ${f.margin} · ${f.leverage}x · 손절가 없음(위험 계산 생략)` : `증거금 ${f.margin} · ${f.leverage}x · 손절 시 손실 ${tgM(r.stopLossMicro)} USDT${r.riskPpmOfEquity !== null ? ` (${decFormat(BigInt(r.riskPpmOfEquity) * 100000000n, 2)}%)` : ''}`];
+  const fl = r.noStop ? r.flags.filter(x => x === 'leverage-mismatch') : r.flags, w = [fl.includes('stop-on-wrong-side') && '손절가가 방향과 반대쪽', fl.includes('liquidation-before-stop') && '청산가(근사)가 손절보다 먼저', fl.includes('risk-over-2pct') && '손실 2% 초과', fl.includes('leverage-mismatch') && '레버리지 불일치'].filter(Boolean);
   if (w.length) lines.push(`⚠ ${w.join(' · ')}`);
   lines.push(`수수료 ${f.fee.state === 'missing' ? '미입력' : f.fee.amount} · 펀딩 ${f.funding.state === 'missing' ? '미입력' : f.funding.amount}`);
   return lines.join('\n');
 }
-function tgExitSummary(f, ev, t) {
-  const lines = [`${f.kind === 'close' ? '전량 청산' : '부분 청산'} ${f.dir} · ${f.sid}`, `청산 ${f.price} · 수량 ${f.qty} · 이번 총손익 ${tgM(ev.grossMicro)} USDT`, `수수료 ${f.fee.state === 'missing' ? '미입력' : f.fee.amount} · 펀딩 ${f.funding.state === 'missing' ? '미입력' : f.funding.amount}`];
+function tgExitSummary(f, ev, t, atMs) {
+  const lines = [`${f.kind === 'close' ? '전량 청산' : '부분 청산'} ${f.dir} · ${f.sid}${atMs ? ` · ${tgKstLabel(atMs)} KST` : ''}`, `청산 ${f.price} · 수량 ${f.qty} · 이번 총손익 ${tgM(ev.grossMicro)} USDT`, `수수료 ${f.fee.state === 'missing' ? '미입력' : f.fee.amount} · 펀딩 ${f.funding.state === 'missing' ? '미입력' : f.funding.amount}`];
   if (f.kind === 'close') lines.push(`포지션 순손익(입력된 수수료·펀딩만) ${tgM(t.totals.netEnteredMicro)} USDT`);
+  if (f.note) lines.push(`메모: ${f.note.slice(0, 80)}`);
   return lines.join('\n');
 }
 const tgTradeOrUserError = fills => { try { return pnlComputeTrade(fills); } catch (e) { throw tgUserErr(`계산할 수 없는 체결입니다: ${String(e.message).slice(0, 80)}`); } };
@@ -212,7 +243,9 @@ function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후�
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
   if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };
   if (draft.params) tgRebuild(env, draft);
-  const same = tgFillsOf(se, draft.fill.sid), f = { ...draft.fill, at: tgNextAt(env, same), fillId: draft.fillId };
+  const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
+  if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
+  const f = { ...draft.fill, at: customAt ?? tgNextAt(env, same), fillId: draft.fillId };
   if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
     throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
   if (draft.type === 'fill') {
@@ -231,8 +264,9 @@ export function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
     const sid = String(form.sid ?? ''), isExit = form.kind === 'exit', formId = String(form.formId ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || env.randomId(8), fillId = `${sid}:${formId}`;
     const dupe = storeGet(env.storeEnv(), 'fill', fillId);          // 같은 폼 재제출(네트워크 재시도·더블탭)은 상태가 바뀌었어도 duplicate로 수렴
     if (dupe && !dupe.void) return { ok: true, status: 'duplicate', kind: dupe.data.kind };
-    const built = isExit ? tgBuildExit(env, { sid, price: String(form.price ?? ''), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true })
-      : tgBuildEntry(env, { sid, margin: String(form.margin ?? ''), leverage: String(form.leverage ?? ''), entry: String(form.entry ?? ''), stop: String(form.stop ?? ''), qty: form.qty ? String(form.qty) : undefined, fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true });
+    const atMs = tgParseAt(form.at, env.now()), common = { fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true, ...(atMs === undefined ? {} : { atMs }), ...(form.note ? { note: String(form.note) } : {}) };
+    const built = isExit ? tgBuildExit(env, { sid, price: String(form.price ?? ''), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
+      : tgBuildEntry(env, { sid, margin: String(form.margin ?? ''), leverage: String(form.leverage ?? ''), entry: String(form.entry ?? ''), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
     if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
@@ -246,7 +280,7 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 }
 
 // ── 명령 ──
-const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
+const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]', '/exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
 export function tgConfirmDraft(env, ev, built) {
   const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, equity: built.equity, params: built.params, force: built.force === true, sid: built.fill ? built.fill.sid : undefined, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
@@ -262,12 +296,12 @@ function tgOnMessage(env, ev) {
   try {
     if (c.cmd === 'start' || c.cmd === 'help') return { status: 'handled', action: 'help', ...reply(TG_HELP) };
     if (c.cmd === 'fill') {
-      if (c.pos.length < 5) return { status: 'handled', action: 'usage', ...reply('사용법: /fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]') };
-      const [sid, margin, leverage, entry, stop] = c.pos; return tgConfirmDraft(env, ev, tgBuildEntry(env, { sid, margin, leverage, entry, stop, qty: c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1' }));
+      if (c.pos.length < 4) return { status: 'handled', action: 'usage', ...reply('사용법: /fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]') };
+      const [sid, margin, leverage, entry, stop] = c.pos, atMs = tgParseAt(c.opt.at, env.now()); return tgConfirmDraft(env, ev, tgBuildEntry(env, { sid, margin, leverage, entry, stop: stop === '-' ? undefined : stop, qty: c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1', ...(atMs === undefined ? {} : { atMs }), ...(c.opt.memo ? { note: c.opt.memo } : {}) }));
     }
     if (c.cmd === 'exit') {
-      if (c.pos.length < 2) return { status: 'handled', action: 'usage', ...reply('사용법: /exit 신호ID 청산가 [수량|all] [fee= funding=]') };
-      return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1' }));
+      if (c.pos.length < 2) return { status: 'handled', action: 'usage', ...reply('사용법: /exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]') };
+      const atMs = tgParseAt(c.opt.at, env.now()); return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1', ...(atMs === undefined ? {} : { atMs }), ...(c.opt.memo ? { note: c.opt.memo.replace(/_/g, ' ') } : {}) }));
     }
     if (c.cmd === 'equity') {
       if (c.pos.length < 1) return { status: 'handled', action: 'usage', ...reply('사용법: /equity 금액 [날짜] [unrealized=값]') };
@@ -295,19 +329,27 @@ function tgOnMessage(env, ev) {
 // ── 버튼(callback) ──
 function tgOnCallback(env, ev) {
   const answer = t => tgAnswer(env, ev.cbId, t), parts = ev.data.split(':');
-  const cb = { chatId: ev.chatId, messageId: ev.messageId };
+  const cb = { chatId: ev.chatId, messageId: ev.messageId, photo: ev.isPhoto === true };
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
-  if (parts[0] === 'lv' && env.live && typeof env.live.onCallback === 'function') return env.live.onCallback(env, ev, parts, cb, answer);      // 검증 하니스(테스트 환경 전용) 확장점
   answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button' };
 }
 function tgOnResponse(env, ev, sid, choice, cb, answer) {
-  const se = env.storeEnv(), sg = storeGet(se, 'signal', sid);
+  const se = env.storeEnv();
+  let sg = storeGet(se, 'signal', sid);
+  if (!sg || sg.void) {                                  // R9: COIN RADAR 메시지의 'R9 v1' 줄에서 신호를 만든다(같은 sid의 메시지만, 이미 있으면 건드리지 않음)
+    const parsed = r9ParseSignal(ev.msgText);
+    if (parsed && parsed.sid === sid) {
+      try { storeCreate(se, 'signal', parsed, { actor: 'tg:r9' }); } catch (e) { if (!(e instanceof StoreError)) throw e; if (e.code === 'LOCK') throw e; }
+      sg = storeGet(se, 'signal', sid);
+    }
+  }
   if (!sg || sg.void) { answer('알 수 없는 신호입니다'); return { status: 'handled', action: 'unknown-signal' }; }
+  const shown = ev.msgText && r9ParseSignal(ev.msgText) ? r9StripLine(ev.msgText) : tgSignalText(sg.data);
   const r = storeCreate(se, 'response', { sid, choice, at: env.now() }, { actor: 'tg' });
-  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, tgSignalText(sg.data) + `\n→ ${RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
-  const a = answer(`기록: ${RESPONSE_CHOICES[choice]}`), e = tgEdit(env, cb, `${tgSignalText(sg.data)}\n→ ${RESPONSE_CHOICES[choice]}`);
+  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
+  const a = answer(`기록: ${RESPONSE_CHOICES[choice]}`), e = tgEdit(env, cb, `${shown}\n→ ${RESPONSE_CHOICES[choice]}`);
   let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
   if (choice === 'entered' && r.status === 'added') {
     const link = tgFillLink(env.uiUrl, sg.data), s = tgSend(env, ev.chatId, `진입 기록: /fill ${sid} 증거금 레버리지 ${sg.data.entry} ${sg.data.stop}${link ? '\n(숫자 입력은 아래 화면이 더 편합니다)' : ''}`, link ? { inline_keyboard: [[{ text: '입력 화면 열기', url: link }]] } : undefined);

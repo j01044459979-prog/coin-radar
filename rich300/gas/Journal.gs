@@ -13,7 +13,7 @@ function rich300JournalEnv_() {
     now: function () { return Date.now(); },
     uiUrl: props.getProperty('RICH300_UI_URL') || undefined,
     storeEnv: function () { if (!store) { store = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); RICH300_ENGINE.storeInit(store); } return store; },
-    sendEnabled: function () { return props.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes' || (props.getProperty('RICH300_ENV') === 'test' && props.getProperty('RICH300_TEST_CLOSE_SEND') === 'yes'); },       // 테스트 전용 플래그는 test 환경에서만 인정
+    sendEnabled: function () { return props.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes'; },
     notify: function (msg) {
       var e = tgEnv(), p = RICH300_ENGINE.tgPairedUser(e);
       if (!p) return { ok: false, code: 'not-paired' };
@@ -35,14 +35,26 @@ function rich300Guarded_(fn) {
 }
 
 /** 페이지(?p=journal): 서버에서 완성된 HTML. 오류는 일반 화면만(내부 정보 없음). */
-function rich300PageJournal_(e) {
-  var html;
+function rich300PageJournal_(e, tab) {
+  var html, appUrl = rich300AppUrl_();
   try {
-    var env = rich300JournalEnv_(), model = RICH300_ENGINE.journalBuild(env, { now: Date.now() }), day = e && e.parameter && e.parameter.day;
-    if (day && /^\d{4}-\d{2}-\d{2}$/.test(day)) model.presetDay = day;
-    html = RICH300_ENGINE.journalRenderHtml(model, { appUrl: ScriptApp.getService().getUrl() });
+    var env = rich300JournalEnv_(), prm = (e && e.parameter) || {}, day = /^\d{4}-\d{2}-\d{2}$/.test(String(prm.day || '')) ? String(prm.day) : null, q = prm.q ? String(prm.q).slice(0, 20) : null;
+    var model = RICH300_ENGINE.journalBuild(env, { now: Date.now(), day: tab === 'journal' || !tab ? day : null, q: tab === 'journal' || !tab ? q : null });
+    if (day && tab !== 'journal' && tab) model.presetDay = day;
+    html = RICH300_ENGINE.journalRenderHtml(model, { appUrl: appUrl, tab: tab || 'all', query: { day: day, q: q } });
   } catch (err) { html = RICH300_ENGINE.journalRenderError(); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 일지').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+function rich300PageJournalTab_(e) { return rich300PageJournal_(e, 'journal'); }
+function rich300PageStats_(e) { return rich300PageJournal_(e, 'stats'); }
+function rich300PageAssets_(e) { return rich300PageJournal_(e, 'assets'); }
+function rich300PageSignals_(e) {
+  var html, appUrl = rich300AppUrl_();
+  try {
+    var env = rich300JournalEnv_(), r = e && e.parameter && e.parameter.r;
+    html = RICH300_ENGINE.siglogRenderHtml(RICH300_ENGINE.siglogBuild(env, { now: Date.now(), filter: r }), { appUrl: appUrl });
+  } catch (err) { html = RICH300_ENGINE.siglogRenderError(appUrl); }
+  return HtmlService.createHtmlOutput(html).setTitle('RICH300 추천 기록').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** google.script.run 대상(소유자 전용) */

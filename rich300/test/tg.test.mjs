@@ -104,7 +104,7 @@ test('/fill: 추가진입(kind=add)·qty·추정 수수료·펀딩 옵션, 위�
   const drafts = [...x.kv.map.keys()].filter(k => k.startsWith('d:')).length;
   // 거절 사례 — 초안도 기록도 없다
   const before = rows(x, 'fill').length;
-  for (const [line, re] of [[`/fill NOPE 30 10 100 98`, /알 수 없는 신호/], [`/fill ${SID} abc 10 100 98`, /증거금/], [`/fill ${SID} 30 0 100 98`, /레버리지/], [`/fill ${SID} 30 10 100`, /사용법/], [`/fill ${SID} 30 10 100 98 fee=x`, /수수료/], [`/fill ${SID} 30 10 100 98 qty=0`, /수량/]]) { say(x, line); assert.match(lastSent(x).text, re, line); }
+  for (const [line, re] of [[`/fill NOPE 30 10 100 98`, /알 수 없는 신호/], [`/fill ${SID} abc 10 100 98`, /증거금/], [`/fill ${SID} 30 0 100 98`, /레버리지/], [`/fill ${SID} 30 10`, /사용법/], [`/fill ${SID} 30 10 100 98 fee=x`, /수수료/], [`/fill ${SID} 30 10 100 98 qty=0`, /수량/]]) { say(x, line); assert.match(lastSent(x).text, re, line); }
   assert.equal([...x.kv.map.keys()].filter(k => k.startsWith('d:')).length, drafts); assert.equal(rows(x, 'fill').length, before);
   // 관망으로 기록된 신호
   storeCreate(x.mem.env, 'signal', { ...SIG, sid: 'B-ETH-1', symbolId: 'ETHUSDT', strategy: 'B' }, { actor: 't' }); storeCreate(x.mem.env, 'response', { sid: 'B-ETH-1', choice: 'watched', at: T }, { actor: 't' });

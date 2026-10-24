@@ -4,7 +4,7 @@
 //  · 손익·잔고는 R2 결과를 그대로 사용한다. 이 모듈은 표시용 변환과 입력 검증만 한다.
 //  · 실제 기록만 다룬다(모의 체결은 저장소가 거부).
 import { dec, decToMicro } from './decimal.mjs';
-import { kstDayOf } from './time.mjs';
+import { kstDayOf, isDayString } from './time.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
 import { pnlComputeTrade } from './pnl.mjs';
 import { StoreError, ENTITIES, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecString } from './schema.mjs';
@@ -41,7 +41,8 @@ function journalHistories(se) {                         // Audit 한 번 읽어 
 }
 export function journalHistory(env, entity, key) { return journalHistories(env.storeEnv()).get(`${entity}|${key}`) ?? []; }
 
-export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT } = {}) {
+export const JOURNAL_SEARCH_LIMIT = 200;
+export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null, q = null } = {}) {
   const se = env.storeEnv(); let inputs;
   try { inputs = storeLoadLedgerInputs(se); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { empty: true, reason: 'no-challenge', generatedAt: now }; throw e; }
   const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay }), hist = journalHistories(se);
@@ -54,13 +55,15 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT } = {
   const trades = [...led.trades.values()].map(t => {
     const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (bySid.get(t.sid) ?? []).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
-    return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
+    return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
       netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > 0n, loss: t.status === 'closed' && net < 0n, flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
-      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), rev: r.rev, margin: r.data.margin ?? null, leverage: r.data.leverage ?? null, plannedStop: r.data.plannedStop ?? null, edits: edits('fill', r.key) })),
+      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: r.data.note ?? '', rev: r.rev, margin: r.data.margin ?? null, leverage: r.data.leverage ?? null, plannedStop: r.data.plannedStop ?? null, edits: edits('fill', r.key) })),
       voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
       review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: rv.memo ?? null, savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
+  const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
+  const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String(t.symbol ?? t.sid).toUpperCase().includes(qSym))) : trades;
   const warnings = [], rows = led.rows, cnt = f => rows.filter(r => r.flags.includes(f)).length;
   const mism = rows.filter(r => r.needsReview);
   if (mism.length) warnings.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${mism.length}일: ${mism.slice(-5).map(r => `${r.day}(${anUsd(r.diffMicro, { sign: true })})`).join(', ')}` });
@@ -72,7 +75,7 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT } = {
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
   const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: c.note ?? '', edits: edits('cashflow', c.cfId) }));
-  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: trades.slice(0, limit), tradesTotal: trades.length, tradesOpen: trades.filter(t => t.status === 'open').length, voidedCount: voided.length,
+  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (closes.find(c => c.closed && c.equity === null) ?? closes[0] ?? { day: throughDay }).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
 }
 

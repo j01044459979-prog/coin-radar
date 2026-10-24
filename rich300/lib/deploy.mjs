@@ -7,7 +7,7 @@ import { StoreError, META_SHEET } from './schema.mjs';
 export const DEPLOY_ENVS = Object.freeze(['test', 'prod']);
 export function deployGate(p, method) {                    // 허용이면 null, 차단이면 사유 문자열
   if (p.env !== 'test' && p.env !== 'prod') return 'env-unset';
-  if (p.env === 'prod') return p.prodApproved === 'yes' ? null : 'prod-not-approved';
+  if (p.env === 'prod') return p.prodApproved === 'yes' || (p.readOnlyOk === 'yes' && (method === 'getMe' || method === 'getWebhookInfo')) ? null : 'prod-not-approved';       // 읽기 전용 점검(RICH300_TG_READONLY_OK=yes)은 getMe·getWebhookInfo 두 호출만 허용(메시지·수신·설정 변경 없음)
   return p.testTgAllow === 'yes' ? null : 'test-tg-off';
 }
 export function deployMarkEnv(se, name) {                   // 최초 1회만 기록(이미 있으면 같은 값인지 확인)
@@ -27,7 +27,7 @@ export function deploySelfTest(info) {
   add('v8', info.v8 === true, 'fail', 'V8 런타임(BigInt 지원)이 필요합니다');
   add('sheet', info.has.sheetId, 'fail', '스프레드시트 ID(RICH300_SHEET_ID)가 설정되어야 합니다');
   add('owner', info.has.ownerEmail, 'fail', '소유자 이메일(RICH300_OWNER_EMAIL)이 없으면 화면 접근이 모두 차단됩니다');
-  add('ingest-key', info.has.ingestKey ? info.ingestKeyLen >= 32 : false, info.has.ingestKey ? 'fail' : 'warn', info.has.ingestKey ? '수신 키는 32자 이상이어야 합니다' : '수신 키(RICH300_INGEST_KEY)가 없어 신호 수신이 꺼져 있습니다');
+  add('ingest-key', info.has.ingestKey ? info.ingestKeyLen >= 32 : true, 'fail', '수신 키(RICH300_INGEST_KEY)는 쓰는 경우 32자 이상이어야 합니다(없어도 됩니다: 신호는 Telegram 버튼으로 들어옵니다)');
   add('telegram-token', info.has.tgToken, 'warn', 'Telegram 봇 토큰(RICH300_TG_TOKEN)이 없어 Telegram 기능이 꺼져 있습니다');
   add('ui-url', info.has.uiUrl, 'warn', '입력 화면 URL(RICH300_UI_URL, https)이 없어 알림·버튼에 링크가 들어가지 않습니다');
   if (info.env === 'test') {
