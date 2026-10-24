@@ -13,6 +13,8 @@ export const ENGINE_MODULES = [
   'pnl',
   'risk',
   'ledger',
+  'dashboard',
+  'dashview',
   'schema',
   'store',
   'backup',

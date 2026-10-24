@@ -31,3 +31,10 @@
 
 ## 승인·보류 상태
 #31~#35·R5는 모두 **병합 보류**. 실제 Telegram 발송, Google 실제 배포, Secret 등록, radar 연동(R9)은 별도 승인 + S0 실측 이후.
+
+
+## 추가: R4·R6 (독립 PR)
+- `feature/rich300-r4-telegram`, `feature/rich300-r6-dashboard` 는 둘 다 `feature/rich300-r5-api`(PR #36) 위에서 분기한 *서로 독립* 브랜치입니다. 기반 PR이 먼저 병합되어야 합니다(스택).
+- 겹치는 파일을 줄이기 위해 R5 브랜치에 공통 변경을 먼저 넣었습니다: `build.mjs`의 `ENGINE_MODULES` 한 줄 한 모듈, 번들 개수 고정 단언 제거, S0 `Engine.gs` 스냅샷 검증, `Api.gs`의 GET 라우터(`?p=fill|dash`)와 소유자 확인.
+- R4는 목록 끝(`ingest` 뒤)에, R6는 `ledger` 뒤에 모듈을 추가하므로 병합 충돌이 없습니다(시뮬레이션으로 확인).
+- 병합 순서: #32 ← #34 ← #35 ← #36 ← (R4, R6 임의 순서). 모든 PR은 별도 승인 전까지 병합하지 않습니다.
