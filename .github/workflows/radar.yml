@@ -55,6 +55,7 @@ jobs:
       RADAR_SIGNAL_MIN_RR: ${{ vars.RADAR_SIGNAL_MIN_RR || '1.5' }}
       RADAR_SIGNAL_MAX_PER_DAY: ${{ vars.RADAR_SIGNAL_MAX_PER_DAY || '20' }}
       RADAR_SIGNAL_PAPER: ${{ vars.RADAR_SIGNAL_PAPER || 'off' }}   # 모의매매 성과 추적(전송 없음, state.signal.paper에만 기록). RADAR_SIGNAL이 preview|on일 때만 동작
+      RADAR_RICH300_BUTTONS: ${{ vars.RADAR_RICH300_BUTTONS || 'off' }}   # RICH 300 연동: on이면 진입 후보 메시지에 [진입했어][관망했어][놓쳤어] 버튼과 고유 ID를 붙인다(기본 off = 기존 메시지와 동일). 주문 기능 없음
     steps:
       - uses: actions/checkout@v4
       - name: Restore state

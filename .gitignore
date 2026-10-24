@@ -29,3 +29,6 @@ Thumbs.db
 .vscode/
 .idea/
 .radar-state/
+
+# RICH 300 빌드 산출물
+rich300/dist/
