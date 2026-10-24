@@ -4,7 +4,20 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const ENGINE_MODULES = ['decimal', 'time', 'compound', 'dedupe', 'pnl', 'risk', 'ledger', 'schema', 'store', 'auth', 'ingest'];
+// 한 줄에 하나씩 둔다: 독립 PR(R4·R6 등)이 서로 다른 위치에 모듈을 추가해도 병합 충돌이 나지 않게 하기 위함.
+export const ENGINE_MODULES = [
+  'decimal',
+  'time',
+  'compound',
+  'dedupe',
+  'pnl',
+  'risk',
+  'ledger',
+  'schema',
+  'store',
+  'auth',
+  'ingest',
+];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 
 export function stripModule(src, name) {
