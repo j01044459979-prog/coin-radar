@@ -11,17 +11,18 @@ const j = v => JSON.parse(JSON.stringify(v));      // vm 컨텍스트 객체는 
 const read = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 const SIG = { sid: 'A-BTC-1', strategy: 'A', symbolId: 'BTCUSDT', dir: 'LONG', signalAt: 1790000000000, entry: '100', stop: '98', tp1: '103' };
 function load({ email = 'me@example.com', token = FAKE_TOKEN, fetchThrows = false } = {}) {
-  const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], urls: [], triggers: [], pages: [] }, pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', ...(token ? { RICH300_TG_TOKEN: token } : {}) }));
+  const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], urls: [], triggers: [], pages: [] }, pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_UI_URL: 'https://example.com/exec', RICH300_ENV: 'test', RICH300_TEST_TG_ALLOW: 'yes', ...(token ? { RICH300_TG_TOKEN: token } : {}) }));
   const props = { getProperty: k => (pm.has(k) ? pm.get(k) : null), setProperty: (k, v) => { pm.set(k, String(v)); }, deleteProperty: k => { pm.delete(k); }, getKeys: () => [...pm.keys()] };
   const ContentService = { MimeType: { JSON: 'json', TEXT: 'text' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) };
   const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Logger: { log: (...a) => spy.logs.push(a.join(' ')) }, ...sheets.ctx, ContentService, CacheService: cache.service, PropertiesService: { getScriptProperties: () => props },
+    LockService: { ...sheets.ctx.LockService, getUserLock: () => ({ tryLock: () => { if (spy.userLockHeld) return false; spy.userLockHeld = true; return true; }, releaseLock() { spy.userLockHeld = false; } }) },
     Session: { getActiveUser: () => ({ getEmail: () => email }) },
     Utilities: { ...sheets.ctx.Utilities, getUuid: () => randomUUID(), sleep: ms => { tele.sleeps.push(ms); } },
     UrlFetchApp: { fetch: (url, opt) => { spy.urls.push(url); if (fetchThrows) throw new Error(`DNS failure for ${url}`); const m = /\/bot[^/]+\/(\w+)$/.exec(url)[1]; const r = tele.http.call(m, JSON.parse(opt.payload)); return { getResponseCode: () => r.status, getContentText: () => JSON.stringify(r.body) }; } },
     ScriptApp: { getProjectTriggers: () => spy.triggers.filter(t => !t.deleted), deleteTrigger: t => { t.deleted = true; }, newTrigger: fn => { const t = { fn, getHandlerFunction: () => fn, deleted: false }; return { timeBased: () => ({ everyMinutes: n => ({ create: () => { t.every = n; spy.triggers.push(t); } }) }) }; } },
     HtmlService: { createTemplateFromFile: name => { const t = { name, evaluate: () => { const o = { title: '', meta: [], setTitle(x) { this.title = x; return this; }, addMetaTag(a, b) { this.meta.push([a, b]); return this; }, preset: t.preset }; spy.pages.push(o); return o; } }; return t; } } };
   vm.createContext(ctx);
-  vm.runInContext([buildEngine(), read('gas/Adapters.gs'), read('gas/Api.gs'), read('gas/Telegram.gs')].join('\n'), ctx);
+  vm.runInContext([buildEngine(), read('gas/Adapters.gs'), read('gas/Api.gs'), read('gas/Telegram.gs'), read('gas/Deploy.gs')].join('\n'), ctx);
   const E = () => ctx.RICH300_ENGINE;
   const storeEnv = () => ctx.rich300GasEnv_('sheet');
   return { ctx, tele, spy, pm, sheets, E, storeEnv, rows: n => { const env = storeEnv(); return j(E().storeList(env, n).map(r => r.data)); } };
@@ -71,4 +72,12 @@ test('tgGc: 만료된 초안·오래된 복기 표시만 지우고 1시간에 �
   g.pm.set('tg:d:old', JSON.stringify({ v: { x: 1 }, exp: now - 1000 })); g.pm.set('tg:d:live', JSON.stringify({ v: { x: 1 }, exp: now + 600000 })); g.pm.set('tg:rp:A', String(now - 31 * 86400000)); g.pm.set('tg:rp:B', String(now)); g.pm.set('tg:paired', JSON.stringify({ v: { userId: 1 }, exp: 0 }));
   assert.deepEqual(j(E.tgGc(env)), { ran: true, removed: 2 }); assert.deepEqual(j(E.tgGc(env)), { ran: false });
   assert.ok(!g.pm.has('tg:d:old') && g.pm.has('tg:d:live') && !g.pm.has('tg:rp:A') && g.pm.has('tg:rp:B') && g.pm.has('tg:paired'));
+});
+
+test('폴링 진입점: 겹친 실행은 사용자 락으로 건너뛰고(네트워크 호출 없음), 실행 시간 통계(tg:stats)와 락 해제를 확인', () => {
+  const g = load(); g.E().storeInit(g.storeEnv());
+  g.spy.userLockHeld = true; const urls0 = g.spy.urls.length; assert.deepEqual(j(g.ctx.rich300TgPoll()), { status: 'busy', reason: 'user-lock' }); assert.equal(g.spy.urls.length, urls0); assert.equal(g.pm.has('tg:stats'), false);
+  g.spy.userLockHeld = false; g.ctx.rich300TgPoll(); g.ctx.rich300TgPoll(); assert.equal(g.spy.userLockHeld, false);                                // 정상 실행 후 락 해제
+  const st = JSON.parse(g.pm.get('tg:stats')); assert.deepEqual([st.runs, st.slow, st.busy], [2, 0, 0]); assert.ok(st.maxMs >= 0 && st.totalMs >= st.maxMs && st.since > 0); assert.ok(!JSON.stringify(st).includes(FAKE_TOKEN));
+  const last = JSON.parse(g.pm.get('tg:last')); assert.ok(typeof last.ms === 'number' && last.r.status);
 });

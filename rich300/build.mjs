@@ -15,6 +15,8 @@ export const ENGINE_MODULES = [
   'ledger',
   'schema',
   'store',
+  'backup',
+  'deploy',
   'auth',
   'ingest',
   'tg',

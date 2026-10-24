@@ -23,6 +23,9 @@ function rich300TgEnv_() {
     },
     http: {
       call: function (method, payload) {
+        // 환경 가드(Deploy.gs): 운영 승인 전·테스트 허용 전에는 어떤 Telegram 호출도 나가지 않는다. 가드가 없으면 차단(fail-closed).
+        var gate = typeof rich300TgGate_ === 'function' ? rich300TgGate_(method) : 'guard-missing';
+        if (gate) return { status: 403, body: { ok: false, description: 'blocked: ' + gate } };
         var token = props.getProperty('RICH300_TG_TOKEN'); if (!token) throw new Error('token missing');
         var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
         var body = null; try { body = JSON.parse(res.getContentText()); } catch (e) { body = null; }
@@ -31,11 +34,17 @@ function rich300TgEnv_() {
     }
   };
 }
-/** 시간 트리거 진입점(1분). 결과는 개수만 속성에 남긴다. */
+/**
+ * 시간 트리거 진입점(1분). 겹쳐 실행되지 않도록 *사용자 락*을 잡는다(저장소가 쓰는 스크립트 락과 별개라 교착이 없다).
+ * 결과는 개수만, 실행 시간은 누적 통계(tg:stats: 실행 수·총/최대 ms·느린 실행 수)로 남긴다 — 트리거 일일 실행 시간 한도 점검용(값 없음).
+ */
 function rich300TgPoll() {
-  var env = rich300TgEnv_(), out;
-  try { out = RICH300_ENGINE.tgPoll(env); RICH300_ENGINE.tgGc(env); } catch (err) { out = { status: 'exception' }; }
-  PropertiesService.getScriptProperties().setProperty('tg:last', JSON.stringify({ at: Date.now(), r: out }));
+  var props = PropertiesService.getScriptProperties(), t0 = Date.now(), out, lk = typeof LockService.getUserLock === 'function' ? LockService.getUserLock() : null;
+  if (lk && !lk.tryLock(500)) return { status: 'busy', reason: 'user-lock' };
+  try { var env = rich300TgEnv_(); out = RICH300_ENGINE.tgPoll(env); RICH300_ENGINE.tgGc(env); } catch (err) { out = { status: 'exception' }; } finally { if (lk) lk.releaseLock(); }
+  var ms = Date.now() - t0, st = {}; try { st = JSON.parse(props.getProperty('tg:stats') || '{}'); } catch (err) { st = {}; }
+  props.setProperty('tg:last', JSON.stringify({ at: t0, ms: ms, r: out }));
+  props.setProperty('tg:stats', JSON.stringify({ since: st.since || t0, runs: (st.runs || 0) + 1, totalMs: (st.totalMs || 0) + ms, maxMs: Math.max(st.maxMs || 0, ms), slow: (st.slow || 0) + (ms > 30000 ? 1 : 0), busy: (st.busy || 0) + (out && out.status === 'busy' ? 1 : 0) }));
   return out;
 }
 function rich300TgInstallPollTrigger() {
