@@ -26,6 +26,8 @@ const needStr = (x, name, max = 200) => { if (typeof x !== 'string' || !x.trim()
 const needMs = (x, name) => { if (!Number.isInteger(x) || x < 0) bad(`${name}: 정수 ms 시각 필요`); return x; };
 const needDay = (x, name) => { if (!isDayString(x)) bad(`${name}: YYYY-MM-DD 필요`); return x; };
 const needEnum = (x, set, name) => { if (!Object.prototype.hasOwnProperty.call(set, x) && !(Array.isArray(set) && set.includes(x))) bad(`${name} 값 오류`); return x; };
+const needIntStr = (x, name) => { if (typeof x !== 'string' || !/^-?\d{1,18}$/.test(x)) bad(`${name}: 정수 문자열 필요`); return x; };
+const needFlags = (x, name) => { if (x === undefined) return undefined; if (!Array.isArray(x) || x.length > 20 || x.some(f => typeof f !== 'string' || !/^[a-z0-9-]{1,40}$/.test(f))) bad(`${name} 형식 오류`); return [...x]; };
 const strip = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 const kst = ms => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
 
@@ -62,6 +64,14 @@ export const ENTITIES = {
     normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), plan: needEnum(d.plan, PLAN_CHOICES, '계획 준수'), mind: needEnum(d.mind, MIND_CHOICES, '심리 상태'), memo: d.memo === undefined || d.memo === '' ? undefined : needStr(d.memo, 'memo', 500), savedAt: needMs(d.savedAt, 'savedAt') }), display: d => [d.sid, d.plan, d.mind, kst(d.savedAt)] },
   adjustment: { sheet: 'Adjustments', keyOf: d => d.adjId, headers: ['atKst', 'amount', 'reason'],
     normalize: d => ({ adjId: needStr(d.adjId, 'adjId', 80), at: needMs(d.at, 'at'), amount: schemaDecString(d.amount, 'amount', { nonZero: true }), reason: needStr(d.reason, '조정 사유', 200) }), display: d => [kst(d.at), d.amount, d.reason] },
+  // R7 일 마감: 마감 시점의 스냅샷(불변, 같은 날짜는 한 번만) · 마감 알림 상태(리비전으로 pending→sent/failed)
+  dayclose: { sheet: 'DayCloses', immutable: true, keyOf: d => d.day, headers: ['day', 'closedAtKst', 'source', 'diff'],
+    normalize: d => strip({ day: needDay(d.day, 'day'), closedAt: needMs(d.closedAt, 'closedAt'), source: needEnum(d.source, ['input', 'ledger'], 'source'), startMicro: needIntStr(d.startMicro, 'startMicro'), targetMicro: needIntStr(d.targetMicro, 'targetMicro'),
+      closeMicro: needIntStr(d.closeMicro, 'closeMicro'), pnlMicro: needIntStr(d.pnlMicro, 'pnlMicro'), walletMicro: needIntStr(d.walletMicro, 'walletMicro'), diffMicro: d.diffMicro === undefined || d.diffMicro === null ? undefined : needIntStr(d.diffMicro, 'diffMicro'), needsReview: d.needsReview === true, flags: needFlags(d.flags, 'flags') }),
+    display: d => [d.day, kst(d.closedAt), d.source, d.diffMicro ?? ''] },
+  closenotice: { sheet: 'CloseNotices', keyOf: d => d.day, headers: ['day', 'status', 'attempts'],
+    normalize: d => { const n = d.attempts; if (!Number.isInteger(n) || n < 0 || n > 9) bad('attempts는 0~9 정수'); return strip({ day: needDay(d.day, 'day'), status: needEnum(d.status, ['pending', 'sent', 'failed', 'off', 'unknown'], 'status'), attempts: n, at: needMs(d.at, 'at'), error: d.error === undefined || d.error === null ? undefined : needStr(String(d.error), 'error', 40) }); },
+    display: d => [d.day, d.status, String(d.attempts)] },
   tgupdate: { sheet: 'TgUpdates', immutable: true, keyOf: d => `${d.kind}:${d.id}`, headers: ['kind', 'id'],
     normalize: d => ({ kind: needEnum(d.kind, ['u', 'cb'], 'kind'), id: needStr(String(d.id), 'id', 80), at: needMs(d.at, 'at') }), display: d => [d.kind, d.id] },
 };

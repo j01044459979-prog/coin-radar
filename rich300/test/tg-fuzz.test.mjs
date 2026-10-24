@@ -12,8 +12,8 @@ const rows = (x, e) => storeList(x.mem.env, e).map(r => r.data);
 const draftMsg = x => [...x.tele.sent].reverse().find(m => m.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('f1:'));
 const reviewMsg = x => [...x.tele.sent].reverse().find(m => m.text.startsWith('복기 · '));
 function build() { const x = makeTg(); storeCreate(x.mem.env, 'signal', SIG, { actor: 't' }); const { code } = tgPairCreate(x.env); x.tele.say(OWNER, `/pair ${code}`); tgPoll(x.env); return x; }
-export function runFuzz(seed, chaos, { extra } = {}) {
-  const x = build(), r = lcg(seed), poll = () => {
+export function runFuzz(seed, chaos, { prepare, extra, snapExtra } = {}) {
+  const x = build(); if (prepare) prepare(x); const r = lcg(seed), poll = () => {
     if (chaos) {
       if (r() < 0.35) for (let i = 0, n = 1 + Math.floor(r() * 3); i < n; i++) { const m = ['sendMessage', 'editMessageText', 'answerCallbackQuery', 'getUpdates'][Math.floor(r() * 4)], f = [{ status: 429, body: { ok: false, parameters: { retry_after: 1 } } }, { status: 500, body: null }, 'throw', { status: 400, body: { ok: false, description: 'Bad Request: message is not modified' } }][Math.floor(r() * 4)]; x.tele.fail(m, [...(x.tele.fails.get(m) ?? []), f]); }
       if (r() < 0.25) x.mem.setFail(x.mem.appends + 1 + Math.floor(r() * 6)); else x.mem.setFail(null);
@@ -33,7 +33,7 @@ export function runFuzz(seed, chaos, { extra } = {}) {
   if (extra) extra({ x, say, clickSave, until, poll, newest });
   x.tele.fails.clear(); x.mem.setFail(null); x.mem.setLockBusy(false); for (let i = 0; i < 6; i++) tgPoll(x.env);        // 정상화 후 남은 update 처리
   let integ = storeIntegrityCheck(x.mem.env); if (!integ.ok) { assert.ok(integ.issues.every(i => i.type === 'missing-view'), JSON.stringify(integ.issues)); integ = storeRepair(x.mem.env).after; } assert.equal(integ.ok, true, JSON.stringify(integ.issues));
-  return { x, snap: JSON.stringify({ fills: rows(x, 'fill').map(f => [f.kind, f.price, f.qty]).sort(), resp: rows(x, 'response').map(f => f.choice), rv: rows(x, 'review').map(f => [f.plan, f.mind]) }) };
+  return { x, snap: JSON.stringify({ fills: rows(x, 'fill').map(f => [f.kind, f.price, f.qty]).sort(), resp: rows(x, 'response').map(f => f.choice), rv: rows(x, 'review').map(f => [f.plan, f.mind]), ...(snapExtra ? snapExtra(x) : {}) }) };
 }
 test('퍼징: 무작위 결함(요청 실패·쓰기 실패·락 경합·중복 전달·오프셋 유실) 40개 시드에서 최종 상태가 결함 없는 실행과 같다', () => {
   const ref = runFuzz(1, false); assert.equal(JSON.parse(ref.snap).fills.length, 3); let withFaults = 0;
