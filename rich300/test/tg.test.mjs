@@ -274,3 +274,18 @@ test('토큰·본문 비노출: lib은 토큰을 볼 수 없고 요청 payload·
   assert.deepEqual(tgParseCommand('/Fill@MyBot a b c=1'), { cmd: 'fill', pos: ['a', 'b'], opt: { c: '1' } }); assert.equal(tgParseCommand('hello'), null);
   assert.deepEqual(tgHandleUpdate(x.env, { update_id: 'x' }), { status: 'ignored', action: 'unparsable' }); assert.deepEqual(tgHandleUpdate(x.env, null), { status: 'ignored', action: 'unparsable' });
 });
+
+// ───────────── 중복 입력·오래된 초안 방지(퍼징으로 발견한 위험의 회귀 시험) ─────────────
+test('중복 입력 방지: 같은 체결을 두 번 확인하면 두 번째는 막고(force=1 이면 허용), 오래된 초안은 상태가 바뀌었으면 저장하지 않는다', () => {
+  const x = setup(); say(x, `/fill ${SID} 30 10 100 98`); const d1 = lastSent(x); say(x, `/fill ${SID} 30 10 100 98`); const d2 = lastSent(x);          // 응답이 늦어 같은 명령을 두 번 입력
+  click(x, d1, btn(d1, '저장')); assert.equal(rows(x, 'fill').length, 1);
+  click(x, d2, btn(d2, '저장')); assert.equal(rows(x, 'fill').length, 1); assert.match(x.tele.edits.at(-1).text, /그 사이 포지션 상태가 바뀌어/);          // 두 번째 초안은 이제 '추가진입'이 되어야 하므로 거절
+  say(x, `/exit ${SID} 101`); const all = lastSent(x); say(x, `/exit ${SID} 103 1`); const part = lastSent(x); click(x, part, btn(part, '저장')); click(x, all, btn(all, '저장'));
+  assert.deepEqual(rows(x, 'fill').map(f => f.kind).sort(), ['entry', 'reduce']); assert.match(x.tele.edits.at(-1).text, /다시 입력해 주세요/);                              // '전량(3)' 초안은 잔량(2)과 달라 거절
+  say(x, `/exit ${SID} 103 1`); const same = lastSent(x); click(x, same, btn(same, '저장')); assert.equal(rows(x, 'fill').filter(f => f.kind === 'reduce').length, 1); assert.match(x.tele.edits.at(-1).text, /중복 저장 방지/);
+  say(x, `/exit ${SID} 103 1 force=1`); const forced = lastSent(x); click(x, forced, btn(forced, '저장')); assert.equal(rows(x, 'fill').filter(f => f.kind === 'reduce').length, 2);
+  assert.equal(storeIntegrityCheck(x.mem.env).ok, true);
+  const y = setup(); enter(y); assert.deepEqual([tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-1' }).ok, tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-2' }).ok], [true, false]);
+  const f = tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-3' }); assert.deepEqual([f.ok, f.error], [false, 'invalid']); assert.match(f.message, /중복 저장 방지/); assert.equal(tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-3', force: true }).kind, 'reduce');          // 계열이 같으면(부분 청산 반복 포함) 막고, force로 허용
+  say(y, `/fill ${SID} 30 10 100 98`); assert.match(lastSent(y).text, /^추가진입 LONG/);
+});

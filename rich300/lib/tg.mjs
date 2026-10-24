@@ -24,6 +24,7 @@ export const TG_MAX_WAIT_MS = 10000;                 // 이보다 긴 retry_afte
 export const TG_DRAFT_TTL_SEC = 600;
 export const TG_PAIR_TTL_SEC = 600;
 export const TG_PAIR_MAX_FAILS = 5;
+export const TG_DUP_WINDOW_MS = 10 * 60 * 1000;      // 같은 신호에서 같은 종류·가격·수량의 체결이 이 안에 또 들어오면 중복 입력으로 보고 막는다(force=1 로 해제)
 export const TG_POISON_AFTER = 3;                    // 같은 update가 3번 처리 실패하면 건너뛴다(폴링이 영원히 막히지 않게)
 export const TG_SID_RE = /^[A-Za-z0-9_.-]{1,54}$/;   // callback_data 64바이트 한도: 'v1:'+sid+':XXYY:s' 이 들어가도록 54자
 const TG_PAIR_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -31,6 +32,7 @@ const TG_PLAN_CODES = { ok: 'plan_ok', ee: 'early_exit', ch: 'chase_or_average_d
 const TG_MIND_CODES = { ca: 'calm', an: 'anxious_rushed', rv: 'revenge', gr: 'greedy' };
 const TG_PLAN_SHORT = { ok: '계획대로', ee: '조기청산', ch: '추격·물타기', ov: '기타위반' };
 const TG_MIND_SHORT = { ca: '침착', an: '불안·조급', rv: '손실복구', gr: '욕심' };
+const TG_FAMILY = { opening: 'in', entry: 'in', add: 'in', reduce: 'out', close: 'out' };   // 중복 판정: 진입/추가진입, 부분/전량 청산은 같은 계열
 const TG_RESP = { e: 'entered', w: 'watched', m: 'missed' };
 
 // ── kv(만료는 여기서 처리) ──
@@ -153,7 +155,7 @@ export function tgBuildEntry(env, p) {                 // p: { sid, margin, leve
   if (!sg || sg.void) throw tgUserErr(`알 수 없는 신호: ${String(p.sid).slice(0, 40)}`);
   const resp = storeGet(se, 'response', p.sid);
   if (resp && !resp.void && resp.data.choice !== 'entered') throw tgUserErr(`이 신호는 '${RESPONSE_CHOICES[resp.data.choice]}'로 기록돼 있어 진입을 기록할 수 없습니다(수정은 앱에서)`);
-  const fills = tgFillsOf(se, p.sid), trade = fills.length ? pnlComputeTrade(fills) : null;
+  const fills = tgFillsOf(se, p.sid), trade = fills.length ? tgTradeOrUserError(fills) : null;
   if (trade && trade.status === 'closed') throw tgUserErr('이미 청산된 신호입니다');
   const kind = trade ? 'add' : 'entry';
   const margin = schemaDecString(p.margin, '증거금', { positive: true }), leverage = schemaDecString(p.leverage, '레버리지', { positive: true }), entry = schemaDecString(p.entry, '진입가', { positive: true }), stop = schemaDecString(p.stop, '손절가', { positive: true });
@@ -162,10 +164,10 @@ export function tgBuildEntry(env, p) {                 // p: { sid, margin, leve
   else { qty = decFormat(decDiv(decMul(dec(margin), dec(leverage)), dec(entry)), 8); qty = schemaDecString(qty, '수량(계산)', { positive: true }); qtySource = 'derived'; }
   const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop, qty, margin, leverage, equityMicro: tgRiskEquityMicro(env) });
   const fill = { origin: 'real', sid: p.sid, kind, dir, price: entry, qty, margin, leverage, plannedStop: stop, qtySource, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩') };
-  return { type: 'fill', fill, risk, summary: tgEntrySummary(fill, risk) };
+  return { type: 'fill', fill, risk, summary: tgEntrySummary(fill, risk), params: { ...p }, force: p.force === true };
 }
 export function tgBuildExit(env, p) {                  // p: { sid, price, qty?('all'), fee?, funding? }
-  const se = env.storeEnv(), fills = tgFillsOf(se, p.sid), trade = fills.length ? pnlComputeTrade(fills) : null;
+  const se = env.storeEnv(), fills = tgFillsOf(se, p.sid), trade = fills.length ? tgTradeOrUserError(fills) : null;
   if (!trade) throw tgUserErr('이 신호의 진입 기록이 없습니다');
   if (trade.status !== 'open') throw tgUserErr('이미 전량 청산된 포지션입니다');
   const price = schemaDecString(p.price, '청산가', { positive: true });
@@ -174,8 +176,8 @@ export function tgBuildExit(env, p) {                  // p: { sid, price, qty?(
   const qd = dec(qty); if (qd > trade.openQtyDec) throw tgUserErr(`보유 수량(${tgNum(decFormat(trade.openQtyDec, 8))})보다 큽니다`);
   const kind = qd === trade.openQtyDec ? 'close' : 'reduce';
   const fill = { origin: 'real', sid: p.sid, kind, dir: trade.dir, price, qty, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩') };
-  const probe = pnlComputeTrade([...fills, { ...fill, fillId: 'preview', at: tgNextAt(env, fills) }]), ev = probe.events[probe.events.length - 1];
-  return { type: 'exit', fill, summary: tgExitSummary(fill, ev, probe) };
+  const probe = tgTradeOrUserError([...fills, { ...fill, fillId: 'preview', at: tgNextAt(env, fills) }]), ev = probe.events[probe.events.length - 1];
+  return { type: 'exit', fill, summary: tgExitSummary(fill, ev, probe), params: { ...p }, force: p.force === true };
 }
 const tgM = m => decFormat(m * 1000000n, 2);
 function tgEntrySummary(f, r) {
@@ -190,12 +192,20 @@ function tgExitSummary(f, ev, t) {
   if (f.kind === 'close') lines.push(`포지션 순손익(입력된 수수료·펀딩만) ${tgM(t.totals.netEnteredMicro)} USDT`);
   return lines.join('\n');
 }
+const tgTradeOrUserError = fills => { try { return pnlComputeTrade(fills); } catch (e) { throw tgUserErr(`계산할 수 없는 체결입니다: ${String(e.message).slice(0, 80)}`); } };
 const tgNextAt = (env, fills) => Math.max(env.now(), fills.reduce((m, f) => Math.max(m, f.at), 0) + 1);
 const tgNum = v => { const t = String(v); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };
+function tgRebuild(env, d) {                            // 확인 시점의 *현재 상태*로 다시 계산해 초안과 같은지 확인(그 사이 상태가 바뀐 초안이 잘못 저장되는 것을 막는다)
+  const b = d.type === 'fill' ? tgBuildEntry(env, d.params) : tgBuildExit(env, d.params);
+  if (b.fill.kind !== d.fill.kind || b.fill.qty !== d.fill.qty) throw tgUserErr('그 사이 포지션 상태가 바뀌어 이 초안은 맞지 않습니다. 다시 입력해 주세요');
+}
 function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후에만 호출. fillId는 초안/폼 id로 고정 → 중복 확인·재처리에도 1건.
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
   if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };
-  const f = { ...draft.fill, at: tgNextAt(env, tgFillsOf(se, draft.fill.sid)), fillId: draft.fillId };      // 같은 sid의 체결은 시각이 단조 증가(같은 ms 입력에도 순서 보존)
+  if (draft.params) tgRebuild(env, draft);
+  const same = tgFillsOf(se, draft.fill.sid), f = { ...draft.fill, at: tgNextAt(env, same), fillId: draft.fillId };
+  if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
+    throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
   if (draft.type === 'fill') {
     const cur = storeGet(se, 'response', f.sid);
     if (!cur || cur.void) storeCreate(se, 'response', { sid: f.sid, choice: 'entered', at: f.at }, { actor });
@@ -212,8 +222,8 @@ export function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
     const sid = String(form.sid ?? ''), isExit = form.kind === 'exit', formId = String(form.formId ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || env.randomId(8), fillId = `${sid}:${formId}`;
     const dupe = storeGet(env.storeEnv(), 'fill', fillId);          // 같은 폼 재제출(네트워크 재시도·더블탭)은 상태가 바뀌었어도 duplicate로 수렴
     if (dupe && !dupe.void) return { ok: true, status: 'duplicate', kind: dupe.data.kind };
-    const built = isExit ? tgBuildExit(env, { sid, price: String(form.price ?? ''), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined })
-      : tgBuildEntry(env, { sid, margin: String(form.margin ?? ''), leverage: String(form.leverage ?? ''), entry: String(form.entry ?? ''), stop: String(form.stop ?? ''), qty: form.qty ? String(form.qty) : undefined, fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined });
+    const built = isExit ? tgBuildExit(env, { sid, price: String(form.price ?? ''), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true })
+      : tgBuildEntry(env, { sid, margin: String(form.margin ?? ''), leverage: String(form.leverage ?? ''), entry: String(form.entry ?? ''), stop: String(form.stop ?? ''), qty: form.qty ? String(form.qty) : undefined, fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
     if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
@@ -227,9 +237,9 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 }
 
 // ── 명령 ──
-const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력'].join('\n');
+const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
 function tgConfirmDraft(env, ev, built) {
-  const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, sid: built.fill.sid, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
+  const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, params: built.params, force: built.force === true, sid: built.fill.sid, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
   return { status: 'handled', action: built.type === 'fill' ? 'fill-draft' : 'exit-draft', replyFailed: !s.ok };
 }
@@ -240,11 +250,11 @@ function tgOnMessage(env, ev) {
     if (c.cmd === 'start' || c.cmd === 'help') return { status: 'handled', action: 'help', ...reply(TG_HELP) };
     if (c.cmd === 'fill') {
       if (c.pos.length < 5) return { status: 'handled', action: 'usage', ...reply('사용법: /fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]') };
-      const [sid, margin, leverage, entry, stop] = c.pos; return tgConfirmDraft(env, ev, tgBuildEntry(env, { sid, margin, leverage, entry, stop, qty: c.opt.qty, fee: c.opt.fee, funding: c.opt.funding }));
+      const [sid, margin, leverage, entry, stop] = c.pos; return tgConfirmDraft(env, ev, tgBuildEntry(env, { sid, margin, leverage, entry, stop, qty: c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1' }));
     }
     if (c.cmd === 'exit') {
       if (c.pos.length < 2) return { status: 'handled', action: 'usage', ...reply('사용법: /exit 신호ID 청산가 [수량|all] [fee= funding=]') };
-      return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding }));
+      return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1' }));
     }
     if (c.cmd === 'review') {
       const sid = c.pos[0]; if (!sid || !TG_SID_RE.test(sid)) return { status: 'handled', action: 'usage', ...reply('사용법: /review 신호ID') };
@@ -302,7 +312,9 @@ function tgOnDraft(env, ev, id, yn, cb, answer) {
   if (!d) { answer('만료됐거나 이미 처리됐습니다. 다시 입력해 주세요'); tgEdit(env, cb, '(만료됨)'); return { status: 'handled', action: 'draft-gone' }; }
   if (d.userId !== ev.fromId) { return { status: 'ignored', action: 'draft-other-user' }; }
   if (yn === 'n') { env.kv.del(`d:${id}`); answer('취소했습니다'); tgEdit(env, cb, '취소됨'); return { status: 'handled', action: 'draft-cancelled' }; }
-  const r = tgCommitFill(env, { type: d.type, fill: d.fill, fillId: `${d.sid}:${id}` }, 'tg');
+  let r;
+  try { r = tgCommitFill(env, { type: d.type, fill: d.fill, params: d.params, force: d.force === true, fillId: `${d.sid}:${id}` }, 'tg'); }
+  catch (e) { if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) { env.kv.del(`d:${id}`); answer('저장하지 못했습니다'); tgEdit(env, cb, `⚠ ${String(e.message).slice(0, 200)}`); return { status: 'handled', action: 'fill-rejected' }; } throw e; }
   const a = answer(r.status === 'duplicate' ? '이미 저장됨' : '저장했습니다'), e = tgEdit(env, cb, `저장됨 ✓\n${d.fill.kind === 'close' ? '전량 청산' : d.fill.kind === 'reduce' ? '부분 청산' : d.fill.kind === 'add' ? '추가진입' : '진입'} ${d.fill.dir} · ${d.sid} · ${d.fill.price} × ${d.fill.qty}`);
   let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
   if (d.fill.kind === 'close') { const s = tgSendReviewPromptIfNeeded(env, ev.chatId, d.sid); replyFailed = replyFailed || !s.ok; }
