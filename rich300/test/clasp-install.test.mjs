@@ -13,7 +13,7 @@ const sha = b => createHash('sha256').update(b).digest('hex');
 const FAKE = `#!/usr/bin/env bash
 echo "$@ [id=$(grep -o '"scriptId":"[^"]*"' .clasp.json 2>/dev/null | cut -d'"' -f4)]" >> "$FAKE_LOG"
 case "$1" in
-  login) [[ "$FAKE_LOGIN_FAIL" == 1 ]] && exit 1; echo '{}' > "$HOME/.clasprc.json" ;;
+  login) { tr -d '\n' < appsscript.json; echo; } >> "$FAKE_LOG.scopes" 2>/dev/null; [[ "$FAKE_LOGIN_FAIL" == 1 ]] && exit 1; IFS= read -r line; echo "stdin-line: $line" >> "$FAKE_LOG.stdin"; [[ "$line" == *code=* ]] || { echo 'Missing code in response URL' >&2; exit 1; }; echo '{}' > "$HOME/.clasprc.json" ;;
   push) n=$(cat "$FAKE_STATE/pushes" 2>/dev/null || echo 0); echo $((n+1)) > "$FAKE_STATE/pushes"
         if [[ "$n" == 0 && "$FAKE_PUSH_FAIL" == 1 ]]; then cp Code.gs "$FAKE_REMOTE/Code.gs"; exit 1; fi
         if [[ "$n" -ge 1 && "$FAKE_RESTORE_FAIL" == 1 ]]; then exit 1; fi
@@ -30,10 +30,13 @@ function setup({ remote = { 'Code.gs': BOOT, 'appsscript.json': '{"timeZone":"As
   mkdirSync(rem); mkdirSync(state); mkdirSync(`${root}/home`); for (const [n, c] of Object.entries(remote)) writeFileSync(`${rem}/${n}`, c);
   writeFileSync(bin, FAKE, { mode: 0o755 }); return { root, src, bin, rem, state, home: `${root}/home`, log: `${root}/clasp.log` };
 }
-function run(w, { args = [ID, FAKE_COMMIT], env = {} } = {}) {
-  const e = { PATH: process.env.PATH, HOME: w.home, RICH300_SRC_DIR: w.src, RICH300_CLASP: w.bin, RICH300_CONFIRM: LAST6, FAKE_LOG: w.log, FAKE_REMOTE: w.rem, FAKE_STATE: w.state, ...env };
-  const r = spawnSync('bash', [SCRIPT, ...args], { env: e, encoding: 'utf8', input: '' }); const log = existsSync(w.log) ? readFileSync(w.log, 'utf8').trim().split('\n') : [];
-  return { r, log, out: r.stdout + r.stderr, cmds: log.map(l => l.split(' ')[0]), backups: readdirSync(w.home).filter(n => n.startsWith('rich300-backup-')) };
+const URL_OK = 'http://localhost:8888/?code=4%2F0AXYZ&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fscript.projects';
+function run(w, { args = [ID, FAKE_COMMIT], env = {}, ttyLines = [URL_OK], piped = false } = {}) {
+  const tty = `${w.root}/tty`; writeFileSync(tty, ttyLines.map(l => `${l}\n`).join(''));
+  const e = { PATH: process.env.PATH, HOME: w.home, RICH300_SRC_DIR: w.src, RICH300_CLASP: w.bin, RICH300_CONFIRM: LAST6, RICH300_TTY: tty, FAKE_LOG: w.log, FAKE_REMOTE: w.rem, FAKE_STATE: w.state, ...env };
+  const r = piped ? spawnSync('bash', ['-s', '--', ...args], { env: e, encoding: 'utf8', input: readFileSync(SCRIPT, 'utf8') }) : spawnSync('bash', [SCRIPT, ...args], { env: e, encoding: 'utf8', input: '' }); const log = existsSync(w.log) ? readFileSync(w.log, 'utf8').trim().split('\n') : [];
+  const extra = n => (existsSync(`${w.log}.${n}`) ? readFileSync(`${w.log}.${n}`, 'utf8').trim().split('\n') : []);
+  return { r, log, scopes: extra('scopes'), stdin: extra('stdin'), out: r.stdout + r.stderr, cmds: log.map(l => l.split(' ')[0]), backups: readdirSync(w.home).filter(n => n.startsWith('rich300-backup-')) };
 }
 const remoteFiles = w => Object.fromEntries(readdirSync(w.rem).map(n => [n, readFileSync(`${w.rem}/${n}`, 'utf8')]));
 const fixManifest = d => { const rows = ['Code.gs', 'Fill.html', 'appsscript.json'].map(n => `${sha(readFileSync(`${d}/${n}`))}  ${String(readFileSync(`${d}/${n}`).length).padStart(8)}  ${n}`); writeFileSync(`${d}/MANIFEST.txt`, `RICH300 Apps Script bundle\n${rows.join('\n')}\n`); };
@@ -70,6 +73,32 @@ test('확인 절차: 프로젝트 ID 마지막 6글자를 입력해야 진행(�
   w = setup(); x = run(w, { env: { RICH300_CONFIRM: '' } }); assert.notEqual(x.r.status, 0); assert.ok(!x.cmds.includes('push')); assert.match(x.out, /확인을 입력받을 수 없습니다|확인 값이 다릅니다/);
   assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'appsscript.json', 'Fill.html'].sort());
 });
+test('실제 사고 재현: "curl | bash"(stdin=스크립트)로 실행해도 로그인 입력은 터미널에서만 받는다 — clasp 가 스크립트 텍스트를 읽지 않는다', () => {
+  const w = setup(), x = run(w, { piped: true }); assert.equal(x.r.status, 0, x.out); assert.equal(x.stdin.length, 1); assert.equal(x.stdin[0], `stdin-line: ${URL_OK}`); assert.ok(!/set -euo|#!\/usr\/bin\/env/.test(x.stdin.join('\n')));
+  assert.deepEqual(x.cmds, ['login', 'pull', 'push', 'pull', 'logout']); assert.match(x.out, /\[PASS\] 반영 완료/);
+});
+test('터미널 입력이 없으면(예: 입력 장치 없음) 로그인 시도 전에 안내하고 중단한다 — 스크립트 텍스트를 입력으로 소비하지 않는다', () => {
+  const w = setup(), x = run(w, { piped: true, env: { RICH300_TTY: `${w.root}/없는장치` } }); assert.notEqual(x.r.status, 0); assert.equal(x.log.length, 0); assert.match(x.out, /터미널 입력을 사용할 수 없습니다/); assert.match(x.out, /파일로 받아/);
+});
+test('붙여 넣은 URL 에 code= 가 없으면 로그인 실패로 안내하고 push 하지 않는다(재시도 방법 포함)', () => {
+  const w = setup(), x = run(w, { ttyLines: ['https://accounts.google.com/o/oauth2/v2/auth?client_id=x'] }); assert.notEqual(x.r.status, 0); assert.match(x.out, /code= 가 있어야 합니다/); assert.ok(!x.cmds.includes('pull') && !x.cmds.includes('push'));
+});
+test('권한 최소화: 로그인은 script.projects·userinfo.email 두 범위만(--use-project-scopes), cloud-platform 등은 요청하지 않는다. RICH300_SCOPES=default 로만 기본 범위', () => {
+  let x = run(setup()); assert.ok(x.log[0].includes('--use-project-scopes')); assert.equal(x.scopes.length, 1); assert.deepEqual(JSON.parse(x.scopes[0]).oauthScopes, ['https://www.googleapis.com/auth/script.projects', 'https://www.googleapis.com/auth/userinfo.email']); assert.ok(!/cloud-platform|drive|logging|service\.management/.test(x.scopes[0]));
+  x = run(setup(), { env: { RICH300_SCOPES: 'default' } }); assert.ok(!x.log[0].includes('--use-project-scopes')); assert.match(x.out, /경고: clasp 기본 권한 범위/);
+});
+test('로그인 방식: Cloud Shell/SSH(원격)는 --no-localhost 붙여넣기, 내 PC는 자동(localhost), RICH300_LOGIN 으로 지정 가능', () => {
+  assert.ok(run(setup(), { env: { CLOUD_SHELL: 'true' } }).log[0].includes('--no-localhost')); assert.ok(run(setup(), { env: { SSH_CONNECTION: '1 2 3 4' } }).log[0].includes('--no-localhost'));
+  const local = run(setup()); assert.ok(!local.log[0].includes('--no-localhost')); assert.ok(run(setup(), { env: { RICH300_LOGIN: 'paste' } }).log[0].includes('--no-localhost')); assert.ok(!run(setup(), { env: { CLOUD_SHELL: 'true', RICH300_LOGIN: 'local' } }).log[0].includes('--no-localhost'));
+  const out = run(setup(), { env: { CLOUD_SHELL: 'true' } }).out; assert.match(out, /채팅·메신저에 공유하지 마세요/); assert.match(out, /http:\/\/localhost:8888\/\?code=/);
+});
+test('확인 입력도 터미널에서 받는다(환경 변수 없이): 올바른 6글자면 진행, 틀리면 중단', () => {
+  let x = run(setup(), { env: { RICH300_CONFIRM: '' }, ttyLines: [URL_OK, LAST6] }); assert.equal(x.r.status, 0, x.out); assert.ok(x.cmds.includes('push'));
+  x = run(setup(), { env: { RICH300_CONFIRM: '' }, ttyLines: [URL_OK, 'nope12'] }); assert.notEqual(x.r.status, 0); assert.ok(!x.cmds.includes('push')); assert.match(x.out, /확인 값이 다릅니다/);
+});
+test('이미 로그인돼 있으면 로그인을 건너뛰고 기존 로그인은 지우지 않는다(우리가 만든 로그인만 로그아웃)', () => {
+  const w = setup(); writeFileSync(`${w.home}/.clasprc.json`, '{}'); const x = run(w, { ttyLines: [] }); assert.equal(x.r.status, 0, x.out); assert.deepEqual(x.cmds, ['pull', 'push', 'pull']); assert.equal(existsSync(`${w.home}/.clasprc.json`), true); assert.match(x.out, /이미 clasp 로그인 상태/);
+});
 test('복구: 반영 결과가 다르면(또는 push 가 중간에 실패하면) 백업으로 되돌리고 되돌린 결과를 확인한다', () => {
   for (const env of [{ FAKE_CORRUPT_ONCE: '1' }, { FAKE_PUSH_FAIL: '1' }]) {
     const w = setup(), x = run(w, { env }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[복구\]/); assert.match(x.out, /\[복구 완료\]/);
@@ -91,5 +120,7 @@ test('설치 파일 손상(끝 잘림·해시·문법·열린 매니페스트)�
 });
 test('스크립트 자체: create·deploy·delete·run·Telegram·스크립트 속성 변경 없음, clasp 버전 고정, fileExtension=gs 로 Code.gs 이름 고정', () => {
   const s = readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, ''); assert.ok(!/\$CLASP\s+(create|deploy|delete|undeploy|run|setting|open|versions)\b/.test(s)); assert.ok(!/api\.telegram|TELEGRAM|TG_TOKEN|PROD_APPROVED/.test(s)); assert.match(s, /@google\/clasp@3\.3\.0/); assert.match(s, /"fileExtension":"gs"/); assert.match(s, /set -euo pipefail/);
+  assert.ok(!/\$CLASP (pull|push)[^\n]*\)/.test(s.replace(/<\/dev\/null/g, '')) || /\$CLASP (pull|push)[^<\n]*<\/dev\/null/.test(s));          // 로그인 외 clasp 호출은 stdin 을 읽지 않는다
+  for (const m of s.matchAll(/\$CLASP (pull|push)[^\n]*/g)) assert.match(m[0], /<\/dev\/null/);
   assert.ok(!/rm -rf "\$HOME|rm -rf \/|rm -rf "\$BACKUP/.test(s));                                           // 백업은 지우지 않는다
 });
