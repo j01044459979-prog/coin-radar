@@ -18,6 +18,8 @@ import { riskTrade } from './risk.mjs';
 import { authTimingSafeEqual } from './auth.mjs';
 import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecString } from './schema.mjs';
 import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger } from './store.mjs';
+import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
+import { isDayString } from './time.mjs';
 
 export const TG_MAX_ATTEMPTS = 3;
 export const TG_MAX_WAIT_MS = 10000;                 // 이보다 긴 retry_after는 기다리지 않고 재시도 가능 오류로 반환(다음 트리거에서 재처리)
@@ -76,6 +78,11 @@ const tgSend = (env, chatId, text, markup) => tgCall(env, 'sendMessage', { chat_
 const tgEdit = (env, cb, text, markup) => tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text, reply_markup: markup ?? { inline_keyboard: [] } });
 const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callback_query_id: cbId, ...(text ? { text: String(text).slice(0, 190) } : {}) });
 const tgOkOrBenign = r => r.ok || r.benign;
+// 일 마감 알림 발송(R7): 텍스트 + 선택적 URL 버튼. 결과 코드만 반환(본문·토큰 없음).
+export function tgSendNotice(env, chatId, text, url) {
+  const r = tgSend(env, chatId, text, url && /^https:\/\/\S+$/.test(url) ? { inline_keyboard: [[{ text: '입력하기', url }]] } : undefined);
+  return r.ok ? { ok: true } : { ok: false, code: r.code };
+}
 
 // ── 입력 정규화 ──
 export function tgParseUpdate(u) {
@@ -237,11 +244,15 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 }
 
 // ── 명령 ──
-const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
+const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
 function tgConfirmDraft(env, ev, built) {
-  const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, params: built.params, force: built.force === true, sid: built.fill.sid, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
+  const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, equity: built.equity, params: built.params, force: built.force === true, sid: built.fill ? built.fill.sid : undefined, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
-  return { status: 'handled', action: built.type === 'fill' ? 'fill-draft' : 'exit-draft', replyFailed: !s.ok };
+  return { status: 'handled', action: built.type === 'fill' ? 'fill-draft' : built.type === 'equity' ? 'equity-draft' : 'exit-draft', replyFailed: !s.ok };
+}
+function tgDefaultEquityDay(env) {                      // 평가액이 없는 가장 최근 *마감된* 날, 없으면 오늘(KST)
+  try { const m = closeStatus(env, { now: env.now(), days: 14 }).find(d => d.closed && d.equity === null); if (m) return m.day; } catch { /* 챌린지 없음 등 */ }
+  return kstDayOf(env.now());
 }
 function tgOnMessage(env, ev) {
   const c = tgParseCommand(ev.text); if (!c) return { status: 'ignored', action: 'not-command' };
@@ -256,6 +267,13 @@ function tgOnMessage(env, ev) {
       if (c.pos.length < 2) return { status: 'handled', action: 'usage', ...reply('사용법: /exit 신호ID 청산가 [수량|all] [fee= funding=]') };
       return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1' }));
     }
+    if (c.cmd === 'equity') {
+      if (c.pos.length < 1) return { status: 'handled', action: 'usage', ...reply('사용법: /equity 금액 [날짜] [unrealized=값]') };
+      const day = c.pos[1] ?? tgDefaultEquityDay(env); if (!isDayString(day)) return { status: 'handled', action: 'user-error', ...reply('⚠ 날짜 형식은 YYYY-MM-DD 입니다') };
+      closeCheckEquityDay(env, day, env.now());
+      const amount = schemaDecString(c.pos[0], '평가액', { nonNegative: true }), un = c.opt.unrealized === undefined ? undefined : schemaDecString(c.opt.unrealized, '미실현 손익');
+      return tgConfirmDraft(env, ev, { type: 'equity', equity: { day, equity: amount, ...(un === undefined ? {} : { unrealized: un }) }, summary: `평가액 입력 · ${day}\n실제 계좌 평가액 ${amount} USDT${un === undefined ? '' : ` (미실현 ${un})`}\n(장부와 다르면 차이만 표시하고 손익에는 자동 반영하지 않습니다)` });
+    }
     if (c.cmd === 'review') {
       const sid = c.pos[0]; if (!sid || !TG_SID_RE.test(sid)) return { status: 'handled', action: 'usage', ...reply('사용법: /review 신호ID') };
       if (!tgFillsOf(env.storeEnv(), sid).length) return { status: 'handled', action: 'review-none', ...reply('이 신호의 체결 기록이 없습니다') };
@@ -267,7 +285,7 @@ function tgOnMessage(env, ev) {
     }
     return { status: 'handled', action: 'unknown-command', ...reply('알 수 없는 명령입니다. /help') };
   } catch (e) {
-    if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) return { status: 'handled', action: 'user-error', ...reply(`⚠ ${String(e.message).slice(0, 160)}`) };
+    if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION' || e.code === 'NOT_FOUND')) return { status: 'handled', action: 'user-error', ...reply(`⚠ ${String(e.message).slice(0, 160)}`) };
     throw e;
   }
 }
@@ -312,6 +330,7 @@ function tgOnDraft(env, ev, id, yn, cb, answer) {
   if (!d) { answer('만료됐거나 이미 처리됐습니다. 다시 입력해 주세요'); tgEdit(env, cb, '(만료됨)'); return { status: 'handled', action: 'draft-gone' }; }
   if (d.userId !== ev.fromId) { return { status: 'ignored', action: 'draft-other-user' }; }
   if (yn === 'n') { env.kv.del(`d:${id}`); answer('취소했습니다'); tgEdit(env, cb, '취소됨'); return { status: 'handled', action: 'draft-cancelled' }; }
+  if (d.type === 'equity') return tgCommitEquity(env, ev, d, cb, answer);
   let r;
   try { r = tgCommitFill(env, { type: d.type, fill: d.fill, params: d.params, force: d.force === true, fillId: `${d.sid}:${id}` }, 'tg'); }
   catch (e) { if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) { env.kv.del(`d:${id}`); answer('저장하지 못했습니다'); tgEdit(env, cb, `⚠ ${String(e.message).slice(0, 200)}`); return { status: 'handled', action: 'fill-rejected' }; } throw e; }
@@ -319,6 +338,17 @@ function tgOnDraft(env, ev, id, yn, cb, answer) {
   let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
   if (d.fill.kind === 'close') { const s = tgSendReviewPromptIfNeeded(env, ev.chatId, d.sid); replyFailed = replyFailed || !s.ok; }
   return { status: 'handled', action: r.status === 'duplicate' ? 'fill-duplicate' : 'fill-saved', replyFailed };
+}
+
+function tgCommitEquity(env, ev, d, cb, answer) {        // 확인(저장) 이후에만. 같은 값 재저장은 unchanged, 다른 값은 수정 이력으로 남는다.
+  let r;
+  try { r = closeSubmitEquity(env, { ...d.equity, reason: 'Telegram 입력' }, { actor: 'tg', now: env.now() }); }
+  catch (e) { if (e instanceof StoreError && (e.code === 'VALIDATION' || e.code === 'NOT_FOUND')) { answer('저장하지 못했습니다'); tgEdit(env, cb, `⚠ ${String(e.message).slice(0, 160)}`); return { status: 'handled', action: 'equity-invalid' }; } throw e; }
+  const warn = r.flags.map(f => CLOSE_WARNING_TEXT[f]).filter(Boolean).slice(0, 3), lines = [`${r.status === 'unchanged' ? '이미 같은 값' : '저장됨 ✓'} · ${r.day} 평가액 ${d.equity.equity} USDT${r.late ? ' (마감 후 입력)' : ''}`];
+  if (r.diffLabel !== null) lines.push(`장부 기준 ${r.expectedLabel} · 차이 ${r.diffMicro && BigInt(r.diffMicro) > 0n ? '+' : ''}${r.diffLabel}`);
+  if (warn.length) lines.push(`⚠ ${warn.join(' · ')}`);
+  const a = answer(r.status === 'unchanged' ? '이미 저장됨' : '저장했습니다'), e = tgEdit(env, cb, lines.join('\n'));
+  return { status: 'handled', action: `equity-${r.status}`, replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
 
 // ── 한 건 처리 ──
