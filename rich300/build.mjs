@@ -17,6 +17,7 @@ export const ENGINE_MODULES = [
   'store',
   'auth',
   'ingest',
+  'tg',
 ];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 
