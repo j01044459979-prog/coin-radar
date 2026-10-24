@@ -8,28 +8,28 @@
  */
 var RICH300_BACKUP_FOLDER = 'RICH300-backups';
 
-function rich300BackupEnv_() {
-  var props = PropertiesService.getScriptProperties(), sid = props.getProperty('RICH300_SHEET_ID'), store = null, folderId = null;
+function rich300BackupDrive_(folderName) {
+  var folderId = null;
   return {
-    sourceId: sid,
-    storeEnv: function () { if (!store) { store = rich300GasEnv_(sid); RICH300_ENGINE.storeInit(store); } return store; },
-    drive: {
-      ensureFolder: function () {
-        if (folderId) return folderId;
-        var it = DriveApp.getFoldersByName(RICH300_BACKUP_FOLDER);
-        folderId = it.hasNext() ? it.next().getId() : DriveApp.createFolder(RICH300_BACKUP_FOLDER).getId();
-        return folderId;
-      },
-      list: function (fid) {
-        var out = [], it = DriveApp.getFolderById(fid).getFiles();
-        while (it.hasNext()) { var f = it.next(); out.push({ id: f.getId(), name: f.getName(), createdAt: f.getDateCreated().getTime() }); }
-        return out;
-      },
-      copy: function (sourceId, name, fid) { var f = DriveApp.getFileById(sourceId).makeCopy(name, DriveApp.getFolderById(fid)); return { id: f.getId() }; },
-      openStore: function (id) { return rich300GasEnv_(id); },
-      trash: function (id) { DriveApp.getFileById(id).setTrashed(true); }
-    }
+    ensureFolder: function () {
+      if (folderId) return folderId;
+      var it = DriveApp.getFoldersByName(folderName);
+      folderId = it.hasNext() ? it.next().getId() : DriveApp.createFolder(folderName).getId();
+      return folderId;
+    },
+    list: function (fid) {
+      var out = [], it = DriveApp.getFolderById(fid).getFiles();
+      while (it.hasNext()) { var f = it.next(); out.push({ id: f.getId(), name: f.getName(), createdAt: f.getDateCreated().getTime() }); }
+      return out;
+    },
+    copy: function (sourceId, name, fid) { var f = DriveApp.getFileById(sourceId).makeCopy(name, DriveApp.getFolderById(fid)); return { id: f.getId() }; },
+    openStore: function (id) { return rich300GasEnv_(id); },
+    trash: function (id) { DriveApp.getFileById(id).setTrashed(true); }
   };
+}
+function rich300BackupEnv_() {
+  var props = PropertiesService.getScriptProperties(), sid = props.getProperty('RICH300_SHEET_ID'), store = null;
+  return { sourceId: sid, storeEnv: function () { if (!store) { store = rich300GasEnv_(sid); RICH300_ENGINE.storeInit(store); } return store; }, drive: rich300BackupDrive_(RICH300_BACKUP_FOLDER) };
 }
 /** 트리거·수동 진입점. 결과는 개수·이름만 속성에 남긴다(ID·내용 없음). */
 function rich300BackupRun() {

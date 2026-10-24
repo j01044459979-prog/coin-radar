@@ -74,10 +74,12 @@ export function tgCall(env, method, payload) {
     return { ok: false, status, code, retryable, benign: TG_BENIGN.includes(code), retryAfterSec: code === 'rate-limit' ? retryAfterSec : undefined, attempts };
   }
 }
-const tgSend = (env, chatId, text, markup) => tgCall(env, 'sendMessage', { chat_id: chatId, text, disable_web_page_preview: true, ...(markup ? { reply_markup: markup } : {}) });
-const tgEdit = (env, cb, text, markup) => tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text, reply_markup: markup ?? { inline_keyboard: [] } });
+const tgPrefix = env => (typeof env.msgPrefix === 'string' ? env.msgPrefix : '');            // 테스트 환경은 모든 메시지 앞에 '[TEST] '
+const tgSend = (env, chatId, text, markup) => tgCall(env, 'sendMessage', { chat_id: chatId, text: tgPrefix(env) + text, disable_web_page_preview: true, ...(markup ? { reply_markup: markup } : {}) });
+const tgEdit = (env, cb, text, markup) => tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text: tgPrefix(env) + text, reply_markup: markup ?? { inline_keyboard: [] } });
 const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callback_query_id: cbId, ...(text ? { text: String(text).slice(0, 190) } : {}) });
 const tgOkOrBenign = r => r.ok || r.benign;
+export const tgSendMessage = tgSend;                  // 검증 하니스(테스트 환경 전용)가 임의 메시지를 보낼 때 사용
 // 일 마감 알림 발송(R7): 텍스트 + 선택적 URL 버튼. 결과 코드만 반환(본문·토큰 없음).
 export function tgSendNotice(env, chatId, text, url) {
   const r = tgSend(env, chatId, text, url && /^https:\/\/\S+$/.test(url) ? { inline_keyboard: [[{ text: '입력하기', url }]] } : undefined);
@@ -88,7 +90,7 @@ export function tgSendNotice(env, chatId, text, url) {
 export function tgParseUpdate(u) {
   if (!u || !Number.isSafeInteger(u.update_id)) return null;
   const m = u.message, c = u.callback_query;
-  if (m && m.from && Number.isSafeInteger(m.from.id) && m.chat && Number.isSafeInteger(m.chat.id)) return { kind: 'message', updateId: u.update_id, fromId: m.from.id, chatId: m.chat.id, chatType: m.chat.type, isBot: m.from.is_bot === true, text: typeof m.text === 'string' ? m.text.slice(0, 500) : '' };
+  if (m && m.from && Number.isSafeInteger(m.from.id) && m.chat && Number.isSafeInteger(m.chat.id)) return { kind: 'message', updateId: u.update_id, fromId: m.from.id, chatId: m.chat.id, chatType: m.chat.type, isBot: m.from.is_bot === true, dateMs: Number.isFinite(m.date) ? m.date * 1000 : null, text: typeof m.text === 'string' ? m.text.slice(0, 500) : '' };
   if (c && typeof c.id === 'string' && c.from && Number.isSafeInteger(c.from.id)) {
     const cm = c.message; return { kind: 'callback', updateId: u.update_id, fromId: c.from.id, chatId: cm?.chat && Number.isSafeInteger(cm.chat.id) ? cm.chat.id : null, chatType: cm?.chat?.type, isBot: c.from.is_bot === true, cbId: c.id, data: typeof c.data === 'string' ? c.data.slice(0, 64) : '', messageId: Number.isSafeInteger(cm?.message_id) ? cm.message_id : null };
   }
@@ -245,7 +247,7 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 
 // ── 명령 ──
 const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 손절가 [qty= fee= funding=]', '/exit 신호ID 청산가 [수량|all] [fee= funding=]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
-function tgConfirmDraft(env, ev, built) {
+export function tgConfirmDraft(env, ev, built) {
   const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, equity: built.equity, params: built.params, force: built.force === true, sid: built.fill ? built.fill.sid : undefined, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
   return { status: 'handled', action: built.type === 'fill' ? 'fill-draft' : built.type === 'equity' ? 'equity-draft' : 'exit-draft', replyFailed: !s.ok };
@@ -297,6 +299,7 @@ function tgOnCallback(env, ev) {
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
+  if (parts[0] === 'lv' && env.live && typeof env.live.onCallback === 'function') return env.live.onCallback(env, ev, parts, cb, answer);      // 검증 하니스(테스트 환경 전용) 확장점
   answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button' };
 }
 function tgOnResponse(env, ev, sid, choice, cb, answer) {
@@ -354,7 +357,7 @@ function tgCommitEquity(env, ev, d, cb, answer) {        // 확인(저장) 이�
 // ── 한 건 처리 ──
 export function tgHandleUpdate(env, update) {
   const ev = tgParseUpdate(update); if (!ev) return { status: 'ignored', action: 'unparsable' };
-  if (ev.kind === 'message') { const c = tgParseCommand(ev.text); if (c && c.cmd === 'pair') return tgPairAttempt(env, ev, c.pos[0]); }
+  if (ev.kind === 'message') { const c = tgParseCommand(ev.text); if (c && (c.cmd === 'pair' || (c.cmd === 'start' && c.pos.length > 0))) return tgPairAttempt(env, ev, c.pos[0]); }      // /pair 코드, 또는 t.me/<봇>?start=코드 링크
   const paired = tgPairedUser(env);
   if (!paired || ev.isBot || ev.fromId !== paired.userId || ev.chatType !== 'private' || (ev.chatId !== null && ev.chatId !== paired.chatId)) return { status: 'ignored', action: 'unpaired' };   // 무응답·무기록
   const se = env.storeEnv();
@@ -372,18 +375,19 @@ export function tgHandleUpdate(env, update) {
 export function tgPoll(env, { limit = 50, leaseMs = 55000 } = {}) {
   const lease = tgKvGet(env, 'poll'); if (lease && lease.until > env.now()) return { status: 'busy' };
   tgKvPut(env, 'poll', { until: env.now() + leaseMs });
-  const stats = { status: 'ok', handled: 0, ignored: 0, duplicate: 0, retry: 0, poison: 0, replyFailed: 0 };
+  const stats = { status: 'ok', handled: 0, ignored: 0, duplicate: 0, retry: 0, poison: 0, replyFailed: 0, actions: {} };
   try {
     const off = Number(tgKvGet(env, 'offset') ?? 0), r = tgCall(env, 'getUpdates', { ...(off ? { offset: off } : {}), limit, timeout: 0, allowed_updates: ['message', 'callback_query'] });
     if (!r.ok) return { ...stats, status: 'error', code: r.code, retryable: r.retryable };
     const list = (Array.isArray(r.result) ? r.result : []).filter(u => Number.isSafeInteger(u?.update_id)).sort((a, b) => a.update_id - b.update_id);
     for (const u of list) {
       const x = tgHandleUpdate(env, u);
+      if (u.message && Number.isFinite(u.message.date)) (stats.lags ||= []).push(Math.max(0, env.now() - u.message.date * 1000));      // 메시지 도착→처리 지연(ms, 관측용)
       if (x.status === 'retry') {
         const key = `fail:${u.update_id}`, n = (tgKvGet(env, key) ?? 0) + 1;
         if (n < TG_POISON_AFTER) { tgKvPut(env, key, n, 3600); stats.retry++; break; }          // 순서 보존: 이 update에서 멈추고 다음 틱에 재시도
         stats.poison++; env.kv.del(key);                                                        // 계속 실패하는 update는 건너뛴다
-      } else stats[x.status === 'handled' ? 'handled' : x.status === 'duplicate' ? 'duplicate' : 'ignored']++;
+      } else { stats[x.status === 'handled' ? 'handled' : x.status === 'duplicate' ? 'duplicate' : 'ignored']++; if (x.action) stats.actions[x.action] = (stats.actions[x.action] ?? 0) + 1; }
       if (x.replyFailed) stats.replyFailed++;
       tgKvPut(env, 'offset', u.update_id + 1);
     }

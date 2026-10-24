@@ -55,7 +55,7 @@ test('Journal.gs: 일 마감 트리거(00시 + 매시간)·중복 설치 교체,
 test('Journal.gs: 설정 on 이어도 RICH300_CLOSE_SEND_APPROVED 가 없으면 보내지 않고, 둘 다 켜지면 평가액 미입력 알림 1회(URL 버튼 포함)·재실행 시 중복 없음', () => {
   const a = load({ now: NOW_D2, closeNotify: true }); a.setupChallenge(); a.pair(); const n0 = a.tele.sent.length; a.ctx.rich300CloseTick(); assert.equal(a.tele.sent.length, n0); assert.equal(a.rows('closenotice')[0].error, 'not-approved');
   const b = load({ now: NOW_D2, closeNotify: true, approved: true }); b.setupChallenge(); b.pair(); const m0 = b.tele.sent.length; b.ctx.rich300CloseTick(); b.ctx.rich300CloseTick(); b.ctx.rich300CloseTick();
-  assert.equal(b.tele.sent.length, m0 + 1); const msg = b.tele.sent.at(-1); assert.match(msg.text, /^RICH300 · 2026-10-24 마감 평가액 미입력\n장부 잔고 300\.00 USDT/); assert.equal(msg.reply_markup.inline_keyboard[0][0].url, 'https://example.com/exec?p=journal&day=2026-10-24#close'); assert.equal(b.rows('closenotice')[0].status, 'sent');
+  assert.equal(b.tele.sent.length, m0 + 1); const msg = b.tele.sent.at(-1); assert.match(msg.text, /^\[TEST\] RICH300 · 2026-10-24 마감 평가액 미입력\n장부 잔고 300\.00 USDT/); assert.equal(msg.reply_markup.inline_keyboard[0][0].url, 'https://example.com/exec?p=journal&day=2026-10-24#close'); assert.equal(b.rows('closenotice')[0].status, 'sent');
   const c = load({ now: NOW_D2, closeNotify: true, approved: true }); c.setupChallenge(); const k0 = c.tele.sent.length; c.ctx.rich300CloseTick(); assert.equal(c.tele.sent.length, k0); assert.equal(c.rows('closenotice')[0].status, 'failed');              // 페어링 전: 실패로 기록(재시도 가능)
 });
 test('Journal.gs: 로그·콘솔 출력 없음, 토큰 문자열 없음', () => { const src = read('Journal.gs'); assert.ok(!/console\.|Logger\.log/.test(src)); assert.ok(!/\d{6,}:[A-Za-z0-9_-]{30,}/.test(src)); });

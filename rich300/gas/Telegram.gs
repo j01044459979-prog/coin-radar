@@ -6,8 +6,11 @@
  *  · 로그: 개수·코드만 남긴다(금액·ID·본문·토큰 없음).
  */
 function rich300TgEnv_() {
-  var props = PropertiesService.getScriptProperties(), store = null, P = 'tg:';
+  var props = PropertiesService.getScriptProperties(), store = null, P = 'tg:', envName = props.getProperty('RICH300_ENV');
   return {
+    msgPrefix: envName === 'test' ? '[TEST] ' : '',                                           // 테스트 환경의 모든 메시지 앞에 [TEST]
+    live: envName === 'test' && typeof rich300LiveEnabled_ === 'function' ? { onCallback: function (env, ev, parts, cb, answer) { return RICH300_ENGINE.liveOnCallback(env, ev, parts, cb, answer); } } : undefined,
+    enableTestNotify: function () { if (typeof rich300LiveEnableNotify_ === 'function') rich300LiveEnableNotify_(); },
     now: function () { return Date.now(); },
     sha256: function (s) { return rich300Hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)); },
     randomId: function (n) { return Utilities.getUuid().replace(/-/g, '').slice(0, n); },
@@ -27,6 +30,7 @@ function rich300TgEnv_() {
         var gate = typeof rich300TgGate_ === 'function' ? rich300TgGate_(method) : 'guard-missing';
         if (gate) return { status: 403, body: { ok: false, description: 'blocked: ' + gate } };
         var token = props.getProperty('RICH300_TG_TOKEN'); if (!token) throw new Error('token missing');
+        if (method !== 'getUpdates' && typeof rich300LiveCount_ === 'function') { rich300LiveCount_('http'); if (method === 'sendMessage') rich300LiveCount_('sent:' + new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10)); }       // 시험 환경 전용 카운터
         var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, { method: 'post', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
         var body = null; try { body = JSON.parse(res.getContentText()); } catch (e) { body = null; }
         return { status: res.getResponseCode(), body: body };
@@ -41,15 +45,19 @@ function rich300TgEnv_() {
 function rich300TgPoll() {
   var props = PropertiesService.getScriptProperties(), t0 = Date.now(), out, lk = typeof LockService.getUserLock === 'function' ? LockService.getUserLock() : null;
   if (lk && !lk.tryLock(500)) return { status: 'busy', reason: 'user-lock' };
-  try { var env = rich300TgEnv_(); out = RICH300_ENGINE.tgPoll(env); RICH300_ENGINE.tgGc(env); } catch (err) { out = { status: 'exception' }; } finally { if (lk) lk.releaseLock(); }
+  try { var env = rich300TgEnv_(); out = RICH300_ENGINE.tgPoll(env); RICH300_ENGINE.tgGc(env); }
+  catch (err) { out = { status: 'exception', quota: /too many times|quota|exceeded|limit/i.test(String(err && err.message || '')) }; }       // 메시지 자체는 저장하지 않고 분류만
+  finally { if (lk) lk.releaseLock(); }
   var ms = Date.now() - t0, st = {}; try { st = JSON.parse(props.getProperty('tg:stats') || '{}'); } catch (err) { st = {}; }
-  props.setProperty('tg:last', JSON.stringify({ at: t0, ms: ms, r: out }));
-  props.setProperty('tg:stats', JSON.stringify({ since: st.since || t0, runs: (st.runs || 0) + 1, totalMs: (st.totalMs || 0) + ms, maxMs: Math.max(st.maxMs || 0, ms), slow: (st.slow || 0) + (ms > 30000 ? 1 : 0), busy: (st.busy || 0) + (out && out.status === 'busy' ? 1 : 0) }));
+  var gap = st.lastAt ? t0 - st.lastAt : 0;
+  props.setProperty('tg:last', JSON.stringify({ at: t0, ms: ms, r: { status: out.status, handled: out.handled, retry: out.retry, code: out.code } }));
+  props.setProperty('tg:stats', JSON.stringify({ since: st.since || t0, lastAt: t0, runs: (st.runs || 0) + 1, totalMs: (st.totalMs || 0) + ms, maxMs: Math.max(st.maxMs || 0, ms), slow: (st.slow || 0) + (ms > 30000 ? 1 : 0), busy: (st.busy || 0) + (out && out.status === 'busy' ? 1 : 0), gaps90: (st.gaps90 || 0) + (gap > 90000 && gap < 21600000 ? 1 : 0), maxGap: Math.max(st.maxGap || 0, gap < 21600000 ? gap : 0), retry: (st.retry || 0) + (out && out.retry || 0) }));
+  if (typeof rich300LiveHook_ === 'function') { try { rich300LiveHook_(out); } catch (err) { /* 검증 하니스 오류가 폴링을 막지 않는다 */ } }
   return out;
 }
-function rich300TgInstallPollTrigger() {
+function rich300TgInstallPollTrigger(minutes) {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'rich300TgPoll') ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('rich300TgPoll').timeBased().everyMinutes(1).create();
+  ScriptApp.newTrigger('rich300TgPoll').timeBased().everyMinutes([1, 5, 10, 15, 30].indexOf(minutes) >= 0 ? minutes : 1).create();
 }
 function rich300TgRemovePollTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'rich300TgPoll') ScriptApp.deleteTrigger(t); });
@@ -70,5 +78,7 @@ function rich300PageFill_(e) {
 /** google.script.run 대상: 폼 제출이 곧 확인. 소유자 확인 실패·예외는 일반 오류로만 응답. */
 function rich300FillSubmit(form) {
   if (!rich300IsOwner_()) return { ok: false, error: 'forbidden' };
-  return RICH300_ENGINE.tgSubmitFillForm(rich300TgEnv_(), form, { actor: 'ui:form' });
+  var r = RICH300_ENGINE.tgSubmitFillForm(rich300TgEnv_(), form, { actor: 'ui:form' });
+  if (typeof rich300LiveCount_ === 'function' && r && r.status === 'duplicate') rich300LiveCount_('form-duplicate');
+  return r;
 }

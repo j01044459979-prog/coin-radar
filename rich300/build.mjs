@@ -24,6 +24,12 @@ export const ENGINE_MODULES = [
   'analytics',
   'journal',
   'journalview',
+  'livevectors',
+  'liveverify',
+  'livesafe',
+  'livewizard',
+  'livereport',
+  'livehook',
 ];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 

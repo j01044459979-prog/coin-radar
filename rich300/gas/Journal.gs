@@ -13,7 +13,7 @@ function rich300JournalEnv_() {
     now: function () { return Date.now(); },
     uiUrl: props.getProperty('RICH300_UI_URL') || undefined,
     storeEnv: function () { if (!store) { store = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); RICH300_ENGINE.storeInit(store); } return store; },
-    sendEnabled: function () { return props.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes'; },
+    sendEnabled: function () { return props.getProperty('RICH300_CLOSE_SEND_APPROVED') === 'yes' || (props.getProperty('RICH300_ENV') === 'test' && props.getProperty('RICH300_TEST_CLOSE_SEND') === 'yes'); },       // 테스트 전용 플래그는 test 환경에서만 인정
     notify: function (msg) {
       var e = tgEnv(), p = RICH300_ENGINE.tgPairedUser(e);
       if (!p) return { ok: false, code: 'not-paired' };
