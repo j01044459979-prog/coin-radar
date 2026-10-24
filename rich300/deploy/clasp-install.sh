@@ -56,7 +56,38 @@ else
   ( cd "$WORK/login" && $CLASP login ${LOGIN_ARGS[@]+"${LOGIN_ARGS[@]}"} <&3 ) || fail "로그인하지 못했습니다(붙여 넣은 URL 에 code= 가 있어야 합니다. 같은 명령을 다시 실행하세요)"
   WE_LOGGED_IN=1
 fi
-# ③ 현재 내용 백업(남겨 둠) + 대상 확인
+# 비교·판별 도구(값은 출력하지 않고 크기·해시 앞 12자리·줄 번호만 보여 준다)
+cmp_dirs() {  # $1=기준 폴더 $2=확인 폴더 $3=verbose(1이면 차이 설명 출력). Code·Fill 은 줄바꿈(CRLF) 차이를 무시하고 내용 비교, 매니페스트는 의미(런타임·시간대·웹 앱 설정·권한 목록, 키 순서 무시)로 비교
+  node -e '
+const fs=require("fs"),path=require("path"),crypto=require("crypto"),[A,B,V]=process.argv.slice(1);
+const find=(d,n,ex)=>ex.map(e=>path.join(d,n+"."+e)).find(p=>fs.existsSync(p));
+const norm=s=>s.replace(/\r\n/g,"\n"),h=s=>crypto.createHash("sha256").update(s).digest("hex").slice(0,12),out=[];let bad=0;
+for(const [n,ex] of [["Code",["gs","js"]],["Fill",["html"]]]){const pa=find(A,n,ex),pb=find(B,n,ex);
+  if(!pa||!pb){bad++;out.push("  - 다름: "+n+" ("+(pa?"확인 쪽에 파일 없음":"기준 쪽에 파일 없음")+")");continue}
+  const sa=norm(fs.readFileSync(pa,"utf8")),sb=norm(fs.readFileSync(pb,"utf8"));
+  if(sa!==sb){bad++;const la=sa.split("\n"),lb=sb.split("\n");let i=0;while(i<la.length&&la[i]===lb[i])i++;out.push("  - 다름: "+n+" (기준 "+Buffer.byteLength(sa)+"바이트 sha="+h(sa)+", 확인 "+Buffer.byteLength(sb)+"바이트 sha="+h(sb)+", 첫 차이 "+(i+1)+"번째 줄)")}}
+try{const ma=JSON.parse(fs.readFileSync(path.join(A,"appsscript.json"),"utf8")),mb=JSON.parse(fs.readFileSync(path.join(B,"appsscript.json"),"utf8"));
+  const canon=o=>Array.isArray(o)?o.map(canon):o&&typeof o==="object"?Object.fromEntries(Object.keys(o).sort().map(k=>[k,canon(o[k])])):o;
+  const pick=m=>canon({runtimeVersion:m.runtimeVersion,timeZone:m.timeZone,webapp:m.webapp||null,oauthScopes:[...(m.oauthScopes||[])].sort()});
+  if(JSON.stringify(pick(ma))!==JSON.stringify(pick(mb))){bad++;out.push("  - 다름: appsscript.json (의미 비교: 런타임·시간대·웹 앱 설정·권한 목록 중 다른 항목이 있음)")}}
+catch(e){bad++;out.push("  - 다름: appsscript.json (읽을 수 없음)")}
+if(V==="1")for(const l of out)console.log(l);process.exit(bad?1:0)' "$1" "$2" "${3:-0}"
+}
+state_of() {  # $1=폴더 → bootstrap | installed | other | none
+  local c; c="$(find_src "$1" Code || true)"; [[ -n "$c" ]] || { printf none; return 0; }
+  if grep -q 'function rich300Install(' "$c"; then printf installed; elif grep -q 'function rich300Bootstrap(' "$c"; then printf bootstrap; else printf other; fi
+}
+state_label() { case "$1" in bootstrap) printf '부트스트랩 상태(설치 전)';; installed) printf '설치 완료 상태(rich300Install 있음)';; other) printf '기타(알 수 없는 내용)';; *) printf 'Code 없음';; esac; }
+describe() { local c; c="$(find_src "$1" Code || true)"; [[ -n "$c" ]] && printf 'Code %s바이트 sha256=%s' "$(wc -c < "$c")" "$(sha256sum "$c" | cut -c1-12)"; }
+POLL_TRIES="${RICH300_POLL_TRIES:-6}"; POLL_SLEEP="${RICH300_POLL_SLEEP:-5}"
+poll_verify() {  # $1=기준 폴더 $2=결과 폴더(매번 새로 pull) — 서버 반영이 늦을 수 있어 몇 번 다시 읽는다
+  local i; for ((i = 1; i <= POLL_TRIES; i++)); do
+    rm -rf "$2"; mkdir -p "$2"; write_clasp "$2"
+    if ( cd "$2" && $CLASP pull </dev/null >/dev/null 2>&1 ) && cmp_dirs "$1" "$2" 0; then return 0; fi
+    [[ "$i" -lt "$POLL_TRIES" ]] && sleep "$POLL_SLEEP"
+  done; return 1
+}
+# ③ 현재 내용 백업(남겨 둠) + 상태 판별 + 대상 확인
 BACKUP="$HOME/rich300-backup-$(date +%Y%m%d-%H%M%S)-${SCRIPT_ID: -6}"; mkdir -p "$BACKUP"; write_clasp "$BACKUP"
 ( cd "$BACKUP" && $CLASP pull </dev/null ) || fail "현재 내용을 백업하지 못했습니다(프로젝트 ID·Google 계정 확인) — 아무것도 바꾸지 않았습니다"
 RCODE="$(find_src "$BACKUP" Code || true)"
@@ -64,8 +95,14 @@ RCODE="$(find_src "$BACKUP" Code || true)"
 if [[ "${RICH300_FORCE:-}" != 1 ]]; then
   grep -qE 'rich300Bootstrap|rich300Install' "$RCODE" && ! grep -qE 's0Compat|s0Tick|s0EngineBench|s0InstallTriggers' "$RCODE" || fail "이 프로젝트는 RICH300 부트스트랩/설치 상태가 아닙니다(다른 프로젝트일 수 있음). 아무것도 바꾸지 않았습니다"
 fi
-say ""; say "대상 프로젝트 ID: $SCRIPT_ID"; say "현재 원격 파일(백업됨: $BACKUP):"
+RSTATE="$(state_of "$BACKUP")"
+say ""; say "대상 프로젝트 ID: $SCRIPT_ID"; say "현재 원격 상태: $(state_label "$RSTATE") — $(describe "$BACKUP")"; say "설치할 파일:      $(describe "$WORK/push")"
+say "현재 원격 파일(백업됨: $BACKUP):"
 ( cd "$BACKUP" && for f in $(ls -A | grep -v '^\.clasp\.json$'); do printf '  - %s (%s바이트)\n' "$f" "$(wc -c < "$f")"; done )
+if cmp_dirs "$WORK/push" "$BACKUP" 0; then
+  say "[PASS] 이미 설치 완료 상태입니다 — 원격 Code·Fill·매니페스트가 설치 파일과 같아 변경하지 않았습니다(push 안 함). 백업: $BACKUP"
+  say "다음: Apps Script 편집기를 새로 고침 → 함수 rich300Install 실행."; exit 0
+fi
 say "변경 계획:"
 for n in Code:Code.gs Fill:Fill.html appsscript:appsscript.json; do b="${n%%:*}"; f="${n##*:}"; if ls "$BACKUP/$b."* >/dev/null 2>&1; then say "  - 교체: $f"; else say "  - 추가: $f"; fi; done
 ( cd "$BACKUP" && for f in $(ls -A | grep -v '^\.clasp\.json$'); do case "${f%.*}" in Code|Fill|appsscript) ;; *) say "  - 삭제(이 프로젝트에서만): $f";; esac; done )
@@ -76,19 +113,25 @@ else
   printf '%s' "이 프로젝트가 맞으면 ID 의 마지막 6글자 [$EXPECT] 를 입력하세요(그 밖의 입력은 중단): "; read -r ANS <&3 || fail "확인을 입력받을 수 없습니다. 아무것도 바꾸지 않았습니다"
   [[ "$ANS" == "$EXPECT" ]] || fail "확인 값이 다릅니다 — 중단했습니다. 아무것도 바꾸지 않았습니다"
 fi
-# ④ push → 확인 → 실패 시 복구
-verify_equal() {  # $1=기준 디렉터리 $2=확인 디렉터리 (Code·Fill 내용 비교, 매니페스트는 접근 설정만)
-  local a b n; for n in Code Fill; do a="$(find_src "$1" "$n" || ls "$1/$n".html 2>/dev/null || true)"; b="$(find_src "$2" "$n" || ls "$2/$n".html 2>/dev/null || true)"; [[ -n "$a" && -n "$b" ]] && cmp -s "$a" "$b" || return 1; done
-  node -e "const m=JSON.parse(require('fs').readFileSync('$2/appsscript.json','utf8'));const o=JSON.parse(require('fs').readFileSync('$1/appsscript.json','utf8'));if(JSON.stringify((m.webapp||{}))!==JSON.stringify((o.webapp||{})))process.exit(1)"
-}
+# ④ push → 반영 확인(서버 반영 지연 대비 재시도) → 실패 시 복구
 restore() {
-  say "[복구] 백업으로 되돌립니다: $BACKUP"
-  if ( cd "$BACKUP" && $CLASP push -f </dev/null ) && { rm -rf "$WORK/check"; mkdir -p "$WORK/check"; write_clasp "$WORK/check"; ( cd "$WORK/check" && $CLASP pull </dev/null ); } && cmp -s "$(find_src "$BACKUP" Code)" "$(find_src "$WORK/check" Code)"; then say "[복구 완료] 프로젝트를 설치 전 상태로 되돌리고 확인했습니다."
+  say "[복구] 백업 기준으로 원격을 확인합니다: $BACKUP"
+  if poll_verify "$BACKUP" "$WORK/check0"; then say "[복구 불필요] 원격이 이미 설치 전 상태(백업과 같음)입니다 — 설치 파일이 반영되지 않았거나 이미 되돌아가 있습니다."; return 0; fi
+  say "[복구] 백업으로 되돌립니다"
+  ( cd "$BACKUP" && $CLASP push -f </dev/null ) || true
+  if poll_verify "$BACKUP" "$WORK/check"; then say "[복구 완료] 프로젝트를 설치 전 상태로 되돌리고 확인했습니다."
   else say "[복구 실패] 자동 복구가 끝나지 않았습니다. 백업 폴더: $BACKUP — 그 폴더에서 'npx -y @google/clasp@3.3.0 push -f' 로 수동 복구하거나, 편집기의 버전 기록에서 되돌리세요."; fi
 }
 write_clasp "$WORK/push"
-if ! ( cd "$WORK/push" && $CLASP push -f </dev/null ); then say "[FAIL] push 실패(Apps Script API 사용자 설정·같은 Google 계정인지 확인)"; restore; exit 1; fi
-mkdir -p "$WORK/pull"; write_clasp "$WORK/pull"
-if ! ( cd "$WORK/pull" && $CLASP pull </dev/null ) || ! verify_equal "$WORK/push" "$WORK/pull"; then say "[FAIL] 반영 결과가 설치 파일과 다릅니다"; restore; exit 1; fi
-say "[PASS] 반영 완료: Code.gs·Fill.html 내용 일치, 매니페스트(나만·접속한 사용자) 확인. 이전 내용 백업: $BACKUP"
-say "다음: Apps Script 편집기를 새로 고침 → 함수 rich300Install 실행. (로그인 토큰은 이 셸에서 삭제합니다. 원하면 https://myaccount.google.com/permissions 에서 clasp 권한도 철회하세요.)"
+PUSH_OUT="$( cd "$WORK/push" && $CLASP push -f </dev/null 2>&1 )" && PUSH_OK=1 || PUSH_OK=0
+printf '%s\n' "$PUSH_OUT"
+if [[ "$PUSH_OK" != 1 ]]; then say "[FAIL] push 실패(Apps Script API 사용자 설정·같은 Google 계정인지 확인)"; restore; exit 1; fi
+if printf '%s' "$PUSH_OUT" | grep -qi 'already up to date'; then say "[주의] clasp 가 '이미 최신'이라고 했지만 원격은 설치 파일과 달랐습니다(위 비교). 서버 반영 지연이거나 다른 프로젝트를 보고 있을 수 있어 다시 읽어 확인합니다."; fi
+if poll_verify "$WORK/push" "$WORK/pull"; then
+  say "[PASS] 반영 완료: Code·Fill 내용 일치, 매니페스트(런타임·시간대·웹 앱: 나만·접속한 사용자) 확인. 이전 내용 백업: $BACKUP"
+else
+  say "[FAIL] 반영 결과가 설치 파일과 다릅니다(재시도 ${POLL_TRIES}회 후에도):"; cmp_dirs "$WORK/push" "$WORK/pull" 1 || true
+  say "다시 읽은 원격 상태: $(state_label "$(state_of "$WORK/pull")") — $(describe "$WORK/pull")"
+  restore; exit 1
+fi
+say "다음: Apps Script 편집기를 새로고침 → 함수 rich300Install 실행. (로그인 토큰은 이 셸에서 삭제합니다. 원하면 https://myaccount.google.com/permissions 에서 clasp 권한도 철회하세요.)"
