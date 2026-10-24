@@ -14,6 +14,7 @@ import { candidateMessage, invalidatedMessage, summaryLine } from './message.mjs
 import { signalTransition } from './transition.mjs';
 import { normalizePaper, paperStep, paperSummary } from './paper.mjs';
 import { renderSignalChart, signalCaption } from './chart.mjs';
+import { r9Decorate, r9Caption } from './rich300.mjs';
 
 export const SETTLE_MS = 20000;            // 15분봉 마감 직후 거래소가 확정할 시간
 export const MAX_ATTEMPTS = 2;             // 같은 메시지를 (전달 여부가 불확실한 채로) 보내 보는 최대 횟수
@@ -121,7 +122,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
   base.invalidated = inv.length; base.candidates = cand.length; base.held = items.length - toSend.length;
-  const msgs = toSend.map(i => ({ i, m: i.event.type === 'candidate' ? candidateMessage(i.symbol, i.event.ev, { now }) : invalidatedMessage(i.symbol, i.event, { now }) }));
+  const msgs = toSend.map(i => ({ i, m: i.event.type === 'candidate' ? r9Decorate(candidateMessage(i.symbol, i.event.ev, { now }), i.symbol, i.event.ev, env) : invalidatedMessage(i.symbol, i.event, { now }) }));   // RADAR_RICH300_BUTTONS=on 일 때만 버튼·ID가 붙는다(기본 off: 변화 없음)
   // 모의매매 추적: 실제 신호 경로와 완전히 격리한다(예외는 삼키고, 전송하지 않으며, state.signal.paper에만 쓴다).
   let paperChanged = false;
   if (paperOn) {
@@ -141,17 +142,18 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     for (const x of msgs) {
       if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
       let timer;
-      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev) }; }
+      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev) };
+        if (x.m.r9) { const c = r9Caption(x.m.photo.caption, x.m); if (c === null) { x.m.photo = undefined; x.m.chartError = 'r9 caption too long'; } else x.m.photo.caption = c; } }
       catch (error) { x.m.chartError = String(error.message).slice(0, 80); base.chartFailed = (base.chartFailed ?? 0) + 1; }
       finally { clearTimeout(timer); }
     }
   }
   const guardedSend = async (text, o) => { if (expired('beforeRequest')) throw new DeadlineError(); return send(text, o); };
-  const guardedPhoto = async (png, caption) => { if (expired('beforeRequest')) throw new DeadlineError(); return sendPhoto(png, caption); };
+  const guardedPhoto = async (png, caption, o) => { if (expired('beforeRequest')) throw new DeadlineError(); return o ? sendPhoto(png, caption, o) : sendPhoto(png, caption); };
   // 사진 우선, 같은 신호를 이미 한 번 시도했거나(전달 불확실 재시도) 사진이 거절(HTTP 4xx)되면 텍스트로 대체한다. 429·5xx·네트워크 오류는 장부 규칙대로 재시도한다.
   async function dispatch(part, attempts) {
     if (!part.photo || !sendPhoto || attempts > 1) return sendText(guardedSend, part);
-    try { await guardedPhoto(part.photo.png, part.photo.caption); base.photoSent = (base.photoSent ?? 0) + 1; }
+    try { await guardedPhoto(part.photo.png, part.photo.caption, part.markup ? { markup: part.markup } : undefined); base.photoSent = (base.photoSent ?? 0) + 1; }
     catch (error) {
       const rejected = error.status >= 400 && error.status < 500 && !RESTRICTED.includes(error.status);
       if (!rejected) throw error;

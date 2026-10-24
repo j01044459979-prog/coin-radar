@@ -21,6 +21,7 @@ export const ENGINE_MODULES = [
   'deploy',
   'auth',
   'ingest',
+  'r9',
   'tg',
   'close',
   'analytics',

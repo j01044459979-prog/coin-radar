@@ -20,12 +20,13 @@ export function fakeTelegram() {
     if (method === 'getWebhookInfo') return { status: 200, body: { ok: true, result: { url: t.webhookUrl } } };
     if (method === 'deleteWebhook') { t.webhookUrl = ''; t.webhookActive = false; return { status: 200, body: { ok: true, result: true } }; }
     if (method === 'sendMessage') { const m = { message_id: ++t.nextMsg, chat_id: payload.chat_id, text: payload.text, reply_markup: payload.reply_markup }; t.sent.push(m); return { status: 200, body: { ok: true, result: { message_id: m.message_id } } }; }
+    if (method === 'editMessageCaption') { t.edits.push({ ...payload, text: payload.caption, viaCaption: true }); return { status: 200, body: { ok: true, result: true } }; }
     if (method === 'editMessageText') { t.edits.push(payload); return { status: 200, body: { ok: true, result: true } }; }
     if (method === 'answerCallbackQuery') { t.answers.push(payload); return { status: 200, body: { ok: true, result: true } }; }
     return { status: 404, body: { ok: false, description: 'Not Found' } };
   } };
   t.say = (from, text, { chatId = from, type = 'private', isBot = false, date } = {}) => { const u = { update_id: ++t.nextUpdate, message: { message_id: ++t.nextMsg, from: { id: from, is_bot: isBot }, chat: { id: chatId, type }, text, ...(date === undefined ? {} : { date }) } }; t.updates.push(u); return u; };
-  t.click = (from, msg, data, { cbId } = {}) => { const u = { update_id: ++t.nextUpdate, callback_query: { id: cbId ?? `cb${t.nextUpdate}`, from: { id: from, is_bot: false }, message: { message_id: msg.message_id, chat: { id: msg.chat_id, type: 'private' } }, data } }; t.updates.push(u); return u; };
+  t.click = (from, msg, data, { cbId, text, caption, photo } = {}) => { const u = { update_id: ++t.nextUpdate, callback_query: { id: cbId ?? `cb${t.nextUpdate}`, from: { id: from, is_bot: false }, message: { message_id: msg.message_id, chat: { id: msg.chat_id, type: 'private' }, ...(text === undefined ? {} : { text }), ...(caption === undefined ? {} : { caption }), ...(photo ? { photo: [{ file_id: 'x' }] } : {}) }, data } }; t.updates.push(u); return u; };
   t.last = () => t.sent[t.sent.length - 1];
   t.texts = () => t.sent.map(m => m.text);
   return t;
