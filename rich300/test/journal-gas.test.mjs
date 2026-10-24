@@ -28,7 +28,11 @@ const NOW_D2 = Date.UTC(2026, 9, 24, 15, 30);       // 2026-10-25 00:30 KST
 
 test('Journal.gs: ?p=journal 은 소유자만(타인·익명 빈 응답), 페이지는 서버에서 완성되고 오류 시 일반 화면, 시트에 쓰지 않는다', () => {
   const g = load({ now: NOW_D2 }); g.setupChallenge(); const cells = () => ['Fills', 'Equity', 'Cashflows'].map(n => g.sheets?.book?.get?.(n)).length;
-  const out = g.ctx.doGet({ parameter: { p: 'journal', day: '2026-10-24' } }); assert.ok(out.html.includes('RICH 300 일지') && out.html.includes('실제 계좌 평가액 입력')); assert.equal(out.title, 'RICH300 일지'); assert.ok(out.html.includes('value="2026-10-24" selected') && out.html.includes('https://script.example/exec?p=journal'));
+  const out = g.ctx.doGet({ parameter: { p: 'journal', day: '2026-10-24' } }); assert.ok(out.html.includes('RICH 300 · 매매일지') && out.html.includes('name="day"') && !out.html.includes('실제 계좌 평가액 입력')); assert.equal(out.title, 'RICH300 일지');
+  const as = g.ctx.doGet({ parameter: { p: 'assets', day: '2026-10-24' } }); assert.ok(as.html.includes('RICH 300 · 자산 관리') && as.html.includes('실제 계좌 평가액 입력') && as.html.includes('입출금 기록') && as.html.includes('value="2026-10-24" selected') && as.html.includes('https://script.example/exec?p=signals'));
+  const st = g.ctx.doGet({ parameter: { p: 'stats' } }); assert.ok(st.html.includes('RICH 300 · 전략별 성적') && st.html.includes('Profit factor') && !st.html.includes('실제 계좌 평가액 입력'));
+  const sg = g.ctx.doGet({ parameter: { p: 'signals' } }); assert.ok(sg.html.includes('RICH 300 · 추천 기록') && sg.html.includes('관망·놓침은 추천 기록에만')); assert.equal(sg.title, 'RICH300 추천 기록');
+  for (const p of ['signals', 'stats', 'assets']) for (const email of ['', 'other@example.com']) assert.equal(load({ email }).ctx.doGet({ parameter: { p } }).text, '');
   for (const email of ['', 'other@example.com']) assert.equal(load({ email }).ctx.doGet({ parameter: { p: 'journal' } }).text, '');
   const bad = load({ now: NOW_D2 }); bad.setupChallenge(); bad.ctx.RICH300_ENGINE.storeCreate(bad.se(), 'fill', { origin: 'real', fillId: 'f', sid: 'S', kind: 'close', dir: 'LONG', at: NOW_D2 - H, price: '1', qty: '1', fee: { state: 'missing' }, funding: { state: 'missing' } }, { actor: 't' });   // 첫 체결이 close → 계산 불가
   const o = bad.ctx.doGet({ parameter: { p: 'journal' } }); assert.ok(o.html.includes('불러오지 못했습니다') && !/첫 체결|Error|stack/.test(o.html)); assert.equal(g.spy.logs.length, 0); void cells;

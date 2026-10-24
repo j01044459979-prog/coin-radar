@@ -27,6 +27,7 @@ export const ENGINE_MODULES = [
   'analytics',
   'journal',
   'journalview',
+  'siglog',
   'livevectors',
   'liveverify',
   'livesafe',

@@ -21,7 +21,7 @@ function setup({ evilSid = false } = {}) {
 
 test('렌더링: 일 마감·통계(전체/A/B/LONG/SHORT)·복기 분석·입출금·일지·경고가 모두 나오고 구조·접근성이 갖춰진다', () => {
   const x = setup(); journalReviseFill(x.env, 'out', { price: '104' }, { reason: '재확인' }); const html = journalRenderHtml(journalBuild(x.env), { appUrl: 'https://example.com/exec' });
-  for (const w of ['일 마감 (매일 00:00 KST)', '실제 계좌 평가액 입력', '통계', 'A전략 · 추세돌파형', 'B전략 · 눌림목 재진입형', '10초 복기 분석', '입출금 기록', '매매일지', '데이터 확인', '손익비', 'Profit factor', '기대값(건당)', '최대 낙폭(거래 기준)', '95% 구간', '표본 부족', '평가액 미입력', '마감됨', '수정 1회', 'price: 103 → 104', '재확인', '새로고침']) assert.ok(html.includes(w.replace('price: 103 → 104', 'price: 103 → 104')), w);
+  for (const w of ['일 마감 (매일 00:00 KST)', '실제 계좌 평가액 입력', '통계', 'A전략 · 추세돌파형', 'B전략 · 눌림목 재진입형', '10초 복기 분석', '입출금 기록', '매매일지', '데이터 확인', '손익비', 'Profit factor', '기대값(건당)', '최대 낙폭(거래 기준)', '95% 구간', '표본 부족', '평가액 미입력', '마감됨', '수정 1회', 'price: 103 → 104', '재확인']) assert.ok(html.includes(w.replace('price: 103 → 104', 'price: 103 → 104')), w);
   assert.match(html, /<meta name="viewport" content="width=device-width,initial-scale=1">/); assert.match(html, /lang="ko"/); assert.match(html, /prefers-color-scheme:dark/); assert.match(html, /<form id="eqForm">/); assert.match(html, /class="fillForm" data-fill="out"/); assert.match(html, /data-orig="104"/);
   assert.match(html, /<option value="2026-10-24" selected>2026-10-24 \(미입력\)<\/option>/);                         // 평가액이 없는 마감일이 기본 선택
   assert.match(html, /href="https:\/\/example\.com\/exec\?p=journal"/); assert.ok(!/<script[^>]+src=|https?:\/\/(?!example\.com)|eval\(|innerHTML|document\.write/.test(html));

@@ -40,6 +40,9 @@ export function anStats(trades, { startMicro = null } = {}) {
     expectancyR: rN ? `${decFormat(decRoundDiv(rSum, BigInt(rN)) * 1000000n, 2).replace('-', '−')}R` : '—', rCoverage: rN, maxDdMicro: String(maxDd), maxDd: anUsd(maxDd), maxDdOfStart: startMicro && startMicro > 0n ? anPct(decRoundDiv(maxDd * 1000000n, startMicro), 1) : '—',
     best: best === null ? '—' : anUsd(best, { sign: true }), worst: worst === null ? '—' : anUsd(worst, { sign: true }), lowSample: n < AN_MIN_SAMPLE };
 }
+export const AN_STRATEGY_NAME = Object.freeze({ A: 'A전략 · 추세돌파형', B: 'B전략 · 눌림목 재진입형', S: 'COIN RADAR 신호 · 눌림 진입 후보' });
+// 신호가 있는 전략만 보여 준다. 이중 전략(A/B)이 없고 신호 레이더(S)만 있으면 A/B 빈 칸을 만들지 않는다.
+const anStrategyKeys = signals => { const have = new Set(signals.map(s => s.strategy)); return ['A', 'B', 'S'].filter(k => (k === 'S' ? have.has('S') : have.has('A') || have.has('B') || !have.has('S'))); };
 const anGroup = (trades, keyFn, keys, opts) => keys.map(k => ({ key: k, ...anStats(trades.filter(t => keyFn(t) === k), opts) }));
 
 // ledgerTrades: R2 ledger.trades(Map sid→trade), fills: 저장소 체결 data, signals/reviews: data 배열
@@ -76,6 +79,6 @@ export function anReviews(trades, opts) {
 }
 export function anBuild({ ledgerTrades, fills, signals, reviews, startMicro }) {
   const trades = anTradesFrom({ ledgerTrades, fills, signals, reviews }), opts = { startMicro };
-  return { overall: anStats(trades, opts), strategies: anGroup(trades, t => t.strategy, ['A', 'B'], opts).map(g => ({ ...g, name: g.key === 'A' ? 'A전략 · 추세돌파형' : 'B전략 · 눌림목 재진입형' })), dirs: anGroup(trades, t => t.dir, ['LONG', 'SHORT'], opts),
+  return { overall: anStats(trades, opts), strategies: anGroup(trades, t => t.strategy, anStrategyKeys(signals), opts).map(g => ({ ...g, name: AN_STRATEGY_NAME[g.key] })), dirs: anGroup(trades, t => t.dir, ['LONG', 'SHORT'], opts),
     matrix: ['A', 'B'].flatMap(s => ['LONG', 'SHORT'].map(d => ({ strategy: s, dir: d, ...anStats(trades.filter(t => t.strategy === s && t.dir === d), opts) }))), unlinked: trades.filter(t => !t.strategy).length, reviews: anReviews(trades, opts), minSample: AN_MIN_SAMPLE };
 }

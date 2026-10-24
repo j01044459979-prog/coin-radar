@@ -13,5 +13,3 @@ function rich300PageDash_(e) {
   } catch (err) { html = RICH300_ENGINE.dashRenderError(rich300AppUrl_()); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
-
-function rich300AppUrl_() { try { var u = ScriptApp.getService().getUrl(); return /^https:\/\/\S+\/exec$/.test(u) ? u : ''; } catch (err) { return ''; } }
