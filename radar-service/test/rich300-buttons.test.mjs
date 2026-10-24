@@ -76,3 +76,15 @@ test('Telegram 어댑터: markup 은 reply_markup 으로만 나가고 토큰은 
 test('무효화 알림·off 모드는 버튼이 없다(진입 후보에만)', () => {
   const part = { kind: 'invalidated', text: 'x', plain: 'x', html: true }; assert.equal(r9Decorate(part, 'ETHUSDT', evL(), { RADAR_RICH300_BUTTONS: 'on' }), part);
 });
+
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+const walk = d => readdirSync(d).flatMap(f => { const p = `${d}/${f}`; return f === 'node_modules' || f === 'test' ? [] : statSync(p).isDirectory() ? walk(p) : p.endsWith('.mjs') ? [p] : []; });
+test('기존 운영 영향 없음: radar 는 Telegram 수신(getUpdates)·웹훅 설정을 하지 않고 주문·계정 API를 쓰지 않는다', () => {
+  const src = walk(new URL('..', import.meta.url).pathname).map(f => [f, readFileSync(f, 'utf8')]);
+  for (const [f, s] of src) { assert.ok(!/getUpdates|setWebhook|deleteWebhook|answerCallbackQuery|editMessage/.test(s), `${f}: 수신·웹훅 호출은 앱(Apps Script)만 한다`); assert.ok(!/\/api\/v5\/trade|\/api\/v5\/account|order-algo|placeOrder/.test(s), `${f}: 주문·계정 API 금지`); }
+});
+test('기존 운영 영향 없음: 워크플로는 변수 하나(기본 off)만 추가하고 새 Secret·권한·스케줄을 만들지 않는다', () => {
+  const y = readFileSync(new URL('../../.github/workflows/radar.yml', import.meta.url), 'utf8');
+  assert.match(y, /RADAR_RICH300_BUTTONS: \$\{\{ vars\.RADAR_RICH300_BUTTONS \|\| 'off' \}\}/);
+  assert.deepEqual([...new Set([...y.matchAll(/secrets\.(\w+)/g)].map(m => m[1]))].sort(), ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']);
+});
