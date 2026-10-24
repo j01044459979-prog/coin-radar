@@ -20,6 +20,10 @@ export const ENGINE_MODULES = [
   'auth',
   'ingest',
   'tg',
+  'close',
+  'analytics',
+  'journal',
+  'journalview',
 ];
 const libUrl = name => new URL(`./lib/${name}.mjs`, import.meta.url);
 
