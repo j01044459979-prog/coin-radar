@@ -23,7 +23,9 @@ function rich300Install() {
   else add('I5', 'PASS', '자동 검증은 이미 시작되어 있습니다');
   var link = null;
   if (!p.getProperty('RICH300_TG_TOKEN')) add('I6', 'WAIT', '스크립트 속성 RICH300_TG_TOKEN(기존 운영 봇 토큰)이 없습니다');
-  else if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') add('I6', 'WAIT', '운영 승인 대기: 스크립트 속성 RICH300_PROD_APPROVED=yes 를 넣고 이 함수를 다시 실행하면 봇 연결이 시작됩니다(그 전에는 Telegram 호출 0건)');
+  else if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') {
+    if (p.getProperty('RICH300_TG_READONLY_OK') === 'yes') { var bc = rich300BotCheck(); add('I6a', bc.ok ? 'PASS' : 'FAIL', bc.ok ? '봇 사전 점검(읽기 전용): 토큰 유효·웹훅 없음' : '봇 사전 점검(읽기 전용)에서 문제 발견 — 점검 화면(?p=check)의 봇 사전 점검 항목 참고'); }
+    add('I6', 'WAIT', '운영 승인 대기: 스크립트 속성 RICH300_PROD_APPROVED=yes 를 넣고 이 함수를 다시 실행하면 봇 연결이 시작됩니다(그 전에는 쓰기 호출 0건)'); }
   else link = rich300InstallTelegram_(p, add);
   return rich300InstallFinish_(steps, link);
 }
@@ -44,4 +46,17 @@ function rich300InstallFinish_(steps, link) {
   var fail = steps.filter(function (s) { return s.status === 'FAIL'; }).length, wait = steps.filter(function (s) { return s.status === 'WAIT'; }).length;
   Logger.log('RICH300 설치: ' + (fail ? '실패 ' + fail : wait ? '진행 중(할 일 ' + wait + ')' : '완료') + '\n' + steps.map(function (s) { return '[' + s.status + '] ' + s.id + ' ' + s.text; }).join('\n') + (link ? '\n페어링 링크: ' + link : ''));
   return { ok: fail === 0, steps: steps, pairLink: link };
+}
+
+/** 봇 사전 점검(읽기 전용): getMe·getWebhookInfo 두 호출만. 메시지 전송·getUpdates·웹훅 변경·삭제 없음. 승인 전이면 RICH300_TG_READONLY_OK=yes(또는 운영 승인)가 필요하다. 결과는 점검 화면(?p=check)에도 나온다. */
+function rich300BotCheck() {
+  var p = PropertiesService.getScriptProperties();
+  if (!p.getProperty('RICH300_TG_TOKEN')) { Logger.log('RICH300 봇 점검: 스크립트 속성 RICH300_TG_TOKEN 이 없습니다'); return { ok: false, error: 'no-token' }; }
+  if (p.getProperty('RICH300_TG_READONLY_OK') !== 'yes' && p.getProperty('RICH300_PROD_APPROVED') !== 'yes') { Logger.log('RICH300 봇 점검: 읽기 전용 점검 승인 전입니다. 스크립트 속성 RICH300_TG_READONLY_OK=yes 를 넣고 다시 실행하세요(getMe·getWebhookInfo 두 호출만 합니다)'); return { ok: false, error: 'not-approved' }; }
+  var env = rich300TgEnv_(), me = RICH300_ENGINE.tgCall(env, 'getMe', {}), wh = RICH300_ENGINE.tgCall(env, 'getWebhookInfo', {}), r = wh.result || {};
+  var info = { at: Date.now(), me: { ok: !!me.ok, code: me.ok ? null : String(me.code || 'error') }, wh: { ok: !!wh.ok, hasUrl: !!r.url, pending: Number(r.pending_update_count || 0), lastErrorAt: r.last_error_date ? 1 : 0, hasAllowed: !!(r.allowed_updates && r.allowed_updates.length) } };
+  p.setProperty('botcheck:last', JSON.stringify(info));
+  var items = RICH300_ENGINE.checkBotItems(info);
+  Logger.log('RICH300 봇 점검(읽기 전용)\n' + items.map(function (i) { return '[' + i.status + '] ' + i.id + ' ' + i.text; }).join('\n'));
+  return { ok: items.every(function (i) { return i.status !== 'FAIL'; }), items: items };
 }

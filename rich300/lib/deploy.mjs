@@ -7,7 +7,7 @@ import { StoreError, META_SHEET } from './schema.mjs';
 export const DEPLOY_ENVS = Object.freeze(['test', 'prod']);
 export function deployGate(p, method) {                    // 허용이면 null, 차단이면 사유 문자열
   if (p.env !== 'test' && p.env !== 'prod') return 'env-unset';
-  if (p.env === 'prod') return p.prodApproved === 'yes' ? null : 'prod-not-approved';
+  if (p.env === 'prod') return p.prodApproved === 'yes' || (p.readOnlyOk === 'yes' && (method === 'getMe' || method === 'getWebhookInfo')) ? null : 'prod-not-approved';       // 읽기 전용 점검(RICH300_TG_READONLY_OK=yes)은 getMe·getWebhookInfo 두 호출만 허용(메시지·수신·설정 변경 없음)
   return p.testTgAllow === 'yes' ? null : 'test-tg-off';
 }
 export function deployMarkEnv(se, name) {                   // 최초 1회만 기록(이미 있으면 같은 값인지 확인)
