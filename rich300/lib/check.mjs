@@ -6,7 +6,7 @@ import { dashEsc, dashHead, dashNav, dashFooter } from './dashview.mjs';
 export const CHECK_STATUS_LABEL = Object.freeze({ PASS: '통과', FAIL: '실패', WARN: '주의', WAIT: '진행 중', SKIP: '건너뜀' });
 // items: [{id,status,text}] (status: PASS|FAIL|WARN|WAIT|SKIP)
 export function checkSummary(items) {
-  const c = { PASS: 0, FAIL: 0, WARN: 0, WAIT: 0, SKIP: 0 }; for (const i of items) if (Object.hasOwn(c, i.status)) c[i.status]++;
+  const c = { PASS: 0, FAIL: 0, WARN: 0, WAIT: 0, SKIP: 0 }; for (const i of items) if (Object.prototype.hasOwnProperty.call(c, i.status)) c[i.status]++;
   return { ...c, verdict: c.FAIL ? 'FAIL' : c.WAIT ? 'WAIT' : c.WARN ? 'WARN' : 'PASS' };
 }
 // selfTest 항목({id,level,ok,text})을 같은 형식으로

@@ -71,3 +71,9 @@ test('배포 묶음: 문법 유효·함수 이름 충돌 없음·설치·검증 
 test('apps-script(사용자가 붙여 넣는 파일)는 현재 코드의 운영 묶음과 같다 — 다르면: node rich300/deploy/make-bundle.mjs rich300/apps-script', () => {
   const { files } = makeBundle(); for (const n of ['Code.gs', 'Fill.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../apps-script/${n}`, import.meta.url), 'utf8'), files[n], n);
 });
+
+test('Apps Script V8 호환 보수 점검: ES2021 이후 API(Object.hasOwn·replaceAll·.at()·findLast·toSorted·structuredClone 등)와 Node 전용 API를 번들이 쓰지 않는다', () => {
+  const code = makeBundle().files['Code.gs'].replace(/\/\/[^\n]*/g, '').replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g, "''");        // 주석·문자열 제외
+  for (const [re, why] of [[/Object\.hasOwn\b/, 'Object.hasOwn(ES2022)'], [/\.replaceAll\(/, 'replaceAll(ES2021)'], [/\.at\(-?\d/, 'Array/String.at(ES2022)'], [/\.(findLast|findLastIndex|toSorted|toReversed|toSpliced)\(/, 'ES2023 배열 메서드'], [/\bstructuredClone\b/, 'structuredClone'], [/\bIntl\.Segmenter\b/, 'Intl.Segmenter'], [/\brequire\(|\bprocess\.|\bBuffer\b|\bsetTimeout\b|\bqueueMicrotask\b|\bTextEncoder\b|\bAbortController\b/, 'Node·브라우저 전용 API'], [/\bawait\b|\basync\s+function\b/, 'async/await(트리거 환경 불필요)']])
+    assert.ok(!re.test(code), `금지: ${why}`);
+});
