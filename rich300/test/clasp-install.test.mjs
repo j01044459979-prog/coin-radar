@@ -15,11 +15,18 @@ echo "$@ [id=$(grep -o '"scriptId":"[^"]*"' .clasp.json 2>/dev/null | cut -d'"' 
 case "$1" in
   login) { tr -d '\n' < appsscript.json; echo; } >> "$FAKE_LOG.scopes" 2>/dev/null; [[ "$FAKE_LOGIN_FAIL" == 1 ]] && exit 1; IFS= read -r line; echo "stdin-line: $line" >> "$FAKE_LOG.stdin"; [[ "$line" == *code=* ]] || { echo 'Missing code in response URL' >&2; exit 1; }; echo '{}' > "$HOME/.clasprc.json" ;;
   push) n=$(cat "$FAKE_STATE/pushes" 2>/dev/null || echo 0); echo $((n+1)) > "$FAKE_STATE/pushes"
+        if [[ "$FAKE_NOOP_PUSH" == 1 && "$n" == 0 ]]; then echo "Script is already up to date."; exit 0; fi
         if [[ "$n" == 0 && "$FAKE_PUSH_FAIL" == 1 ]]; then cp Code.gs "$FAKE_REMOTE/Code.gs"; exit 1; fi
         if [[ "$n" -ge 1 && "$FAKE_RESTORE_FAIL" == 1 ]]; then exit 1; fi
+        rm -rf "$FAKE_STATE/prev"; mkdir -p "$FAKE_STATE/prev"; cp "$FAKE_REMOTE"/* "$FAKE_STATE/prev/" 2>/dev/null; echo "\${FAKE_STALE_PULLS:-0}" > "$FAKE_STATE/stale"
         rm -rf "$FAKE_REMOTE"/*; for f in *; do [[ "$f" == .clasp.json ]] || cp "$f" "$FAKE_REMOTE/$f"; done
-        [[ "$n" == 0 && "$FAKE_CORRUPT_ONCE" == 1 ]] && echo '// x' >> "$FAKE_REMOTE/Code.gs"; true ;;
-  pull) [[ "$FAKE_PULL_FAIL" == 1 ]] && exit 1; cp "$FAKE_REMOTE"/* . ;;
+        [[ "$n" == 0 && "$FAKE_CORRUPT_ONCE" == 1 ]] && echo '// x' >> "$FAKE_REMOTE/Code.gs"; echo "Pushed 3 files."; true ;;
+  pull) [[ "$FAKE_PULL_FAIL" == 1 ]] && exit 1
+        st=$(cat "$FAKE_STATE/stale" 2>/dev/null || echo 0)
+        if [[ "$st" -gt 0 ]]; then echo $((st-1)) > "$FAKE_STATE/stale"; cp "$FAKE_STATE/prev"/* . ; else cp "$FAKE_REMOTE"/* . ; fi
+        if [[ "$FAKE_REORDER_MANIFEST" == 1 && -f appsscript.json ]]; then node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('appsscript.json','utf8'));if(m.webapp)m.webapp={access:m.webapp.access,executeAs:m.webapp.executeAs};fs.writeFileSync('appsscript.json',JSON.stringify(Object.fromEntries(Object.entries(m).reverse()),null,4)+'\\n')"; fi
+        if [[ "$FAKE_CRLF" == 1 && -f Code.gs ]]; then sed -i 's/$/\r/' Code.gs; fi
+        echo "Pulled 3 files." ;;
   logout) rm -f "$HOME/.clasprc.json" ;;
   *) echo "허용되지 않은 clasp 명령: $1" >&2; exit 9 ;;
 esac`;
@@ -33,7 +40,7 @@ function setup({ remote = { 'Code.gs': BOOT, 'appsscript.json': '{"timeZone":"As
 const URL_OK = 'http://localhost:8888/?code=4%2F0AXYZ&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fscript.projects';
 function run(w, { args = [ID, FAKE_COMMIT], env = {}, ttyLines = [URL_OK], piped = false } = {}) {
   const tty = `${w.root}/tty`; writeFileSync(tty, ttyLines.map(l => `${l}\n`).join(''));
-  const e = { PATH: process.env.PATH, HOME: w.home, RICH300_SRC_DIR: w.src, RICH300_CLASP: w.bin, RICH300_CONFIRM: LAST6, RICH300_TTY: tty, FAKE_LOG: w.log, FAKE_REMOTE: w.rem, FAKE_STATE: w.state, ...env };
+  const e = { PATH: process.env.PATH, HOME: w.home, RICH300_SRC_DIR: w.src, RICH300_CLASP: w.bin, RICH300_CONFIRM: LAST6, RICH300_TTY: tty, RICH300_POLL_SLEEP: '0', RICH300_POLL_TRIES: '3', FAKE_LOG: w.log, FAKE_REMOTE: w.rem, FAKE_STATE: w.state, ...env };
   const r = piped ? spawnSync('bash', ['-s', '--', ...args], { env: e, encoding: 'utf8', input: readFileSync(SCRIPT, 'utf8') }) : spawnSync('bash', [SCRIPT, ...args], { env: e, encoding: 'utf8', input: '' }); const log = existsSync(w.log) ? readFileSync(w.log, 'utf8').trim().split('\n') : [];
   const extra = n => (existsSync(`${w.log}.${n}`) ? readFileSync(`${w.log}.${n}`, 'utf8').trim().split('\n') : []);
   return { r, log, scopes: extra('scopes'), stdin: extra('stdin'), out: r.stdout + r.stderr, cmds: log.map(l => l.split(' ')[0]), backups: readdirSync(w.home).filter(n => n.startsWith('rich300-backup-')) };
@@ -101,9 +108,9 @@ test('이미 로그인돼 있으면 로그인을 건너뛰고 기존 로그인�
 });
 test('복구: 반영 결과가 다르면(또는 push 가 중간에 실패하면) 백업으로 되돌리고 되돌린 결과를 확인한다', () => {
   for (const env of [{ FAKE_CORRUPT_ONCE: '1' }, { FAKE_PUSH_FAIL: '1' }]) {
-    const w = setup(), x = run(w, { env }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[복구\]/); assert.match(x.out, /\[복구 완료\]/);
-    assert.deepEqual(x.cmds, ['login', 'pull', 'push', ...(env.FAKE_CORRUPT_ONCE ? ['pull'] : []), 'push', 'pull', 'logout']); assert.equal(remoteFiles(w)['Code.gs'], BOOT);                              // 원래 내용으로 복구됨
-    assert.equal(readdirSync(w.rem).length, 3);
+    const w = setup(), x = run(w, { env }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[복구\] 백업으로 되돌립니다/); assert.match(x.out, /\[복구 완료\]/); assert.equal(x.cmds.filter(c => c === 'push').length, 2); assert.equal(x.cmds.at(-1), 'logout');
+    assert.equal(remoteFiles(w)['Code.gs'], BOOT); assert.equal(readdirSync(w.rem).length, 3);                                                   // 원래 내용으로 복구됨
+    if (env.FAKE_CORRUPT_ONCE) { assert.match(x.out, /반영 결과가 설치 파일과 다릅니다/); assert.match(x.out, /다름: Code \(기준 \d+바이트 sha=[0-9a-f]{12}, 확인 \d+바이트 sha=[0-9a-f]{12}, 첫 차이 \d+번째 줄\)/); assert.match(x.out, /다시 읽은 원격 상태: 설치 완료 상태/); }   // 어디가 어떻게 다른지(값 없이 해시·줄 번호)
   }
 });
 test('복구도 실패하면 백업 폴더 위치와 수동 복구 방법을 알리고 비정상 종료한다', () => {
@@ -117,6 +124,25 @@ test('설치 파일 손상(끝 잘림·해시·문법·열린 매니페스트)�
   const cases = [d => { const s = readFileSync(`${d}/Code.gs`, 'utf8'); writeFileSync(`${d}/Code.gs`, s.slice(0, s.lastIndexOf('\n}\n') + 1)); }, d => writeFileSync(`${d}/Fill.html`, '<html></html>'),
     d => { writeFileSync(`${d}/Code.gs`, 'function broken( {\n}\n'); fixManifest(d); }, d => { const m = JSON.parse(readFileSync(`${d}/appsscript.json`, 'utf8')); m.webapp = { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' }; writeFileSync(`${d}/appsscript.json`, JSON.stringify(m)); fixManifest(d); }];
   for (const [i, mutate] of cases.entries()) { const x = run(setup({ mutate })); assert.notEqual(x.r.status, 0, `case ${i}`); assert.equal(x.log.length, 0, `case ${i}`); }
+});
+const INSTALLED = { 'Code.gs': readFileSync(`${DIST}/Code.gs`, 'utf8'), 'Fill.html': readFileSync(`${DIST}/Fill.html`, 'utf8'), 'appsscript.json': readFileSync(`${DIST}/appsscript.json`, 'utf8') };
+test('상태 판별: 원격이 부트스트랩/설치 완료/기타 중 무엇인지, 크기·해시(앞 12자리)와 함께 표시한다', () => {
+  let x = run(setup()); assert.match(x.out, /현재 원격 상태: 부트스트랩 상태\(설치 전\) — Code \d+바이트 sha256=[0-9a-f]{12}/); assert.match(x.out, /설치할 파일: +Code \d+바이트 sha256=[0-9a-f]{12}/);
+  x = run(setup({ remote: { ...INSTALLED, 'Code.gs': INSTALLED['Code.gs'] + '\n// 로컬 수정\n' } }), { env: { RICH300_FORCE: '1' } }); assert.match(x.out, /현재 원격 상태: 설치 완료 상태\(rich300Install 있음\)/);
+});
+test('이미 설치 완료 상태(원격이 설치 파일과 같음)면 push·복구 없이 PASS — "Script is already up to date" 를 실패로 오인하지 않는다', () => {
+  const w = setup({ remote: INSTALLED }), x = run(w); assert.equal(x.r.status, 0, x.out); assert.match(x.out, /\[PASS\] 이미 설치 완료 상태입니다/); assert.deepEqual(x.cmds, ['login', 'pull', 'logout']); assert.ok(!/복구/.test(x.out)); assert.deepEqual(remoteFiles(w), INSTALLED);
+  const crlf = run(setup({ remote: INSTALLED }), { env: { FAKE_CRLF: '1' } }); assert.equal(crlf.r.status, 0, crlf.out); assert.match(crlf.out, /이미 설치 완료 상태/);                 // 줄바꿈(CRLF) 차이는 같은 내용으로 본다
+});
+test('서버 반영 지연: push 직후 몇 번 옛 내용을 돌려줘도 다시 읽어 확인하면 PASS(불필요한 복구 없음)', () => {
+  const w = setup(), x = run(w, { env: { FAKE_STALE_PULLS: '2' } }); assert.equal(x.r.status, 0, x.out); assert.match(x.out, /\[PASS\] 반영 완료/); assert.equal(x.cmds.filter(c => c === 'push').length, 1); assert.ok(!/복구/.test(x.out)); assert.equal(remoteFiles(w)['Code.gs'], INSTALLED['Code.gs']);
+});
+test('매니페스트 서버 정규화(키 순서·들여쓰기 변경)는 의미가 같으면 통과한다(문자열 비교로 오탐하지 않음)', () => {
+  const w = setup(), x = run(w, { env: { FAKE_REORDER_MANIFEST: '1' } }); assert.equal(x.r.status, 0, x.out); assert.match(x.out, /\[PASS\] 반영 완료/); assert.ok(!/복구/.test(x.out));
+});
+test('clasp 가 변경을 건너뛰었는데 원격이 설치 파일과 다르면(다른 프로젝트·동기화 문제) 실패로 알리고 어디가 다른지 보여 주며, 원격이 이미 설치 전 상태면 복구는 불필요로 표시한다', () => {
+  const w = setup(), x = run(w, { env: { FAKE_NOOP_PUSH: '1' } }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[주의\] clasp 가 '이미 최신'이라고 했지만/); assert.match(x.out, /\[FAIL\] 반영 결과가 설치 파일과 다릅니다/); assert.match(x.out, /다름: Code \(기준 \d+바이트 sha=/); assert.match(x.out, /다시 읽은 원격 상태: 부트스트랩 상태/);
+  assert.match(x.out, /\[복구 불필요\]/); assert.equal(x.cmds.filter(c => c === 'push').length, 1); assert.equal(remoteFiles(w)['Code.gs'], BOOT);
 });
 test('스크립트 자체: create·deploy·delete·run·Telegram·스크립트 속성 변경 없음, clasp 버전 고정, fileExtension=gs 로 Code.gs 이름 고정', () => {
   const s = readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, ''); assert.ok(!/\$CLASP\s+(create|deploy|delete|undeploy|run|setting|open|versions)\b/.test(s)); assert.ok(!/api\.telegram|TELEGRAM|TG_TOKEN|PROD_APPROVED/.test(s)); assert.match(s, /@google\/clasp@3\.3\.0/); assert.match(s, /"fileExtension":"gs"/); assert.match(s, /set -euo pipefail/);
