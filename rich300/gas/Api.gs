@@ -11,16 +11,22 @@
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournal_' };
-function rich300IsOwner_() {
+function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
     var me = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-    return owner.length > 3 && me === owner;
-  } catch (err) { return false; }
+    if (!me) return 'anon';
+    return owner.length > 3 && me === owner ? 'owner' : 'other';
+  } catch (err) { return 'anon'; }
 }
+function rich300IsOwner_() { return rich300UiWho_() === 'owner'; }
 function doGet(e) {
   var name = e && e.parameter && e.parameter.p, fn = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? RICH300_PAGES_[name] : null;
-  if (fn && typeof globalThis[fn] === 'function' && rich300IsOwner_()) return globalThis[fn](e);
+  if (fn && typeof globalThis[fn] === 'function') {
+    var who = rich300UiWho_();
+    if (typeof rich300LiveCount_ === 'function') rich300LiveCount_('ui-' + (who === 'owner' ? 'owner-ok' : who === 'other' ? 'denied-other' : 'denied-anon'));     // 시험 환경 전용 카운터(값 없음)
+    if (who === 'owner') return globalThis[fn](e);
+  }
   return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT);
 }
 

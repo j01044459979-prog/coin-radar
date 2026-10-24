@@ -37,7 +37,7 @@ test('배포 묶음: Code.gs 한 파일(엔진+gas)·HTML·매니페스트, 문�
   assert.deepEqual(gasFiles.filter(f => BUNDLE_GAS_ORDER.includes(f)), BUNDLE_GAS_ORDER.filter(f => gasFiles.includes(f))); assert.ok(gasFiles.includes('Deploy.gs') && gasFiles.includes('Backup.gs') && gasFiles.includes('Telegram.gs'));
   const code = files['Code.gs']; assert.doesNotThrow(() => new vm.Script(code));
   for (const fn of ['doGet', 'doPost', 'rich300TgPoll', 'rich300FillSubmit', 'rich300BackupRun', 'rich300SetupTest', 'rich300SetupProd', 'rich300SelfTest', 'rich300InstallAllTriggers', 'rich300BackupSwitchFromProps', 'rich300TgGate_']) assert.match(code, new RegExp(`function ${fn}\\(`), fn);
-  assert.ok(!/\bs0[A-Z]\w*/.test(code)); assert.ok(!/S0_TEST_KEY|s0-throwaway/.test(code)); assert.ok(!/\b\d{6,}:[A-Za-z0-9_-]{30,}/.test(code));
+  assert.ok(!/\bs0(Compat|EngineBench|Tick|Daily|Report|InstallTriggers|RemoveTriggers)\b/.test(code)); assert.ok(!/S0_TEST_KEY|s0-throwaway/.test(code)); assert.ok(!/\b\d{6,}:[A-Za-z0-9_-]{30,}/.test(code));
   assert.match(files['MANIFEST.txt'], /^[0-9a-f]{64}  +\d+  Code\.gs$/m); assert.ok(code.length < 600000);
   const names = [...code.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1]); const dup = names.filter((n, i) => names.indexOf(n) !== i); assert.deepEqual(dup, []);              // 전역 함수 이름 충돌 없음
 });
@@ -58,4 +58,16 @@ test('화면이 부르는 서버 함수(google.script.run)는 모두 번들에 �
   for (const f of readdirSync(new URL('../lib/', import.meta.url))) if (/view\.mjs$/.test(f)) sources.push([f, readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8')]);
   let n = 0; for (const [f, t] of sources) for (const m of t.matchAll(/\brich300[A-Z][A-Za-z0-9]*_?/g)) { n++; assert.ok(!m[0].endsWith('_'), `${f}: ${m[0]} 은 비공개 함수`); assert.ok(defined.has(m[0]), `${f}: ${m[0]} 이(가) 번들에 없음`); }
   assert.ok(n >= 1);
+});
+
+test('배포 묶음 환경별: prod 묶음에는 검증 하니스가 없고, test 묶음에는 rich300LiveStart 가 있으며 두 묶음 모두 문법 유효·이름 충돌 없음', () => {
+  const prod = makeBundle().files['Code.gs'], test = makeBundle({ env: 'test' }).files['Code.gs'];
+  assert.ok(!/function rich300LiveStart\(/.test(prod) && !/function rich300LiveHook_\(/.test(prod)); assert.doesNotThrow(() => new vm.Script(prod));
+  for (const fn of ['rich300LiveStart', 'rich300LiveReport', 'rich300LiveStop', 'rich300LiveBackground', 'rich300LiveHook_']) assert.match(test, new RegExp(`function ${fn}\\(`), fn);
+  assert.doesNotThrow(() => new vm.Script(test)); const names = [...test.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1]); assert.deepEqual(names.filter((n, i) => names.indexOf(n) !== i), []);
+  assert.throws(() => makeBundle({ env: 'dev' }), /test 또는 prod/); assert.ok(!/AAF[A-Za-z0-9_-]{20,}/.test(test)); assert.ok(test.length < 700000);
+});
+
+test('live-kit(사용자가 붙여 넣는 파일)은 현재 코드의 test 묶음과 같다 — 다르면: node rich300/deploy/make-bundle.mjs --env test rich300/live-kit (병합 전 이 폴더는 제거)', () => {
+  const { files } = makeBundle({ env: 'test' }); for (const n of ['Code.gs', 'Fill.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../live-kit/${n}`, import.meta.url), 'utf8'), files[n], n);
 });

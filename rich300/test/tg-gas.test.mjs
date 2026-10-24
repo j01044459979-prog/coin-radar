@@ -38,7 +38,7 @@ test('Telegram.gs(가짜 Apps Script): 페어링 → 신호 버튼 → /fill 저
   g.tele.say(OWNER, '/fill A-BTC-1 30 10 100 98'); g.ctx.rich300TgPoll(); let d = g.tele.sent.at(-1); g.tele.click(OWNER, d, d.reply_markup.inline_keyboard[0][0].callback_data); g.ctx.rich300TgPoll();
   g.tele.say(OWNER, '/exit A-BTC-1 101'); g.ctx.rich300TgPoll(); d = g.tele.sent.at(-1); g.tele.click(OWNER, d, d.reply_markup.inline_keyboard[0][0].callback_data); g.ctx.rich300TgPoll();
   assert.deepEqual(g.rows('fill').map(f => [f.kind, f.price, f.qty]).sort(), [['close', '101', '3'], ['entry', '100', '3']]);
-  const p = g.tele.sent.at(-1); assert.match(p.text, /^복기 · A-BTC-1/); g.tele.click(OWNER, p, p.reply_markup.inline_keyboard[2][0].callback_data); g.ctx.rich300TgPoll();
+  const p = g.tele.sent.at(-1); assert.match(p.text, /^\[TEST\] 복기 · A-BTC-1/); g.tele.click(OWNER, p, p.reply_markup.inline_keyboard[2][0].callback_data); g.ctx.rich300TgPoll();
   assert.equal(g.rows('review')[0].plan, 'plan_ok'); assert.equal(j(g.E().storeIntegrityCheck(g.storeEnv())).ok, true);
   assert.equal(JSON.parse(g.pm.get('tg:last')).r.status, 'ok');
 });

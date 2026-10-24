@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  :root { --bg:#0f1115; --fg:#e8eaed; --mut:#9aa0a6; --card:#1a1d24; --line:#2c313a; --acc:#4f8cff; --bad:#ff6b6b; --ok:#3ddc97; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --fg:#1b1f24; --mut:#5f6368; --card:#fff; --line:#d9dce1; --acc:#1a5fe0; --bad:#c62828; --ok:#1b8a5a; } }
+  * { box-sizing: border-box; } body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Noto Sans KR", sans-serif; }
+  main { max-width:480px; margin:0 auto; } h1 { font-size:18px; margin:0 0 12px; } .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; } input, select { width:100%; padding:12px; font-size:16px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .seg { display:flex; gap:8px; } .seg button { flex:1; padding:10px; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:8px; font-size:15px; } .seg button[aria-pressed="true"] { border-color:var(--acc); color:var(--acc); font-weight:600; }
+  #go { width:100%; margin-top:16px; padding:14px; font-size:17px; border:0; border-radius:10px; background:var(--acc); color:#fff; } #go:disabled { opacity:.5; }
+  #msg { margin-top:12px; white-space:pre-wrap; font-size:14px; } .bad { color:var(--bad); } .ok { color:var(--ok); } .hint { font-size:12px; color:var(--mut); margin-top:8px; }
+</style>
+<title>RICH300 입력</title>
+</head>
+<body>
+<main>
+  <h1>RICH300 입력</h1>
+  <div class="card">
+    <div class="seg" role="group" aria-label="종류"><button type="button" id="mEntry" aria-pressed="true">진입</button><button type="button" id="mExit" aria-pressed="false">청산</button></div>
+    <label for="sid">신호 ID</label><input id="sid" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div id="entryFields">
+      <label for="margin">증거금 (USDT)</label><input id="margin" inputmode="decimal">
+      <label for="leverage">레버리지</label><input id="leverage" inputmode="decimal">
+      <label for="entry">진입가</label><input id="entry" inputmode="decimal">
+      <label for="stop">손절가</label><input id="stop" inputmode="decimal">
+    </div>
+    <div id="exitFields" hidden>
+      <label for="price">청산가</label><input id="price" inputmode="decimal">
+      <label for="qty">수량 (비우면 전량)</label><input id="qty" inputmode="decimal">
+    </div>
+    <label for="fee">수수료 (USDT, 비우면 미입력 · 추정은 앞에 ~)</label><input id="fee" inputmode="text">
+    <label for="funding">펀딩 (USDT, 받으면 +, 내면 −)</label><input id="funding" inputmode="text">
+    <button id="go" type="button">저장</button>
+    <div id="msg" role="status"></div>
+    <div class="hint">저장 버튼을 눌러야 기록됩니다. 같은 화면에서 다시 눌러도 한 번만 기록됩니다.</div>
+  </div>
+</main>
+<script>
+(function () {
+  var preset = <?!= preset ?>, kind = 'entry', formId = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+  function $(id) { return document.getElementById(id); }
+  ['sid', 'entry', 'stop'].forEach(function (k) { if (preset[k]) $(k).value = preset[k]; });
+  function mode(m) { kind = m; $('mEntry').setAttribute('aria-pressed', String(m === 'entry')); $('mExit').setAttribute('aria-pressed', String(m === 'exit')); $('entryFields').hidden = m !== 'entry'; $('exitFields').hidden = m !== 'exit'; }
+  $('mEntry').onclick = function () { mode('entry'); }; $('mExit').onclick = function () { mode('exit'); };
+  function say(t, cls) { var m = $('msg'); m.textContent = t; m.className = cls || ''; }
+  $('go').onclick = function () {
+    var b = $('go'); b.disabled = true; say('저장 중…');
+    var f = { kind: kind, formId: formId, sid: $('sid').value.trim(), fee: $('fee').value.trim(), funding: $('funding').value.trim() };
+    if (kind === 'entry') { f.margin = $('margin').value.trim(); f.leverage = $('leverage').value.trim(); f.entry = $('entry').value.trim(); f.stop = $('stop').value.trim(); }
+    else { f.price = $('price').value.trim(); f.qty = $('qty').value.trim(); }
+    google.script.run.withSuccessHandler(function (r) {
+      b.disabled = false;
+      if (r && r.ok) say((r.status === 'duplicate' ? '이미 저장됨\n' : '저장됨 ✓\n') + (r.summary || ''), 'ok');
+      else if (r && r.error === 'busy') say('다른 작업 중입니다. 잠시 후 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad');
+      else say((r && r.message) || '저장하지 못했습니다.', 'bad');
+    }).withFailureHandler(function () { b.disabled = false; say('연결 오류. 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad'); }).rich300FillSubmit(f);
+  };
+})();
+</script>
+</body>
+</html>

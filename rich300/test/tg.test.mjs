@@ -28,7 +28,7 @@ test('페어링: 비페어링 발신자는 무응답·무기록, 코드 1회용�
   const x = makeTg(); storeCreate(x.mem.env, 'signal', SIG, { actor: 't' });
   const audit0 = x.mem.sheets.get('Audit').length;
   x.tele.say(STRANGER, '/start'); x.tele.say(STRANGER, `/fill ${SID} 30 10 100 98`); x.tele.say(STRANGER, '/pair ABCD2345');
-  assert.deepEqual(poll(x), { status: 'ok', handled: 0, ignored: 3, duplicate: 0, retry: 0, poison: 0, replyFailed: 0 });
+  assert.deepEqual(poll(x), { status: 'ok', handled: 0, ignored: 3, duplicate: 0, retry: 0, poison: 0, replyFailed: 0, actions: { unpaired: 2, 'pair-rejected': 1 } });
   assert.equal(x.tele.sent.length, 0); assert.equal(x.mem.sheets.get('Audit').length, audit0);             // 무응답·무기록(tgupdate도 없음)
   // 코드 없이는 /pair 불가, 틀린 코드 5회 후에는 올바른 코드도 폐기
   const { code } = tgPairCreate(x.env); for (let i = 0; i < 5; i++) x.tele.say(STRANGER, `/pair ZZZZZZZ${i}`);
