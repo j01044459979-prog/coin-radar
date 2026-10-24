@@ -15,6 +15,7 @@ function load({ email = 'me@example.com', token = FAKE_TOKEN, fetchThrows = fals
   const props = { getProperty: k => (pm.has(k) ? pm.get(k) : null), setProperty: (k, v) => { pm.set(k, String(v)); }, deleteProperty: k => { pm.delete(k); }, getKeys: () => [...pm.keys()] };
   const ContentService = { MimeType: { JSON: 'json', TEXT: 'text' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) };
   const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Logger: { log: (...a) => spy.logs.push(a.join(' ')) }, ...sheets.ctx, ContentService, CacheService: cache.service, PropertiesService: { getScriptProperties: () => props },
+    LockService: { ...sheets.ctx.LockService, getUserLock: () => ({ tryLock: () => { if (spy.userLockHeld) return false; spy.userLockHeld = true; return true; }, releaseLock() { spy.userLockHeld = false; } }) },
     Session: { getActiveUser: () => ({ getEmail: () => email }) },
     Utilities: { ...sheets.ctx.Utilities, getUuid: () => randomUUID(), sleep: ms => { tele.sleeps.push(ms); } },
     UrlFetchApp: { fetch: (url, opt) => { spy.urls.push(url); if (fetchThrows) throw new Error(`DNS failure for ${url}`); const m = /\/bot[^/]+\/(\w+)$/.exec(url)[1]; const r = tele.http.call(m, JSON.parse(opt.payload)); return { getResponseCode: () => r.status, getContentText: () => JSON.stringify(r.body) }; } },
@@ -71,4 +72,12 @@ test('tgGc: 만료된 초안·오래된 복기 표시만 지우고 1시간에 �
   g.pm.set('tg:d:old', JSON.stringify({ v: { x: 1 }, exp: now - 1000 })); g.pm.set('tg:d:live', JSON.stringify({ v: { x: 1 }, exp: now + 600000 })); g.pm.set('tg:rp:A', String(now - 31 * 86400000)); g.pm.set('tg:rp:B', String(now)); g.pm.set('tg:paired', JSON.stringify({ v: { userId: 1 }, exp: 0 }));
   assert.deepEqual(j(E.tgGc(env)), { ran: true, removed: 2 }); assert.deepEqual(j(E.tgGc(env)), { ran: false });
   assert.ok(!g.pm.has('tg:d:old') && g.pm.has('tg:d:live') && !g.pm.has('tg:rp:A') && g.pm.has('tg:rp:B') && g.pm.has('tg:paired'));
+});
+
+test('폴링 진입점: 겹친 실행은 사용자 락으로 건너뛰고(네트워크 호출 없음), 실행 시간 통계(tg:stats)와 락 해제를 확인', () => {
+  const g = load(); g.E().storeInit(g.storeEnv());
+  g.spy.userLockHeld = true; const urls0 = g.spy.urls.length; assert.deepEqual(j(g.ctx.rich300TgPoll()), { status: 'busy', reason: 'user-lock' }); assert.equal(g.spy.urls.length, urls0); assert.equal(g.pm.has('tg:stats'), false);
+  g.spy.userLockHeld = false; g.ctx.rich300TgPoll(); g.ctx.rich300TgPoll(); assert.equal(g.spy.userLockHeld, false);                                // 정상 실행 후 락 해제
+  const st = JSON.parse(g.pm.get('tg:stats')); assert.deepEqual([st.runs, st.slow, st.busy], [2, 0, 0]); assert.ok(st.maxMs >= 0 && st.totalMs >= st.maxMs && st.since > 0); assert.ok(!JSON.stringify(st).includes(FAKE_TOKEN));
+  const last = JSON.parse(g.pm.get('tg:last')); assert.ok(typeof last.ms === 'number' && last.r.status);
 });

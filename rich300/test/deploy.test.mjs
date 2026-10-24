@@ -51,3 +51,11 @@ test('저장소 비밀값 점검: rich300 안의 파일에 토큰·키·이메�
   const walk = d => { for (const n of readdirSync(d)) { const p = `${d}${n}`; if (statSync(p).isDirectory()) { if (!['node_modules', 'dist', 'img'].includes(n)) walk(`${p}/`); } else if (/\.(mjs|gs|html|json|md)$/.test(n)) { const t = readFileSync(p, 'utf8'); for (const re of [/\b\d{8,10}:[A-Za-z0-9_-]{35}\b/g, /-----BEGIN [A-Z ]*PRIVATE KEY-----/g, /\bAIza[0-9A-Za-z_-]{35}\b/g, /\b[A-Za-z0-9_-]{44}\b(?=["']\s*[,}\]])/g]) { const hit = (t.match(re) ?? []).filter(x => !/Fake|Test|test|sentinel|ABCDEFGHIJKLMNOPQRSTUVWXYZ/.test(x)); if (hit.length && !p.includes('/test/')) bad.push(`${p}: ${hit[0].slice(0, 12)}…`); } } } };
   walk(root); assert.deepEqual(bad, []);
 });
+
+test('화면이 부르는 서버 함수(google.script.run)는 모두 번들에 존재하고 밑줄로 끝나지 않는다(밑줄 함수는 클라이언트에서 호출 불가)', () => {
+  const { files } = makeBundle(), code = files['Code.gs'], defined = new Set([...code.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1])), sources = [];
+  for (const f of readdirSync(new URL('../gas/', import.meta.url))) if (f.endsWith('.html')) sources.push([f, readFileSync(new URL(`../gas/${f}`, import.meta.url), 'utf8')]);
+  for (const f of readdirSync(new URL('../lib/', import.meta.url))) if (/view\.mjs$/.test(f)) sources.push([f, readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8')]);
+  let n = 0; for (const [f, t] of sources) for (const m of t.matchAll(/\brich300[A-Z][A-Za-z0-9]*_?/g)) { n++; assert.ok(!m[0].endsWith('_'), `${f}: ${m[0]} 은 비공개 함수`); assert.ok(defined.has(m[0]), `${f}: ${m[0]} 이(가) 번들에 없음`); }
+  assert.ok(n >= 1);
+});
