@@ -38,3 +38,9 @@
 - 겹치는 파일을 줄이기 위해 R5 브랜치에 공통 변경을 먼저 넣었습니다: `build.mjs`의 `ENGINE_MODULES` 한 줄 한 모듈, 번들 개수 고정 단언 제거, S0 `Engine.gs` 스냅샷 검증, `Api.gs`의 GET 라우터(`?p=fill|dash`)와 소유자 확인.
 - R4는 목록 끝(`ingest` 뒤)에, R6는 `ledger` 뒤에 모듈을 추가하므로 병합 충돌이 없습니다(시뮬레이션으로 확인).
 - 병합 순서: #32 ← #34 ← #35 ← #36 ← (R4, R6 임의 순서). 모든 PR은 별도 승인 전까지 병합하지 않습니다.
+
+## R9 통합 PR (이 브랜치 `feature/rich300-r9-integration`, Draft, 병합 보류)
+- **의존**: R4(#37)·R6(#38)·R7(#39)·R8(#40)와 PR #41(검증 키트)의 커밋을 모두 포함하는 *스택의 맨 위*. 신규 변경은 (1) radar 신호 메시지 버튼·ID(`radar-service/signal/rich300.mjs`, 기본 off) (2) R4 체결 입력 확장 (3) R6 숫자 중심 메인 화면 (4) 추천 기록·일지 검색·성적 탭·점검 화면 (5) 운영 설치 `rich300Install`·자동 검증 (6) 테스트 봇 시험 하니스 제거.
+- **#41 과의 관계**: 이 PR은 #41 의 테스트 봇 마법사·24시간 모니터·`[TEST]` 전용 하니스를 *제거*하고 호환성·성능 자동 검증(A·B·C·G 구간)만 운영 설치 점검으로 재사용한다. 이 PR을 채택하면 #41 은 대체된다(병합·종료 여부는 사용자가 결정).
+- **main 과의 충돌 시뮬레이션**: `git merge-tree origin/main <이 브랜치>` 충돌 없음. radar 쪽 변경 파일은 `radar-service/service.mjs`·`radar-service/signal/step.mjs`·`radar-service/signal/rich300.mjs`·`.github/workflows/radar.yml`(변수 한 줄)뿐이다.
+- 병합 순서(승인 후): #32 ← #34 ← #35 ← #36 ← R4/R6 ← R7/R8 ← 이 PR(#41 은 건너뜀 또는 먼저 닫음). 어떤 PR도 별도 승인 전에는 병합하지 않는다.
