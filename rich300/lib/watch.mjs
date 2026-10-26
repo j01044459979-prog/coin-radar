@@ -17,7 +17,7 @@ export const WATCH = Object.freeze({
   tpR: Object.freeze([1.5, 2]), trailStepR: 0.25,
   swingMinR: 2, swingHoldMinR: 1, swingVol4h: 0.9, swingHoldEveryMs: 24 * 3600000,
   addVolMin: 1, dayLossPct: 0.03,
-  staleMarketMs: 10 * 60000, marketDownFails: 3,
+  staleMarketMs: 10 * 60000, barGraceMs: 10 * 60000, marketDownFails: 3,
   cooldownMs: Object.freeze({ STOP_TREND: 60 * 60000, SWING_HOLD: 24 * 3600000 }),
   retryDelaysMs: Object.freeze([2 * 60000, 5 * 60000, 10 * 60000, 20 * 60000]), expireMs: 30 * 60000,
   capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40,
@@ -102,7 +102,7 @@ export function watchParseSource(src, jsons, now) {
 export function watchAssessMarket(m, now) {
   if (!m || !(m.price > 0)) return { ok: false, why: 'no-price' };
   if (now - m.priceAt > WATCH.staleMarketMs) return { ok: false, why: 'stale-price' };
-  for (const [k, minN, maxAge] of [['1h', WATCH.minBars, 2 * 3600000], ['4h', WATCH.minBars, 8 * 3600000]]) {
+  for (const [k, minN, maxAge] of [['1h', WATCH.minBars, 2 * 3600000 + WATCH.barGraceMs], ['4h', WATCH.minBars, 8 * 3600000 + WATCH.barGraceMs]]) {      // 마지막 *마감* 봉의 시작 시각은 (봉 길이×2)까지 거슬러 올라갈 수 있다 — 실제 점검에서 4h 봉이 7시간 55분 전으로 관측됨. 확정 지연 여유 10분
     const b = m['bars' + k]; if (!Array.isArray(b) || b.length < minN) return { ok: false, why: `few-bars-${k}` };
     if (now - b[b.length - 1].t > maxAge) return { ok: false, why: `stale-bars-${k}` };
     const step = WATCH_BAR_MS[k]; for (let i = b.length - minN + 1; i < b.length; i++) if (b[i].t - b[i - 1].t !== step) return { ok: false, why: `gap-bars-${k}` };

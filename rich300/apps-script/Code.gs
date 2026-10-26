@@ -1897,7 +1897,7 @@ const WATCH = Object.freeze({
   tpR: Object.freeze([1.5, 2]), trailStepR: 0.25,
   swingMinR: 2, swingHoldMinR: 1, swingVol4h: 0.9, swingHoldEveryMs: 24 * 3600000,
   addVolMin: 1, dayLossPct: 0.03,
-  staleMarketMs: 10 * 60000, marketDownFails: 3,
+  staleMarketMs: 10 * 60000, barGraceMs: 10 * 60000, marketDownFails: 3,
   cooldownMs: Object.freeze({ STOP_TREND: 60 * 60000, SWING_HOLD: 24 * 3600000 }),
   retryDelaysMs: Object.freeze([2 * 60000, 5 * 60000, 10 * 60000, 20 * 60000]), expireMs: 30 * 60000,
   capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40,
@@ -1982,7 +1982,7 @@ function watchParseSource(src, jsons, now) {
 function watchAssessMarket(m, now) {
   if (!m || !(m.price > 0)) return { ok: false, why: 'no-price' };
   if (now - m.priceAt > WATCH.staleMarketMs) return { ok: false, why: 'stale-price' };
-  for (const [k, minN, maxAge] of [['1h', WATCH.minBars, 2 * 3600000], ['4h', WATCH.minBars, 8 * 3600000]]) {
+  for (const [k, minN, maxAge] of [['1h', WATCH.minBars, 2 * 3600000 + WATCH.barGraceMs], ['4h', WATCH.minBars, 8 * 3600000 + WATCH.barGraceMs]]) {      // 마지막 *마감* 봉의 시작 시각은 (봉 길이×2)까지 거슬러 올라갈 수 있다 — 실제 점검에서 4h 봉이 7시간 55분 전으로 관측됨. 확정 지연 여유 10분
     const b = m['bars' + k]; if (!Array.isArray(b) || b.length < minN) return { ok: false, why: `few-bars-${k}` };
     if (now - b[b.length - 1].t > maxAge) return { ok: false, why: `stale-bars-${k}` };
     const step = WATCH_BAR_MS[k]; for (let i = b.length - minN + 1; i < b.length; i++) if (b[i].t - b[i - 1].t !== step) return { ok: false, why: `gap-bars-${k}` };
@@ -2972,7 +2972,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '7bb607c613d8';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '35354c97ead1';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {

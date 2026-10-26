@@ -1,7 +1,7 @@
 // 보유 포지션 감시 규칙 시험(순수 함수): 지표, 손절 위험, TP, 추가 진입 조건/취소, 추적손절, 스윙 전환·유지·종료, 메시지 형식, 시세 응답 해석.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { watchEma, watchTrend, watchVolRatio, watchEvaluate, watchMessage, WATCH, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker } from '../lib/watch.mjs';
+import { watchAssessMarket, watchEma, watchTrend, watchVolRatio, watchEvaluate, watchMessage, WATCH, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker } from '../lib/watch.mjs';
 import { splanBuild } from '../lib/scaleplan.mjs';
 
 const T0 = Date.UTC(2026, 9, 26, 0, 0), H = 3600000;
@@ -109,4 +109,11 @@ test('시세 응답 해석: OKX(마감 봉만)·Bybit(마감 봉만)·티커, �
 });
 test('규칙 상수는 최종 지시서 기준과 일치: TP 1.5R/2R, 일일 손실 −3%, 추적 단계', () => {
   assert.deepEqual([...WATCH.tpR], [1.5, 2]); assert.equal(WATCH.dayLossPct, 0.03); assert.equal(WATCH.swingMinR, 2);
+});
+
+test('시세 신선도 판정: 마지막 마감 봉이 봉 길이×2 근처(실측 4h 봉 7시간 55분 전)여도 정상, 여유(10분)를 넘으면 오래된 데이터로 차단', () => {
+  const mk = (age1h, age4h, price = 2050) => ({ price, priceAt: T0 - 5000, bars15m: [{ t: T0 - 900000, c: price }], bars1h: bars(100, { start: 2000, drift: 0, t0: T0 - age1h - 99 * H }), bars4h: bars(100, { start: 2000, drift: 0, step: 4 * H, t0: T0 - age4h - 99 * 4 * H }) });
+  assert.deepEqual(watchAssessMarket(mk(115 * 60000, 475 * 60000), T0), { ok: true, why: null });
+  assert.equal(watchAssessMarket(mk(135 * 60000, 475 * 60000), T0).why, 'stale-bars-1h'); assert.equal(watchAssessMarket(mk(60000, 495 * 60000), T0).why, 'stale-bars-4h');
+  assert.equal(watchAssessMarket({ ...mk(0, 0), priceAt: T0 - 11 * 60000 }, T0).why, 'stale-price'); assert.equal(watchAssessMarket(mk(0, 0, 3000), T0).why, 'price-mismatch');
 });
