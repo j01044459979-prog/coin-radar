@@ -1,0 +1,211 @@
+{
+  "days": 90,
+  "scenarios": [
+    {
+      "label": "first(초기 실행: 캐시 비어 있음)",
+      "signals": 270,
+      "rows": [
+        {
+          "name": "첫 화면(?p=dash)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 32,
+            "getLastRow": 32,
+            "getRange": 28,
+            "getValues": 28,
+            "getLastColumn": 11
+          },
+          "totalCalls": 132,
+          "cells": 97075,
+          "modeledMs": 4941,
+          "nodeCpuMs": 65,
+          "result": 9309
+        },
+        {
+          "name": "기록 조회(?p=journal)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 63,
+            "getLastRow": 63,
+            "getRange": 50,
+            "getValues": 50,
+            "getLastColumn": 33
+          },
+          "totalCalls": 260,
+          "cells": 321775,
+          "modeledMs": 12032,
+          "nodeCpuMs": 179,
+          "result": 93748
+        },
+        {
+          "name": "입력 화면(?p=fill)",
+          "calls": {},
+          "totalCalls": 0,
+          "cells": 0,
+          "modeledMs": 0,
+          "nodeCpuMs": 0,
+          "result": 1
+        },
+        {
+          "name": "진입 저장(FillSubmit)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 149,
+            "getLastRow": 149,
+            "getRange": 127,
+            "getValues": 121,
+            "getLastColumn": 104,
+            "lock": 6,
+            "setNumberFormat": 6,
+            "setValues": 6,
+            "flush": 6
+          },
+          "totalCalls": 675,
+          "cells": 903035,
+          "modeledMs": 33819,
+          "nodeCpuMs": 477,
+          "result": "added"
+        },
+        {
+          "name": "같은 요청 재전송(중복)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 20,
+            "getLastRow": 20,
+            "getRange": 20,
+            "getValues": 20,
+            "getLastColumn": 3
+          },
+          "totalCalls": 84,
+          "cells": 19132,
+          "modeledMs": 2418,
+          "nodeCpuMs": 7,
+          "result": "duplicate"
+        },
+        {
+          "name": "청산 저장(FillSubmit)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 39,
+            "getLastRow": 39,
+            "getRange": 39,
+            "getValues": 37,
+            "getLastColumn": 20,
+            "lock": 2,
+            "setNumberFormat": 2,
+            "setValues": 2,
+            "flush": 2
+          },
+          "totalCalls": 183,
+          "cells": 156925,
+          "modeledMs": 7767,
+          "nodeCpuMs": 107,
+          "result": "added"
+        }
+      ]
+    },
+    {
+      "label": "repeat(재실행: 직전 실행 뒤)",
+      "signals": 270,
+      "rows": [
+        {
+          "name": "첫 화면(?p=dash)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 32,
+            "getLastRow": 32,
+            "getRange": 28,
+            "getValues": 28,
+            "getLastColumn": 11
+          },
+          "totalCalls": 132,
+          "cells": 97075,
+          "modeledMs": 4941,
+          "nodeCpuMs": 108,
+          "result": 9309
+        },
+        {
+          "name": "기록 조회(?p=journal)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 63,
+            "getLastRow": 63,
+            "getRange": 50,
+            "getValues": 50,
+            "getLastColumn": 33
+          },
+          "totalCalls": 260,
+          "cells": 321775,
+          "modeledMs": 12032,
+          "nodeCpuMs": 283,
+          "result": 93748
+        },
+        {
+          "name": "입력 화면(?p=fill)",
+          "calls": {},
+          "totalCalls": 0,
+          "cells": 0,
+          "modeledMs": 0,
+          "nodeCpuMs": 0,
+          "result": 1
+        },
+        {
+          "name": "진입 저장(FillSubmit)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 149,
+            "getLastRow": 149,
+            "getRange": 127,
+            "getValues": 121,
+            "getLastColumn": 104,
+            "lock": 6,
+            "setNumberFormat": 6,
+            "setValues": 6,
+            "flush": 6
+          },
+          "totalCalls": 675,
+          "cells": 903035,
+          "modeledMs": 33819,
+          "nodeCpuMs": 600,
+          "result": "added"
+        },
+        {
+          "name": "같은 요청 재전송(중복)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 20,
+            "getLastRow": 20,
+            "getRange": 20,
+            "getValues": 20,
+            "getLastColumn": 3
+          },
+          "totalCalls": 84,
+          "cells": 19132,
+          "modeledMs": 2418,
+          "nodeCpuMs": 14,
+          "result": "duplicate"
+        },
+        {
+          "name": "청산 저장(FillSubmit)",
+          "calls": {
+            "openById": 1,
+            "getSheetByName": 39,
+            "getLastRow": 39,
+            "getRange": 39,
+            "getValues": 37,
+            "getLastColumn": 20,
+            "lock": 2,
+            "setNumberFormat": 2,
+            "setValues": 2,
+            "flush": 2
+          },
+          "totalCalls": 183,
+          "cells": 156925,
+          "modeledMs": 7767,
+          "nodeCpuMs": 92,
+          "result": "added"
+        }
+      ]
+    }
+  ]
+}
