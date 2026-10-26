@@ -105,7 +105,9 @@ if (args.has('--gate')) {
   if (modeOf(process.env) !== 'off') { const dry = {}; await opportunity({ state: dry, save: async () => {}, send: null, env: { ...process.env, RADAR_OPPORTUNITY: 'preview' }, force: true }); }
 } else if (args.has('--telegram-test')) {
   const send = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
-  await send(`리치 선물 레이더 · 연결 확인\n${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' })} KST\n이 메시지가 보이면 Telegram 전송이 정상입니다.`);
+  const label = String(process.env.RADAR_TEST_LABEL || '').replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 30);      // 점검용 표시(예: RICH300 TEST). 비어 있으면 기존 문구 그대로
+  const when = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+  await send(label ? `[${label}]\n전송 점검 메시지 1건 · ${when} KST\n추천·매매 알림이 아닙니다. 이 메시지가 보이면 Telegram 전송 경로(GitHub Actions)가 정상입니다.` : `리치 선물 레이더 · 연결 확인\n${when} KST\n이 메시지가 보이면 Telegram 전송이 정상입니다.`);
   console.log('Telegram 연결 확인 메시지 전송 확인(message_id 수신)');
 } else {
   const send = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);

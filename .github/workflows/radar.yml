@@ -18,6 +18,10 @@ on:
         description: '5분 슬롯 번호(외부 스케줄러 중복 방지용, 수동 실행 시 비워 둠)'
         type: string
         default: ''
+      label:
+        description: 'telegram-test 전용: 메시지 맨 앞 표시(예: RICH300 TEST). 비워 두면 기존 문구'
+        type: string
+        default: ''
       mode:
         description: 'once = 분석·알림 1회, telegram-test = 연결 확인 메시지 1건, preview = 전송 없이 출력'
         type: choice
@@ -109,6 +113,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           RADAR_STATE_DIR: .radar-state
           RADAR_SLOT: ${{ github.event.inputs.slot }}
+          RADAR_TEST_LABEL: ${{ github.event.inputs.label }}
         run: node radar-service/run.mjs --"$MODE"
       - name: Save state
         if: always() && steps.gate.outputs.run == 'true' && env.MODE != 'telegram-test'
