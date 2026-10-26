@@ -7,11 +7,12 @@
 import { dedupeCanonical } from './dedupe.mjs';
 import { StoreError, ENTITIES, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, AUDIT_SHEET, META_SHEET, SCHEMA_VERSION, SETTING_DEFAULTS, ENTITY_NAMES } from './schema.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
+import { nullishOr } from './nullish.mjs';
 
 const STORE_ZERO_HASH = '0'.repeat(64), STORE_TAIL = 5;
-const storeEntity = n => ENTITIES[n] ?? (() => { throw new StoreError('VALIDATION', `알 수 없는 엔티티: ${n}`); })();
+const storeEntity = n => (ENTITIES[n] != null ? ENTITIES[n] : (() => { throw new StoreError('VALIDATION', `알 수 없는 엔티티: ${n}`); })());
 const storeCell = v => { if (v instanceof Date) throw new StoreError('INTEGRITY', 'Date로 변환된 셀 — 시트 열을 텍스트 서식으로 지정해야 함'); return v === null || v === undefined ? '' : String(v); };
-const storeParse = (s, where) => { try { return JSON.parse(s); } catch { throw new StoreError('INTEGRITY', `JSON 손상: ${where}`); } };
+const storeParse = (s, where) => { try { return JSON.parse(s); } catch (e_) { throw new StoreError('INTEGRITY', `JSON 손상: ${where}`); } };
 const storeInt = (v, where) => { const n = Number(storeCell(v)); if (!Number.isInteger(n)) throw new StoreError('INTEGRITY', `정수 아님: ${where}`); return n; };
 
 export function storeInit(env) {
@@ -37,7 +38,7 @@ function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아
   for (const e of audit.slice(-STORE_TAIL)) if (e.entity === entityName && !have.has(`${e.key}|${e.rev}`)) put({ key: e.key, rev: e.rev, void: e.op === 'void', recordedAt: e.recordedAt, raw: e.after, data: storeParse(e.after, `audit#${e.seq}`), pending: true });
   return m;
 }
-export const storeGet = (env, entityName, key) => storeLatestMap(env, entityName, storeReadAudit(env)).get(key) ?? null;
+export const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAudit(env)).get(key), null);
 export function storeList(env, entityName, { includeVoid = false } = {}) {
   const out = [...storeLatestMap(env, entityName, storeReadAudit(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return includeVoid ? out : out.filter(r => !r.void);
@@ -63,13 +64,13 @@ function storeRecoverTail(env) {                       // 이전 쓰기가 ②�
   return fixed;
 }
 export function storeWithLock(env, fn) {
-  if (!env.lock.tryLock(env.lockTimeoutMs ?? 10000)) throw new StoreError('LOCK', '다른 작업이 저장 중입니다(잠시 후 재시도)');
+  if (!env.lock.tryLock((env.lockTimeoutMs != null ? env.lockTimeoutMs : 10000))) throw new StoreError('LOCK', '다른 작업이 저장 중입니다(잠시 후 재시도)');
   try { const recovered = storeRecoverTail(env); return fn(recovered); } finally { env.lock.release(); }
 }
 function storeCommit(env, { entity, key, rev, op, actor, reason, before, after }) {
   if (typeof actor !== 'string' || !actor) throw new StoreError('VALIDATION', 'actor 필요');
   const audit = storeReadAudit(env), last = audit[audit.length - 1];
-  const e = { seq: last ? last.seq + 1 : 1, recordedAt: env.now(), entity, key, rev, op, actor, reason: reason ?? '', before: before ? dedupeCanonical(before) : '', after: dedupeCanonical(after), prevHash: last ? last.hash : STORE_ZERO_HASH };
+  const e = { seq: last ? last.seq + 1 : 1, recordedAt: env.now(), entity, key, rev, op, actor, reason: (reason != null ? reason : ''), before: before ? dedupeCanonical(before) : '', after: dedupeCanonical(after), prevHash: last ? last.hash : STORE_ZERO_HASH };
   e.hash = storeHash(env, e);
   env.sheets.append(AUDIT_SHEET, [storeAuditRow(e)]);   // ① 선기록(여기서 실패하면 변경 없음)
   storeApplyView(env, e);                                // ② 엔티티 행(여기서 중단돼도 다음 쓰기/읽기가 복구)
@@ -118,7 +119,7 @@ export const storeClaimUpdate = (env, kind, id, actor) => storeCreate(env, 'tgup
 export function storeSaveReview(env, { sid, plan, mind, memo }, { actor }) {
   const savedAt = env.now(), cur = storeGet(env, 'review', sid), next = { sid, plan, mind, memo, savedAt };
   if (!cur || cur.void) return storeCreate(env, 'review', next, { actor });
-  if (cur.data.plan === plan && cur.data.mind === mind && (cur.data.memo ?? '') === (memo ?? '')) return { status: 'unchanged', key: sid, rev: cur.rev };
+  if (cur.data.plan === plan && cur.data.mind === mind && ((cur.data.memo != null ? cur.data.memo : '')) === ((memo != null ? memo : ''))) return { status: 'unchanged', key: sid, rev: cur.rev };
   return storeRevise(env, 'review', sid, { plan, mind, memo: memo ? memo : null, savedAt }, { actor, reason: '복기 수정' });
 }
 export function storeSetupChallenge(env, { startEquity, startDay, rate }, { actor }) {
@@ -139,7 +140,7 @@ export function storeIntegrityCheck(env) {
     if (e.seq !== i + 1) issues.push({ type: 'audit-seq-gap', seq: e.seq, expected: i + 1 });
     if (e.prevHash !== prevHash) issues.push({ type: 'audit-chain-broken', seq: e.seq });
     if (storeHash(env, e) !== e.hash) issues.push({ type: 'audit-hash-mismatch', seq: e.seq });
-    const kk = `${e.entity}|${e.key}`, exp = (lastRev.get(kk) ?? 0) + 1;
+    const kk = `${e.entity}|${e.key}`, exp = (nullishOr(lastRev.get(kk), 0)) + 1;
     if (e.rev !== exp) issues.push({ type: 'rev-gap', entity: e.entity, key: e.key, rev: e.rev, expected: exp }); lastRev.set(kk, e.rev);
     canon.set(`${e.entity}|${e.key}|${e.rev}`, e); prevHash = e.hash;
   });

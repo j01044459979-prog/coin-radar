@@ -38,9 +38,9 @@ export function backupRun(env, { now = Date.now() } = {}) {
   if (env.drive.list(folder).some(x => x.name === name)) return { status: 'exists', name, warnings };    // 같은 분에 중복 실행: 한 번만
   let src = null, copy = null;
   try { storeWithLock(se, () => { src = { integrity: storeIntegrityCheck(se), fp: backupFingerprint(se) }; copy = env.drive.copy(env.sourceId, name, folder); }); }
-  catch (e) { if (e instanceof StoreError && e.code === 'LOCK') throw e; if (copy) { try { env.drive.trash(copy.id); } catch { /* 정리 실패는 무시 */ } } return { status: 'copy-failed', name, warnings }; }
+  catch (e) { if (e instanceof StoreError && e.code === 'LOCK') throw e; if (copy) { try { env.drive.trash(copy.id); } catch (e_) { /* 정리 실패는 무시 */ } } return { status: 'copy-failed', name, warnings }; }
   let ci, cf;
-  try { const cs = env.drive.openStore(copy.id); ci = storeIntegrityCheck(cs); cf = backupFingerprint(cs); } catch { ci = { ok: false, issues: [{ type: 'open-failed' }] }; cf = null; }
+  try { const cs = env.drive.openStore(copy.id); ci = storeIntegrityCheck(cs); cf = backupFingerprint(cs); } catch (e_) { ci = { ok: false, issues: [{ type: 'open-failed' }] }; cf = null; }
   const same = cf !== null && bkSame(cf, src.fp);
   if (src.integrity.ok && !(ci.ok && same)) { env.drive.trash(copy.id); return { status: 'verify-failed', name, reasons: [!ci.ok ? 'copy-integrity' : null, !same ? 'fingerprint-mismatch' : null].filter(Boolean), warnings }; }
   if (!src.integrity.ok) return { status: 'ok-unhealthy-source', name, id: copy.id, fingerprintMatches: same, rotated: false, issues: [...new Set(src.integrity.issues.map(i => i.type))], warnings };       // 증거로 남기고 회전하지 않음

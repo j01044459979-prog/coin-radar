@@ -1,20 +1,25 @@
 // RICH 300 engine bundle — 자동 생성 파일(rich300/build.mjs). 직접 수정하지 마세요.
 
+// ── nullish.mjs ──
+// Apps Script 문법 검사기는 ES2020 의 '??'·'?.' 를 받지 않을 수 있어(BigInt 리터럴 '10n' 은 실제로 거부됨) 소스에서 쓰지 않는다. 좌변이 호출 결과 등 두 번 계산하면 안 되는 경우의 대체: 값이 null·undefined 일 때만 기본값.
+// 기본값(두 번째 인수)은 미리 계산되므로 부작용 없는 값(리터럴·빈 컬렉션·BigInt(0) 등)만 넘긴다.
+function nullishOr(value, fallback) { return value === null || value === undefined ? fallback : value; }
+
 // ── decimal.mjs ──
 // 고정소수점 십진수(BigInt, 단위 10^-12). 부동소수 오차 없이 가격·수량·금액을 계산한다.
 //  · 내부 값 = 십진수 × 10^12 인 BigInt. 입력은 십진 문자열(권장), 숫자(소수 12자리로 반올림), 정수 BigInt(정수 단위).
 //  · 문자열 입력은 소수 12자리를 넘으면 오류(조용히 반올림하지 않는다).
 //  · 금액(USDT)은 장부 경계에서 마이크로 USDT(10^-6) 정수 BigInt로 반올림한다. 동률은 0에서 먼 쪽(half away from zero).
 // 이 파일은 GAS 번들(build.mjs)로도 쓰이므로 최상위 이름이 다른 모듈과 겹치지 않아야 한다.
-const DEC_SCALE = 10n ** 12n;
-const DEC_MICRO_DIV = 10n ** 6n;
+const DEC_SCALE = BigInt(10) ** BigInt(12);
+const DEC_MICRO_DIV = BigInt(10) ** BigInt(6);
 const DEC_DIGITS = 12;
 
 function decRoundDiv(n, d) {                       // n/d 를 반올림(동률은 0에서 먼 쪽)
-  if (d === 0n) throw new Error('0으로 나눌 수 없음');
+  if (d === BigInt(0)) throw new Error('0으로 나눌 수 없음');
   let q = n / d; const r = n % d;
-  const twice = (r < 0n ? -r : r) * 2n, ad = d < 0n ? -d : d;
-  if (twice >= ad) q += (n < 0n) === (d < 0n) ? 1n : -1n;
+  const twice = (r < BigInt(0) ? -r : r) * BigInt(2), ad = d < BigInt(0) ? -d : d;
+  if (twice >= ad) q += (n < BigInt(0)) === (d < BigInt(0)) ? BigInt(1) : -BigInt(1);
   return q;
 }
 function dec(x) {
@@ -23,7 +28,7 @@ function dec(x) {
   if (typeof x !== 'string') throw new Error('숫자 형식 오류');
   const m = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(x.trim());
   if (!m) throw new Error(`숫자 형식 오류: ${String(x).slice(0, 24)}`);
-  const frac = m[3] ?? '';
+  const frac = (m[3] != null ? m[3] : '');
   if (frac.length > DEC_DIGITS) throw new Error(`소수 ${DEC_DIGITS}자리 초과: ${String(x).slice(0, 24)}`);
   const v = BigInt(m[2]) * DEC_SCALE + BigInt(frac.padEnd(DEC_DIGITS, '0'));
   return m[1] === '-' ? -v : v;
@@ -31,23 +36,23 @@ function dec(x) {
 const decAdd = (a, b) => a + b;
 const decSub = (a, b) => a - b;
 const decNeg = a => -a;
-const decAbs = a => (a < 0n ? -a : a);
+const decAbs = a => (a < BigInt(0) ? -a : a);
 const decMul = (a, b) => decRoundDiv(a * b, DEC_SCALE);
 const decDiv = (a, b) => decRoundDiv(a * DEC_SCALE, b);
 const decCmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-const decSign = a => (a < 0n ? -1 : a > 0n ? 1 : 0);
-const decIsZero = a => a === 0n;
+const decSign = a => (a < BigInt(0) ? -1 : a > BigInt(0) ? 1 : 0);
+const decIsZero = a => a === BigInt(0);
 const decToMicro = a => decRoundDiv(a, DEC_MICRO_DIV);        // 십진수 → 마이크로 정수(반올림)
 const microToDec = m => m * DEC_MICRO_DIV;
 function decFormat(a, dp = 6) {                                // 문자열 표시(반올림)
   if (dp < 0 || dp > DEC_DIGITS) throw new Error('자릿수 범위 오류');
-  const neg = a < 0n, unit = 10n ** BigInt(DEC_DIGITS - dp), v = decRoundDiv(neg ? -a : a, unit), p = 10n ** BigInt(dp);
+  const neg = a < BigInt(0), unit = BigInt(10) ** BigInt(DEC_DIGITS - dp), v = decRoundDiv(neg ? -a : a, unit), p = BigInt(10) ** BigInt(dp);
   const s = `${v / p}${dp ? '.' + String(v % p).padStart(dp, '0') : ''}`;
-  return neg && v !== 0n ? `-${s}` : s;
+  return neg && v !== BigInt(0) ? `-${s}` : s;
 }
 const microFormat = (m, dp = 6) => decFormat(microToDec(m), dp);
 function microToNumber(m) {                                    // Sheets 등 배정밀도 저장용(안전 범위만)
-  if (m > 9007199254740991n || m < -9007199254740991n) throw new Error('안전 정수 범위 초과');
+  if (m > BigInt("9007199254740991") || m < -BigInt("9007199254740991")) throw new Error('안전 정수 범위 초과');
   return Number(m);
 }
 const microFromNumber = n => { if (!Number.isInteger(n)) throw new Error('마이크로 정수가 아님'); return BigInt(n); };
@@ -79,7 +84,7 @@ function dayRange(from, through) { const out = []; for (let i = dayToIndex(from)
 function rateFraction(rate) {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(String(rate).trim());
   if (!m) throw new Error(`목표율 형식 오류: ${rate}`);
-  const frac = m[2] ?? '', den = 10n ** BigInt(frac.length), num = BigInt(m[1] + frac);
+  const frac = (m[2] != null ? m[2] : ''), den = BigInt(10) ** BigInt(frac.length), num = BigInt(m[1] + frac);
   if (num > den) throw new Error('목표율은 0~100%');            // 0 이상 1 이하(100%)
   return { num, den };
 }
@@ -100,7 +105,7 @@ function compoundIdealSeries({ startMicro, startDay, schedule, throughDay }) {
   const s = dayToIndex(startDay), e = dayToIndex(throughDay);
   if (e < s) return [{ day: indexToDay(s - 1), n: 0, idealMicro: startMicro }];
   const rows = [{ day: indexToDay(s - 1), n: 0, idealMicro: startMicro }];
-  let numer = startMicro, denom = 1n;
+  let numer = startMicro, denom = BigInt(1);
   for (let i = s; i <= e; i++) {
     const { num, den } = rateFraction(compoundRateOn(indexToDay(i), schedule));
     numer *= den + num; denom *= den;
@@ -114,7 +119,7 @@ function compoundIdealSeries({ startMicro, startDay, schedule, throughDay }) {
 function dedupeCanonical(v) { return JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? `${x}n` : x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x)); }
 const dedupeSame = (a, b) => dedupeCanonical(a) === dedupeCanonical(b);
 function dedupeAppend(list, rec, keyField) {
-  const key = rec?.[keyField];
+  const key = (rec == null ? undefined : rec[keyField]);
   if (key === undefined || key === null || key === '') throw new Error(`${keyField} 필요`);
   const prev = list.find(r => r[keyField] === key);
   if (!prev) return { list: [...list, rec], status: 'added' };
@@ -134,7 +139,7 @@ function dedupeRevise(log, key, patch, meta = {}) {
   const prev = dedupeLatest(log).get(key);
   if (!prev) throw new Error(`수정 대상 없음: ${key}`);
   if (prev.void) throw new Error(`취소된 기록은 수정할 수 없음: ${key}`);
-  return [...log, { ...prev, ...patch, key, rev: prev.rev + 1, prevRev: prev.rev, at: meta.at ?? null, reason: meta.reason ?? null }];
+  return [...log, { ...prev, ...patch, key, rev: prev.rev + 1, prevRev: prev.rev, at: (meta.at != null ? meta.at : null), reason: (meta.reason != null ? meta.reason : null) }];
 }
 const dedupeVoid = (log, key, meta = {}) => dedupeRevise(log, key, { void: true }, meta);
 function dedupeLatest(log) { const m = new Map(); for (const r of log) { const p = m.get(r.key); if (!p || r.rev > p.rev) m.set(r.key, r); } return m; }
@@ -148,15 +153,15 @@ function dedupeLatest(log) { const m = new Map(); for (const r of log) { const p
 const PNL_ENTRY_KINDS = ['opening', 'entry', 'add'];
 const PNL_EXIT_KINDS = ['reduce', 'close'];
 const PNL_STATES = ['entered', 'estimated', 'missing'];
-const PNL_E24_TO_MICRO = 10n ** 18n;                    // 10^-24 단위 → 마이크로(10^-6) 변환 나눗수
+const PNL_E24_TO_MICRO = BigInt(10) ** BigInt(18);                    // 10^-24 단위 → 마이크로(10^-6) 변환 나눗수
 
 function pnlNormalizeAmount(a, name, nonNegative) {
-  const state = a?.state ?? 'missing';
+  const state = ((a == null ? undefined : a.state) != null ? (a == null ? undefined : a.state) : 'missing');
   if (!PNL_STATES.includes(state)) throw new Error(`${name} 상태 오류: ${state}`);
-  if (state === 'missing') return { state, micro: 0n };
+  if (state === 'missing') return { state, micro: BigInt(0) };
   if (a.amount === undefined || a.amount === null || a.amount === '') throw new Error(`${name} 금액 필요(상태 ${state})`);
   const micro = decToMicro(dec(a.amount));
-  if (nonNegative && micro < 0n) throw new Error(`${name}은 0 이상이어야 함`);
+  if (nonNegative && micro < BigInt(0)) throw new Error(`${name}은 0 이상이어야 함`);
   return { state, micro };
 }
 function pnlNormalizeFill(f) {
@@ -177,8 +182,8 @@ function pnlNormalizeFill(f) {
 function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
   const fills = fillsIn.map(pnlNormalizeFill).filter(f => f.at < cutoffMs).map((f, i) => ({ f, i })).sort((a, b) => a.f.at - b.f.at || a.i - b.i).map(x => x.f);
   if (!fills.length) return null;
-  const sid = fills[0].sid, dir = fills[0].dir, sign = dir === 'LONG' ? 1n : -1n;
-  let qty = 0n, cost = 0n, marginMicro = 0n, marginAll = true, first = true;
+  const sid = fills[0].sid, dir = fills[0].dir, sign = dir === 'LONG' ? BigInt(1) : -BigInt(1);
+  let qty = BigInt(0), cost = BigInt(0), marginMicro = BigInt(0), marginAll = true, first = true;
   const events = [], flags = new Set(), seen = new Set();
   for (const f of fills) {
     if (f.sid !== sid) throw new Error('한 번에 하나의 sid만 계산');
@@ -188,7 +193,7 @@ function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
     if (!first && f.kind === 'entry') throw new Error('추가 진입은 kind=add');
     if (!first && f.kind === 'opening') throw new Error('opening은 첫 체결만');
     first = false;
-    let grossMicro = 0n;
+    let grossMicro = BigInt(0);
     if (PNL_ENTRY_KINDS.includes(f.kind)) {
       qty = decAdd(qty, f.qty); cost += f.price * f.qty;                                     // 원가: 반올림 없는 10^-24 단위
       if (f.kind !== 'opening') { if (f.margin === null) marginAll = false; else marginMicro += decToMicro(f.margin); }
@@ -196,12 +201,12 @@ function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
       if (f.qty > qty) throw new Error(`청산 수량(${decFormat(f.qty, 8)})이 보유 수량(${decFormat(qty, 8)})보다 큼: ${f.fillId}`);
       if (f.kind === 'close' && f.qty !== qty) throw new Error(`close는 잔량 전체여야 함: ${f.fillId}`);
       const removed = f.qty === qty ? cost : decRoundDiv(cost * f.qty, qty), proceeds = f.price * f.qty;   // 비례 원가(10^-24 단위, 오차 < 1e-24)
-      grossMicro = decRoundDiv(sign === 1n ? proceeds - removed : removed - proceeds, PNL_E24_TO_MICRO);
+      grossMicro = decRoundDiv(sign === BigInt(1) ? proceeds - removed : removed - proceeds, PNL_E24_TO_MICRO);
       qty = decSub(qty, f.qty); cost = decSub(cost, removed);
     }
     events.push({ fillId: f.fillId, at: f.at, day: kstDayOf(f.at), kind: f.kind, grossMicro, feeMicro: f.fee.micro, feeState: f.fee.state, fundingMicro: f.funding.micro, fundingState: f.funding.state, qtyAfter: qty });
   }
-  const t = { grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, feeMissingCount: 0, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n, fundingMissingCount: 0 };
+  const t = { grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), feeMissingCount: 0, fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0), fundingMissingCount: 0 };
   for (const e of events) {
     t.grossMicro += e.grossMicro;
     if (e.feeState === 'entered') t.feeEnteredMicro += e.feeMicro; else if (e.feeState === 'estimated') t.feeEstimatedMicro += e.feeMicro; else t.feeMissingCount++;
@@ -212,10 +217,10 @@ function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
   if (t.feeMissingCount) flags.add('fee-missing'); if (t.fundingMissingCount) flags.add('funding-missing');
   if (t.feeEstimatedMicro || events.some(e => e.feeState === 'estimated')) flags.add('fee-estimated');
   if (events.some(e => e.fundingState === 'estimated')) flags.add('funding-estimated');
-  const status = qty === 0n ? 'closed' : 'open';
-  const margin = marginAll && marginMicro > 0n ? marginMicro : null;
-  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > 0n ? decFormat(decRoundDiv(cost, qty), 10) : null, costE24: cost, marginMicro: margin,
-    roePpm: margin && status === 'closed' ? decRoundDiv(t.netEnteredMicro * 1000000n, margin) : null, totals: t, events, flags: [...flags] };
+  const status = qty === BigInt(0) ? 'closed' : 'open';
+  const margin = marginAll && marginMicro > BigInt(0) ? marginMicro : null;
+  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > BigInt(0) ? decFormat(decRoundDiv(cost, qty), 10) : null, costE24: cost, marginMicro: margin,
+    roePpm: margin && status === 'closed' ? decRoundDiv(t.netEnteredMicro * BigInt(1000000), margin) : null, totals: t, events, flags: [...flags] };
 }
 // 여러 sid의 체결 → 포지션 맵
 function pnlComputeAll(fills, opts) {
@@ -226,7 +231,7 @@ function pnlComputeAll(fills, opts) {
 function pnlDailyFlows(trades) {
   const days = new Map();
   for (const t of trades.values()) for (const e of t.events) {
-    const d = days.get(e.day) ?? { grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n, netEnteredMicro: 0n };
+    const d = nullishOr(days.get(e.day), { grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0), netEnteredMicro: BigInt(0) });
     d.grossMicro += e.grossMicro;
     if (e.feeState === 'entered') d.feeEnteredMicro += e.feeMicro; else if (e.feeState === 'estimated') d.feeEstimatedMicro += e.feeMicro;
     if (e.fundingState === 'entered') d.fundingEnteredMicro += e.fundingMicro; else if (e.fundingState === 'estimated') d.fundingEstimatedMicro += e.fundingMicro;
@@ -248,12 +253,12 @@ function riskTrade({ dir, entry, stop, qty, margin, leverage, equityMicro, mmr =
   if (decSign(dist) <= 0) flags.push('stop-on-wrong-side');
   const notional = decMul(e, q), lossMicro = decToMicro(decMul(decAbs(decSub(e, s)), q));
   const impliedLev = m && decSign(m) > 0 ? decDiv(notional, m) : null;
-  if (impliedLev !== null && decAbs(decSub(impliedLev, lev)) * 20n > lev) flags.push('leverage-mismatch');           // 증거금·수량으로 계산한 레버리지가 입력과 5% 넘게 다름
+  if (impliedLev !== null && decAbs(decSub(impliedLev, lev)) * BigInt(20) > lev) flags.push('leverage-mismatch');           // 증거금·수량으로 계산한 레버리지가 입력과 5% 넘게 다름
   const liq = dir === 'LONG' ? decMul(e, decAdd(decSub(one, decDiv(one, lev)), r)) : decMul(e, decSub(decAdd(one, decDiv(one, lev)), r));   // 격리 마진 근사
   const liqBeforeStop = dir === 'LONG' ? liq >= s : liq <= s;
   if (liqBeforeStop && decSign(dist) > 0) flags.push('liquidation-before-stop');
   let riskPpm = null;
-  if (equityMicro !== undefined && equityMicro !== null && equityMicro > 0n) { riskPpm = decRoundDiv(lossMicro * 1000000n, equityMicro); if (riskPpm > 20000n) flags.push('risk-over-2pct'); }
+  if (equityMicro !== undefined && equityMicro !== null && equityMicro > BigInt(0)) { riskPpm = decRoundDiv(lossMicro * BigInt(1000000), equityMicro); if (riskPpm > BigInt(20000)) flags.push('risk-over-2pct'); }
   return { notionalMicro: decToMicro(notional), impliedLeverage: impliedLev === null ? null : decFormat(impliedLev, 4), stopLossMicro: lossMicro, riskPpmOfEquity: riskPpm,
     liquidationApprox: decFormat(liq, 8), liquidationIsApproximate: true, liquidationBeforeStop: liqBeforeStop && decSign(dist) > 0, flags };
 }
@@ -504,13 +509,13 @@ function splanStatusLines(plan, st) {
 //  · 장부 잔고 = 시작 평가액 + 실현 순손익(입력된 수수료·펀딩만) + 입출금 + 명시 조정. 입력 평가액과의 차이는 항상 표시하고 자동으로 손익에 흡수하지 않는다.
 //  · 시작 시 미결제 포지션은 시작 시점 마크가격을 새 기준가로 삼아(opening) 시작 이후 변동분만 반영한다.
 
-const LEDGER_REVIEW_ABS_MICRO = 1000000n;        // 1 USDT
-const LEDGER_REVIEW_PPM = 5000n;                  // 0.5%
+const LEDGER_REVIEW_ABS_MICRO = BigInt(1000000);        // 1 USDT
+const LEDGER_REVIEW_PPM = BigInt(5000);                  // 0.5%
 
 const ledgerMicro = v => decToMicro(dec(v));
 function ledgerUnique(list, keyField, label) {
   let out = [];
-  for (const r of list ?? []) { const x = dedupeAppend(out, r, keyField); if (x.status === 'conflict') throw new Error(`${label} 충돌(같은 ${keyField}, 다른 내용): ${r[keyField]}`); out = x.list; }
+  for (const r of (list != null ? list : [])) { const x = dedupeAppend(out, r, keyField); if (x.status === 'conflict') throw new Error(`${label} 충돌(같은 ${keyField}, 다른 내용): ${r[keyField]}`); out = x.list; }
   return out;                                              // 같은 id·같은 내용의 재전송은 한 번만 반영
 }
 
@@ -533,24 +538,24 @@ function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equityInputs 
   const rows = []; let prevClose = startMicro, ledgerWallet = startMicro;
   // 한 번만 훑는 색인: 일별 입출금·조정 합계, 체결 시간순 이벤트(미결제 상태 갱신), 일별 미입력 수수료·펀딩 표시
   const cashByDay = new Map(), adjByDay = new Map(), missingByDay = new Map(), evs = [];
-  for (const c of uCash) { const k = kstDayOf(c.at); cashByDay.set(k, (cashByDay.get(k) ?? 0n) + ledgerMicro(c.amount)); }
-  for (const a of uAdj) { const k = kstDayOf(a.at); adjByDay.set(k, (adjByDay.get(k) ?? 0n) + ledgerMicro(a.amount)); }
+  for (const c of uCash) { const k = kstDayOf(c.at); cashByDay.set(k, (nullishOr(cashByDay.get(k), BigInt(0))) + ledgerMicro(c.amount)); }
+  for (const a of uAdj) { const k = kstDayOf(a.at); adjByDay.set(k, (nullishOr(adjByDay.get(k), BigInt(0))) + ledgerMicro(a.amount)); }
   for (const t of trades.values()) for (const e of t.events) {
     evs.push({ at: e.at, sid: t.sid, dir: t.dir, qtyAfter: e.qtyAfter });
-    if (e.feeState === 'missing' || e.fundingState === 'missing') { const m = missingByDay.get(e.day) ?? new Set(); if (e.feeState === 'missing') m.add('fee-missing'); if (e.fundingState === 'missing') m.add('funding-missing'); missingByDay.set(e.day, m); }
+    if (e.feeState === 'missing' || e.fundingState === 'missing') { const m = nullishOr(missingByDay.get(e.day), new Set()); if (e.feeState === 'missing') m.add('fee-missing'); if (e.fundingState === 'missing') m.add('funding-missing'); missingByDay.set(e.day, m); }
   }
   evs.sort((a, b) => a.at - b.at); let evPtr = 0; const openQty = new Map();
   for (let i = 0; i < days.length; i++) {
     const day = days[i], endMs = dayEndMs(day), rate = compoundRateOn(day, schedule);
-    const fl = flows.get(day) ?? { netEnteredMicro: 0n, grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n };
-    const cash = cashByDay.get(day) ?? 0n, adj = adjByDay.get(day) ?? 0n;
+    const fl = nullishOr(flows.get(day), { netEnteredMicro: BigInt(0), grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0) });
+    const cash = nullishOr(cashByDay.get(day), BigInt(0)), adj = nullishOr(adjByDay.get(day), BigInt(0));
     ledgerWallet += fl.netEnteredMicro + cash + adj;
     const target = compoundNextTarget(prevClose, rate);
-    const eq = eqByDay.get(day) ?? null, equityIn = eq ? ledgerMicro(eq.equity) : null;
+    const eq = nullishOr(eqByDay.get(day), null), equityIn = eq ? ledgerMicro(eq.equity) : null;
     // 그날 끝 미결제 포지션과 opening 기준 미실현 보정
-    while (evPtr < evs.length && evs[evPtr].at < endMs) { const e = evs[evPtr++]; if (e.qtyAfter > 0n) openQty.set(e.sid, { dir: e.dir, qty: e.qtyAfter }); else openQty.delete(e.sid); }
+    while (evPtr < evs.length && evs[evPtr].at < endMs) { const e = evs[evPtr++]; if (e.qtyAfter > BigInt(0)) openQty.set(e.sid, { dir: e.dir, qty: e.qtyAfter }); else openQty.delete(e.sid); }
     const openNow = [...openQty.entries()].map(([sid, v]) => ({ sid, dir: v.dir, openQtyDec: v.qty }));
-    let openingU = 0n, openingUnknown = false;
+    let openingU = BigInt(0), openingUnknown = false;
     for (const t of openNow) {
       const o = openingSids.get(t.sid); if (!o) continue;
       if (o.origEntry === undefined || o.origEntry === null) { openingUnknown = true; continue; }
@@ -562,11 +567,11 @@ function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equityInputs 
     let diffMicro = null, uncertain = false, needsReview = false, expected = null;
     if (equityIn !== null) {
       if (unrl === null && openNow.length) { uncertain = true; rowFlags.push('unrealized-missing'); expected = ledgerWallet; }
-      else if (openingUnknown) { uncertain = true; rowFlags.push('opening-basis-unknown'); expected = ledgerWallet + (unrl ?? 0n); }
-      else expected = ledgerWallet + (unrl ?? 0n) - openingU;
+      else if (openingUnknown) { uncertain = true; rowFlags.push('opening-basis-unknown'); expected = ledgerWallet + ((unrl != null ? unrl : BigInt(0))); }
+      else expected = ledgerWallet + ((unrl != null ? unrl : BigInt(0))) - openingU;
       diffMicro = equityIn - expected;
-      const rel = decRoundDiv((equityIn < 0n ? -equityIn : equityIn) * LEDGER_REVIEW_PPM, 1000000n), tol = rel > LEDGER_REVIEW_ABS_MICRO ? rel : LEDGER_REVIEW_ABS_MICRO;
-      needsReview = (diffMicro < 0n ? -diffMicro : diffMicro) > tol;
+      const rel = decRoundDiv((equityIn < BigInt(0) ? -equityIn : equityIn) * LEDGER_REVIEW_PPM, BigInt(1000000)), tol = rel > LEDGER_REVIEW_ABS_MICRO ? rel : LEDGER_REVIEW_ABS_MICRO;
+      needsReview = (diffMicro < BigInt(0) ? -diffMicro : diffMicro) > tol;
       if (needsReview) rowFlags.push('ledger-mismatch');
       if (eq.late) rowFlags.push('late-entry');
     }
@@ -575,11 +580,11 @@ function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equityInputs 
     const closeSource = equityIn !== null ? 'input' : 'ledger';
     if (closeSource === 'ledger') rowFlags.push('close-from-ledger');
     if (fl.feeEstimatedMicro || fl.fundingEstimatedMicro) rowFlags.push('has-estimates');
-    for (const f of missingByDay.get(day) ?? []) if (!rowFlags.includes(f)) rowFlags.push(f);
+    for (const f of nullishOr(missingByDay.get(day), [])) if (!rowFlags.includes(f)) rowFlags.push(f);
     const pnl = close - prevClose - cash;
     rows.push({ day, n: i + 1, rate, startMicro: prevClose, targetCloseMicro: target.targetCloseMicro, targetProfitMicro: target.targetProfitMicro,
       idealMicro: ideal[i + 1].idealMicro, closeMicro: close, closeSource, cashflowMicro: cash, adjustmentMicro: adj, pnlMicro: pnl,
-      achievementPpm: target.targetProfitMicro > 0n ? decRoundDiv(pnl * 1000000n, target.targetProfitMicro) : null,
+      achievementPpm: target.targetProfitMicro > BigInt(0) ? decRoundDiv(pnl * BigInt(1000000), target.targetProfitMicro) : null,
       ledgerWalletMicro: ledgerWallet, expectedEquityMicro: expected, diffMicro, needsReview, uncertain,
       realizedGrossMicro: fl.grossMicro, realizedNetMicro: fl.netEnteredMicro, feesEnteredMicro: fl.feeEnteredMicro, fundingEnteredMicro: fl.fundingEnteredMicro, openPositions: openNow.length, flags: rowFlags });
     prevClose = close;
@@ -590,19 +595,19 @@ function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equityInputs 
 // 요약: 누적 수익률(시작 자금 대비 단순), 최고 평가액, 최대 낙폭(입출금을 제거한 곡선 기준)
 function ledgerSummarize(rows, startMicro) {
   if (!rows.length) return null;
-  let cum = 0n, peak = startMicro, maxDd = 0n, maxDdPpm = 0n, highest = startMicro, met = 0, inputDays = 0, ledgerDays = 0, review = 0, curve = startMicro;
+  let cum = BigInt(0), peak = startMicro, maxDd = BigInt(0), maxDdPpm = BigInt(0), highest = startMicro, met = 0, inputDays = 0, ledgerDays = 0, review = 0, curve = startMicro;
   for (const r of rows) {
     cum += r.cashflowMicro; curve = r.closeMicro - cum;
     if (curve > peak) peak = curve;
-    const dd = peak - curve; if (dd > maxDd) { maxDd = dd; maxDdPpm = peak > 0n ? decRoundDiv(dd * 1000000n, peak) : 0n; }
+    const dd = peak - curve; if (dd > maxDd) { maxDd = dd; maxDdPpm = peak > BigInt(0) ? decRoundDiv(dd * BigInt(1000000), peak) : BigInt(0); }
     if (r.closeMicro > highest) highest = r.closeMicro;
-    if (r.targetProfitMicro > 0n && r.pnlMicro >= r.targetProfitMicro) met++;
+    if (r.targetProfitMicro > BigInt(0) && r.pnlMicro >= r.targetProfitMicro) met++;
     if (r.closeSource === 'input') inputDays++; else ledgerDays++;
     if (r.needsReview) review++;
   }
   const last = rows[rows.length - 1], pnlTotal = last.closeMicro - startMicro - cum, curDd = peak - curve;
-  return { startMicro, latestCloseMicro: last.closeMicro, netCashflowMicro: cum, pnlTotalMicro: pnlTotal, returnOnStartPpm: startMicro > 0n ? decRoundDiv(pnlTotal * 1000000n, startMicro) : null,
-    highestEquityMicro: highest, maxDrawdownMicro: maxDd, maxDrawdownPpm: maxDdPpm, currentDrawdownMicro: curDd, currentDrawdownPpm: peak > 0n ? decRoundDiv(curDd * 1000000n, peak) : 0n,
+  return { startMicro, latestCloseMicro: last.closeMicro, netCashflowMicro: cum, pnlTotalMicro: pnlTotal, returnOnStartPpm: startMicro > BigInt(0) ? decRoundDiv(pnlTotal * BigInt(1000000), startMicro) : null,
+    highestEquityMicro: highest, maxDrawdownMicro: maxDd, maxDrawdownPpm: maxDdPpm, currentDrawdownMicro: curDd, currentDrawdownPpm: peak > BigInt(0) ? decRoundDiv(curDd * BigInt(1000000), peak) : BigInt(0),
     daysTargetMet: met, days: rows.length, daysWithInput: inputDays, daysLedgerOnly: ledgerDays, daysNeedingReview: review, idealLatestMicro: last.idealMicro, gapToIdealMicro: last.closeMicro - last.idealMicro };
 }
 const ledgerMicroLabel = (m, dp = 2) => decFormat(microToDec(m), dp);
@@ -618,20 +623,20 @@ const ledgerMicroLabel = (m, dp = 2) => decFormat(microToDec(m), dp);
 
 const dashGroup = s => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 function dashUsd(micro, { sign = false, dp = 2 } = {}) {      // 마이크로 → "1,234.56" (sign=true면 +/− 부호)
-  const neg = micro < 0n, a = neg ? -micro : micro, s = decFormat(a * 1000000n, dp), [i, f] = s.split('.');
+  const neg = micro < BigInt(0), a = neg ? -micro : micro, s = decFormat(a * BigInt(1000000), dp), [i, f] = s.split('.');
   const body = f === undefined ? dashGroup(i) : `${dashGroup(i)}.${f}`, zero = /^[0.,]*$/.test(body);
   return `${neg && !zero ? '−' : sign && !zero ? '+' : ''}${body}`;
 }
 function dashPct(ppm, { sign = false, dp = 2 } = {}) {        // ppm(1e6=100%) → "12.34%"
   if (ppm === null || ppm === undefined) return '—';
-  const neg = ppm < 0n, a = neg ? -ppm : ppm, s = decFormat(a * 100000000n, dp), zero = /^[0.]*$/.test(s);   // ppm/1e4 = %, 십진 1e-12 단위로 변환
+  const neg = ppm < BigInt(0), a = neg ? -ppm : ppm, s = decFormat(a * BigInt(100000000), dp), zero = /^[0.]*$/.test(s);   // ppm/1e4 = %, 십진 1e-12 단위로 변환
   return `${neg && !zero ? '−' : sign && !zero ? '+' : ''}${s}%`;
 }
 const dashTrim = v => { const t = String(v); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };
 const dashRatePct = rate => `${dashTrim(decFormat(decMul(dec(rate), dec(100)), 2))}%`;
 
 const DASH_DAILY_LIMIT = 30;
-const dashZeroFloor = v => (v < 0n ? 0n : v);
+const dashZeroFloor = v => (v < BigInt(0) ? BigInt(0) : v);
 
 // inputs: storeLoadLedgerInputs 형태
 function dashBuildModel({ inputs, throughDay, now, sample = false }) {
@@ -640,24 +645,24 @@ function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   if (!led.rows.length) return { ...model, daily: [], warnings: [{ type: 'not-started', text: '챌린지 시작일 전입니다' }] };
   const rows = led.rows, t = rows[rows.length - 1];
   // ── 1~3. 현재 총자산·누적 손익·누적 수익률: 입력된 평가액 기준(외부 입출금은 손익에서 제외) ──
-  let cur = null, cum = 0n, curCash = 0n;
+  let cur = null, cum = BigInt(0), curCash = BigInt(0);
   for (const r of rows) { cum += r.cashflowMicro; if (r.closeSource === 'input') { cur = r; curCash = cum; } }
   const todayInput = t.closeSource === 'input';
   if (cur) {
-    const pnl = cur.closeMicro - startMicro - curCash, ppm = decRoundDiv(pnl * 1000000n, startMicro);
-    model.current = { label: dashUsd(cur.closeMicro), micro: String(cur.closeMicro), day: cur.day, today: todayInput, stale: !todayInput, pnlLabel: dashUsd(pnl, { sign: true }), pnlPositive: pnl > 0n, pnlNegative: pnl < 0n,
-      returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === 0n ? null : dashUsd(curCash, { sign: true }) };
+    const pnl = cur.closeMicro - startMicro - curCash, ppm = decRoundDiv(pnl * BigInt(1000000), startMicro);
+    model.current = { label: dashUsd(cur.closeMicro), micro: String(cur.closeMicro), day: cur.day, today: todayInput, stale: !todayInput, pnlLabel: dashUsd(pnl, { sign: true }), pnlPositive: pnl > BigInt(0), pnlNegative: pnl < BigInt(0),
+      returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === BigInt(0) ? null : dashUsd(curCash, { sign: true }) };
   } else model.current = null;
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
   const rem = cur ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
   const real = t.realizedNetMicro;
   model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
-    realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > 0n, realizedNegative: real < 0n, remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
+    realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
     needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
   model.daily = rows.slice(-DASH_DAILY_LIMIT).reverse().map(r => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
-    return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > 0n, pnlNegative: p < 0n, pnlBasis: input ? 'equity' : 'realized',
+    return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > BigInt(0), pnlNegative: p < BigInt(0), pnlBasis: input ? 'equity' : 'realized',
       targetLabel: dashUsd(r.targetCloseMicro), met: input && r.closeMicro >= r.targetCloseMicro, review: r.needsReview };
   });
   model.dailyTotal = rows.length;
@@ -704,7 +709,7 @@ function dashSampleInputs() {
   const inputs = { challenge: { startEquity: '300', startDay, rateSchedule }, fills, cashflows, adjustments: [], openingPositions: [], equityInputs: [] }, throughDay = addDays(startDay, days - 1);
   // 평가액 입력은 장부 잔고를 기준으로 만들되, 이틀은 일부러 비워 "장부 근사" 표시를 보여 준다.
   const led = ledgerBuildDaily({ ...inputs, throughDay });
-  inputs.equityInputs = led.rows.filter((r, i) => i !== 5 && i !== 14).map(r => ({ day: r.day, equity: decFormat(r.ledgerWalletMicro * 1000000n, 2) }));
+  inputs.equityInputs = led.rows.filter((r, i) => i !== 5 && i !== 14).map(r => ({ day: r.day, equity: decFormat(r.ledgerWalletMicro * BigInt(1000000), 2) }));
   return { inputs, signals, responses, reviews, throughDay };
 }
 function dashSampleModel(now) { const s = dashSampleInputs(); return dashBuildModel({ inputs: s.inputs, throughDay: s.throughDay, now, sample: true }); }
@@ -714,7 +719,7 @@ function dashSampleModel(now) { const s = dashSampleInputs(); return dashBuildMo
 //  · 외부 스크립트·폰트·이미지 없음(인라인 CSS만, 스크립트 없음). 모든 동적 값은 dashEsc 로 이스케이프한다(시트 값이 HTML이 될 수 없음).
 //  · 색은 토큰(:root)으로 정의하고 다크 모드는 prefers-color-scheme. 색만으로 의미를 전달하지 않는다(▲▼ 기호·텍스트 라벨 병행).
 //  · 일일 5%는 '목표치'이며 수익을 보장하지 않는다는 문구를 항상 표시하고, 실제 성과(입력 평가액)와 목표를 다른 줄·다른 라벨로 구분한다.
-const dashEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dashEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const DASH_ARROW = (pos, neg) => (pos ? '▲' : neg ? '▼' : '■');
 const dashTone = (pos, neg) => (pos ? 'pos' : neg ? 'neg' : 'zero');
 
@@ -796,7 +801,7 @@ ${dashFooter(m)}
 //  · 기본값으로 기록을 만들지 않는다: 복기는 계획 준수·심리를 *명시적으로* 모두 받아야 저장된다.
 
 const SCHEMA_VERSION = 1;
-class StoreError extends Error { constructor(code, message, detail) { super(message); this.code = code; this.detail = detail ?? null; } }
+class StoreError extends Error { constructor(code, message, detail) { super(message); this.code = code; this.detail = (detail != null ? detail : null); } }
 const PLAN_CHOICES = Object.freeze({ plan_ok: '계획대로 진입·청산', early_exit: '조기 청산', chase_or_average_down: '추격 진입·물타기', other_violation: '기타 위반' });
 const MIND_CHOICES = Object.freeze({ calm: '침착', anxious_rushed: '불안·조급', revenge: '손실 복구 욕심', greedy: '욕심' });
 const RESPONSE_CHOICES = Object.freeze({ entered: '진입했어', watched: '관망했어', missed: '놓쳤어' });
@@ -828,7 +833,7 @@ const ENTITIES = {
   setting: { sheet: 'Settings', keyOf: d => `setting:${d.name}`, headers: ['name', 'value'],
     normalize: d => { needEnum(d.name, SETTING_DEFAULTS, 'setting name'); const v = String(d.value); if (d.name === 'backupKeep') { if (!/^\d+$/.test(v) || +v < 1 || +v > 30) bad('backupKeep은 1~30'); } else if (v !== 'on' && v !== 'off') bad(`${d.name}은 on/off`); return { name: d.name, value: v }; }, display: d => [d.name, d.value] },
   signal: { sheet: 'Signals', immutable: true, keyOf: d => d.sid, headers: ['sid', 'strategy', 'dir', 'symbol', 'signalAtKst'],
-    normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), strategy: needEnum(d.strategy, ['A', 'B', 'S'], 'strategy'), symbolId: /^[A-Z0-9]{2,20}USDT$/.test(d.symbolId ?? '') ? d.symbolId : bad('symbolId 형식 오류'), dir: needEnum(d.dir, ['LONG', 'SHORT'], 'dir'),
+    normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), strategy: needEnum(d.strategy, ['A', 'B', 'S'], 'strategy'), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: needEnum(d.dir, ['LONG', 'SHORT'], 'dir'),
       signalAt: needMs(d.signalAt, 'signalAt'), entry: schemaDecString(d.entry, 'entry', { positive: true }), stop: schemaDecString(d.stop, 'stop', { positive: true }), tp1: schemaDecString(d.tp1, 'tp1', { positive: true }), tp2: optDec(d.tp2, 'tp2', { positive: true }), score: d.score === undefined ? undefined : (Number.isInteger(d.score) && d.score >= 0 && d.score <= 100 ? d.score : bad('score는 0~100 정수')), summary: d.summary === undefined ? undefined : needStr(d.summary, 'summary', 120) }),
     display: d => [d.sid, d.strategy, d.dir, d.symbolId, kst(d.signalAt)] },
   response: { sheet: 'Responses', keyOf: d => d.sid, headers: ['sid', 'choice', 'atKst'],
@@ -837,7 +842,7 @@ const ENTITIES = {
     normalize: d => {
       if (d.origin !== 'real') bad(`실제 체결만 저장(origin=real): ${d.origin}`);
       const price = schemaDecString(d.price, 'price', { positive: true }), qty = schemaDecString(d.qty, 'qty', { positive: true });
-      const amt = (a, n, nn) => { const st = a?.state ?? 'missing'; if (!['entered', 'estimated', 'missing'].includes(st)) bad(`${n} 상태 오류`); return st === 'missing' ? { state: 'missing' } : { state: st, amount: schemaDecString(a.amount, `${n} 금액`, nn ? { nonNegative: true } : {}) }; };
+      const amt = (a, n, nn) => { const st = ((a == null ? undefined : a.state) != null ? (a == null ? undefined : a.state) : 'missing'); if (!['entered', 'estimated', 'missing'].includes(st)) bad(`${n} 상태 오류`); return st === 'missing' ? { state: 'missing' } : { state: st, amount: schemaDecString(a.amount, `${n} 금액`, nn ? { nonNegative: true } : {}) }; };
       const out = strip({ origin: 'real', fillId: needStr(d.fillId, 'fillId', 80), sid: needStr(d.sid, 'sid', 80), kind: d.kind, dir: d.dir, at: needMs(d.at, 'at'), price, qty,
         margin: optDec(d.margin, 'margin', { positive: true }), leverage: optDec(d.leverage, 'leverage', { positive: true }), plannedStop: optDec(d.plannedStop, 'plannedStop', { positive: true }), qtySource: d.qtySource === undefined ? undefined : needEnum(d.qtySource, ['entered', 'derived'], 'qtySource'),
         fee: amt(d.fee, '수수료', true), funding: amt(d.funding, '펀딩', false), note: d.note === undefined ? undefined : needStr(d.note, 'note', 300) });
@@ -846,9 +851,9 @@ const ENTITIES = {
   cashflow: { sheet: 'Cashflows', keyOf: d => d.cfId, headers: ['atKst', 'amount'],
     normalize: d => strip({ cfId: needStr(d.cfId, 'cfId', 80), at: needMs(d.at, 'at'), amount: schemaDecString(d.amount, 'amount', { nonZero: true }), note: d.note === undefined ? undefined : needStr(d.note, 'note', 200) }), display: d => [kst(d.at), d.amount] },
   equity: { sheet: 'Equity', keyOf: d => d.day, headers: ['day', 'equity', 'unrealized', 'late'],
-    normalize: d => strip({ day: needDay(d.day, 'day'), equity: schemaDecString(d.equity, 'equity', { nonNegative: true }), unrealized: optDec(d.unrealized, 'unrealized'), late: d.late === true ? true : undefined, enteredAt: d.enteredAt === undefined ? undefined : needMs(d.enteredAt, 'enteredAt') }), display: d => [d.day, d.equity, d.unrealized ?? '', d.late ? 'late' : ''] },
+    normalize: d => strip({ day: needDay(d.day, 'day'), equity: schemaDecString(d.equity, 'equity', { nonNegative: true }), unrealized: optDec(d.unrealized, 'unrealized'), late: d.late === true ? true : undefined, enteredAt: d.enteredAt === undefined ? undefined : needMs(d.enteredAt, 'enteredAt') }), display: d => [d.day, d.equity, (d.unrealized != null ? d.unrealized : ''), d.late ? 'late' : ''] },
   opening: { sheet: 'OpeningPositions', keyOf: d => d.sid, headers: ['sid', 'dir', 'qty', 'startMark', 'origEntry'],
-    normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), dir: needEnum(d.dir, ['LONG', 'SHORT'], 'dir'), qty: schemaDecString(d.qty, 'qty', { positive: true }), startMark: schemaDecString(d.startMark, 'startMark', { positive: true }), origEntry: optDec(d.origEntry, 'origEntry', { positive: true }) }), display: d => [d.sid, d.dir, d.qty, d.startMark, d.origEntry ?? ''] },
+    normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), dir: needEnum(d.dir, ['LONG', 'SHORT'], 'dir'), qty: schemaDecString(d.qty, 'qty', { positive: true }), startMark: schemaDecString(d.startMark, 'startMark', { positive: true }), origEntry: optDec(d.origEntry, 'origEntry', { positive: true }) }), display: d => [d.sid, d.dir, d.qty, d.startMark, (d.origEntry != null ? d.origEntry : '')] },
   review: { sheet: 'Reviews', keyOf: d => d.sid, headers: ['sid', 'plan', 'mind', 'savedAtKst'],
     normalize: d => strip({ sid: needStr(d.sid, 'sid', 80), plan: needEnum(d.plan, PLAN_CHOICES, '계획 준수'), mind: needEnum(d.mind, MIND_CHOICES, '심리 상태'), memo: d.memo === undefined || d.memo === '' ? undefined : needStr(d.memo, 'memo', 500), savedAt: needMs(d.savedAt, 'savedAt') }), display: d => [d.sid, d.plan, d.mind, kst(d.savedAt)] },
   adjustment: { sheet: 'Adjustments', keyOf: d => d.adjId, headers: ['atKst', 'amount', 'reason'],
@@ -857,7 +862,7 @@ const ENTITIES = {
   dayclose: { sheet: 'DayCloses', immutable: true, keyOf: d => d.day, headers: ['day', 'closedAtKst', 'source', 'diff'],
     normalize: d => strip({ day: needDay(d.day, 'day'), closedAt: needMs(d.closedAt, 'closedAt'), source: needEnum(d.source, ['input', 'ledger'], 'source'), startMicro: needIntStr(d.startMicro, 'startMicro'), targetMicro: needIntStr(d.targetMicro, 'targetMicro'),
       closeMicro: needIntStr(d.closeMicro, 'closeMicro'), pnlMicro: needIntStr(d.pnlMicro, 'pnlMicro'), walletMicro: needIntStr(d.walletMicro, 'walletMicro'), diffMicro: d.diffMicro === undefined || d.diffMicro === null ? undefined : needIntStr(d.diffMicro, 'diffMicro'), needsReview: d.needsReview === true, flags: needFlags(d.flags, 'flags') }),
-    display: d => [d.day, kst(d.closedAt), d.source, d.diffMicro ?? ''] },
+    display: d => [d.day, kst(d.closedAt), d.source, (d.diffMicro != null ? d.diffMicro : '')] },
   closenotice: { sheet: 'CloseNotices', keyOf: d => d.day, headers: ['day', 'status', 'attempts'],
     normalize: d => { const n = d.attempts; if (!Number.isInteger(n) || n < 0 || n > 9) bad('attempts는 0~9 정수'); return strip({ day: needDay(d.day, 'day'), status: needEnum(d.status, ['pending', 'sent', 'failed', 'off', 'unknown'], 'status'), attempts: n, at: needMs(d.at, 'at'), error: d.error === undefined || d.error === null ? undefined : needStr(String(d.error), 'error', 40) }); },
     display: d => [d.day, d.status, String(d.attempts)] },
@@ -883,9 +888,9 @@ const META_HEADERS = ['key', 'value', 'recordedAt'];
 //  · 데이터 JSON은 정규 십진 문자열 + 키 정렬 JSON → 같은 내용은 같은 문자열(중복·변조 판정이 결정적).
 
 const STORE_ZERO_HASH = '0'.repeat(64), STORE_TAIL = 5;
-const storeEntity = n => ENTITIES[n] ?? (() => { throw new StoreError('VALIDATION', `알 수 없는 엔티티: ${n}`); })();
+const storeEntity = n => (ENTITIES[n] != null ? ENTITIES[n] : (() => { throw new StoreError('VALIDATION', `알 수 없는 엔티티: ${n}`); })());
 const storeCell = v => { if (v instanceof Date) throw new StoreError('INTEGRITY', 'Date로 변환된 셀 — 시트 열을 텍스트 서식으로 지정해야 함'); return v === null || v === undefined ? '' : String(v); };
-const storeParse = (s, where) => { try { return JSON.parse(s); } catch { throw new StoreError('INTEGRITY', `JSON 손상: ${where}`); } };
+const storeParse = (s, where) => { try { return JSON.parse(s); } catch (e_) { throw new StoreError('INTEGRITY', `JSON 손상: ${where}`); } };
 const storeInt = (v, where) => { const n = Number(storeCell(v)); if (!Number.isInteger(n)) throw new StoreError('INTEGRITY', `정수 아님: ${where}`); return n; };
 
 function storeInit(env) {
@@ -911,7 +916,7 @@ function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아
   for (const e of audit.slice(-STORE_TAIL)) if (e.entity === entityName && !have.has(`${e.key}|${e.rev}`)) put({ key: e.key, rev: e.rev, void: e.op === 'void', recordedAt: e.recordedAt, raw: e.after, data: storeParse(e.after, `audit#${e.seq}`), pending: true });
   return m;
 }
-const storeGet = (env, entityName, key) => storeLatestMap(env, entityName, storeReadAudit(env)).get(key) ?? null;
+const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAudit(env)).get(key), null);
 function storeList(env, entityName, { includeVoid = false } = {}) {
   const out = [...storeLatestMap(env, entityName, storeReadAudit(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return includeVoid ? out : out.filter(r => !r.void);
@@ -937,13 +942,13 @@ function storeRecoverTail(env) {                       // 이전 쓰기가 ②�
   return fixed;
 }
 function storeWithLock(env, fn) {
-  if (!env.lock.tryLock(env.lockTimeoutMs ?? 10000)) throw new StoreError('LOCK', '다른 작업이 저장 중입니다(잠시 후 재시도)');
+  if (!env.lock.tryLock((env.lockTimeoutMs != null ? env.lockTimeoutMs : 10000))) throw new StoreError('LOCK', '다른 작업이 저장 중입니다(잠시 후 재시도)');
   try { const recovered = storeRecoverTail(env); return fn(recovered); } finally { env.lock.release(); }
 }
 function storeCommit(env, { entity, key, rev, op, actor, reason, before, after }) {
   if (typeof actor !== 'string' || !actor) throw new StoreError('VALIDATION', 'actor 필요');
   const audit = storeReadAudit(env), last = audit[audit.length - 1];
-  const e = { seq: last ? last.seq + 1 : 1, recordedAt: env.now(), entity, key, rev, op, actor, reason: reason ?? '', before: before ? dedupeCanonical(before) : '', after: dedupeCanonical(after), prevHash: last ? last.hash : STORE_ZERO_HASH };
+  const e = { seq: last ? last.seq + 1 : 1, recordedAt: env.now(), entity, key, rev, op, actor, reason: (reason != null ? reason : ''), before: before ? dedupeCanonical(before) : '', after: dedupeCanonical(after), prevHash: last ? last.hash : STORE_ZERO_HASH };
   e.hash = storeHash(env, e);
   env.sheets.append(AUDIT_SHEET, [storeAuditRow(e)]);   // ① 선기록(여기서 실패하면 변경 없음)
   storeApplyView(env, e);                                // ② 엔티티 행(여기서 중단돼도 다음 쓰기/읽기가 복구)
@@ -992,7 +997,7 @@ const storeClaimUpdate = (env, kind, id, actor) => storeCreate(env, 'tgupdate', 
 function storeSaveReview(env, { sid, plan, mind, memo }, { actor }) {
   const savedAt = env.now(), cur = storeGet(env, 'review', sid), next = { sid, plan, mind, memo, savedAt };
   if (!cur || cur.void) return storeCreate(env, 'review', next, { actor });
-  if (cur.data.plan === plan && cur.data.mind === mind && (cur.data.memo ?? '') === (memo ?? '')) return { status: 'unchanged', key: sid, rev: cur.rev };
+  if (cur.data.plan === plan && cur.data.mind === mind && ((cur.data.memo != null ? cur.data.memo : '')) === ((memo != null ? memo : ''))) return { status: 'unchanged', key: sid, rev: cur.rev };
   return storeRevise(env, 'review', sid, { plan, mind, memo: memo ? memo : null, savedAt }, { actor, reason: '복기 수정' });
 }
 function storeSetupChallenge(env, { startEquity, startDay, rate }, { actor }) {
@@ -1013,7 +1018,7 @@ function storeIntegrityCheck(env) {
     if (e.seq !== i + 1) issues.push({ type: 'audit-seq-gap', seq: e.seq, expected: i + 1 });
     if (e.prevHash !== prevHash) issues.push({ type: 'audit-chain-broken', seq: e.seq });
     if (storeHash(env, e) !== e.hash) issues.push({ type: 'audit-hash-mismatch', seq: e.seq });
-    const kk = `${e.entity}|${e.key}`, exp = (lastRev.get(kk) ?? 0) + 1;
+    const kk = `${e.entity}|${e.key}`, exp = (nullishOr(lastRev.get(kk), 0)) + 1;
     if (e.rev !== exp) issues.push({ type: 'rev-gap', entity: e.entity, key: e.key, rev: e.rev, expected: exp }); lastRev.set(kk, e.rev);
     canon.set(`${e.entity}|${e.key}|${e.rev}`, e); prevHash = e.hash;
   });
@@ -1087,9 +1092,9 @@ function backupRun(env, { now = Date.now() } = {}) {
   if (env.drive.list(folder).some(x => x.name === name)) return { status: 'exists', name, warnings };    // 같은 분에 중복 실행: 한 번만
   let src = null, copy = null;
   try { storeWithLock(se, () => { src = { integrity: storeIntegrityCheck(se), fp: backupFingerprint(se) }; copy = env.drive.copy(env.sourceId, name, folder); }); }
-  catch (e) { if (e instanceof StoreError && e.code === 'LOCK') throw e; if (copy) { try { env.drive.trash(copy.id); } catch { /* 정리 실패는 무시 */ } } return { status: 'copy-failed', name, warnings }; }
+  catch (e) { if (e instanceof StoreError && e.code === 'LOCK') throw e; if (copy) { try { env.drive.trash(copy.id); } catch (e_) { /* 정리 실패는 무시 */ } } return { status: 'copy-failed', name, warnings }; }
   let ci, cf;
-  try { const cs = env.drive.openStore(copy.id); ci = storeIntegrityCheck(cs); cf = backupFingerprint(cs); } catch { ci = { ok: false, issues: [{ type: 'open-failed' }] }; cf = null; }
+  try { const cs = env.drive.openStore(copy.id); ci = storeIntegrityCheck(cs); cf = backupFingerprint(cs); } catch (e_) { ci = { ok: false, issues: [{ type: 'open-failed' }] }; cf = null; }
   const same = cf !== null && bkSame(cf, src.fp);
   if (src.integrity.ok && !(ci.ok && same)) { env.drive.trash(copy.id); return { status: 'verify-failed', name, reasons: [!ci.ok ? 'copy-integrity' : null, !same ? 'fingerprint-mismatch' : null].filter(Boolean), warnings }; }
   if (!src.integrity.ok) return { status: 'ok-unhealthy-source', name, id: copy.id, fingerprintMatches: same, rotated: false, issues: [...new Set(src.integrity.issues.map(i => i.type))], warnings };       // 증거로 남기고 회전하지 않음
@@ -1140,7 +1145,7 @@ function deployCheckEnv(se, expected) { const actual = deployReadEnv(se); return
 function deploySelfTest(info) {
   const items = [], add = (id, ok, level, text) => items.push({ id, ok, level: ok ? 'ok' : level, text });
   add('env', DEPLOY_ENVS.includes(info.env), 'fail', `환경 이름 RICH300_ENV 는 test 또는 prod 여야 합니다(현재: ${DEPLOY_ENVS.includes(info.env) ? info.env : '미설정'})`);
-  add('timezone', info.tz === 'Asia/Seoul', 'fail', `프로젝트 시간대는 Asia/Seoul 이어야 합니다(현재: ${info.tz ?? '알 수 없음'})`);
+  add('timezone', info.tz === 'Asia/Seoul', 'fail', `프로젝트 시간대는 Asia/Seoul 이어야 합니다(현재: ${(info.tz != null ? info.tz : '알 수 없음')})`);
   add('v8', info.v8 === true, 'fail', 'V8 런타임(BigInt 지원)이 필요합니다');
   add('sheet', info.has.sheetId, 'fail', '스프레드시트 ID(RICH300_SHEET_ID)가 설정되어야 합니다');
   add('owner', info.has.ownerEmail, 'fail', '소유자 이메일(RICH300_OWNER_EMAIL)이 없으면 화면 접근이 모두 차단됩니다');
@@ -1152,9 +1157,9 @@ function deploySelfTest(info) {
   }
   if (info.env === 'prod') add('prod-gate', true, 'warn', info.flags.prodApproved ? '운영 승인 플래그가 켜져 있어 Telegram 호출이 허용됩니다' : '운영 승인 전: Telegram 호출이 차단되어 있습니다(정상)');
   add('integrity', info.integrity ? info.integrity.ok : false, 'fail', info.integrity ? `저장소 무결성 문제: ${info.integrity.issues.join(', ')}` : '저장소를 열 수 없습니다');
-  add('env-marker', info.envMarker ? info.envMarker.ok : false, 'fail', info.envMarker ? `시트의 환경 표식(${info.envMarker.actual ?? '없음'})이 이 프로젝트(${info.env})와 다릅니다` : '시트 환경 표식을 확인할 수 없습니다');
+  add('env-marker', info.envMarker ? info.envMarker.ok : false, 'fail', info.envMarker ? `시트의 환경 표식(${(info.envMarker.actual != null ? info.envMarker.actual : '없음')})이 이 프로젝트(${info.env})와 다릅니다` : '시트 환경 표식을 확인할 수 없습니다');
   add('owner-visible', info.owner.activeEmailVisible === true, 'warn', '실행 중 사용자 이메일을 읽을 수 없습니다 — "접속한 사용자로 실행" 배포가 아니면 UI 소유자 확인이 항상 거부됩니다(S0 ④ 확인 필요)');
-  const need = info.expectTriggers ?? ['rich300CloseTick', 'rich300TgPoll', 'rich300BackupRun'], have = new Set(info.triggers);
+  const need = (info.expectTriggers != null ? info.expectTriggers : ['rich300CloseTick', 'rich300TgPoll', 'rich300BackupRun']), have = new Set(info.triggers);
   for (const t of need) add(`trigger-${t}`, have.has(t), 'warn', `트리거 ${t} 가 설치되어 있지 않습니다`);
   add('backup', info.backupCount > 0, info.env === 'prod' ? 'warn' : 'warn', '아직 백업이 없습니다');
   return { items, fail: items.filter(i => i.level === 'fail').length, warn: items.filter(i => i.level === 'warn').length };
@@ -1195,16 +1200,16 @@ function authCanonicalBody(body) {
 const authSignedString = (v, ts, nonce, body) => `${v}.${ts}.${nonce}.${authCanonicalBody(body)}`;
 function authBuildRequest(env, key, body, { nonce } = {}) {
   if (typeof key !== 'string' || key.length < AUTH_MIN_KEY_LEN) throw new Error('키가 너무 짧음');
-  const ts = env.now(), n = nonce ?? env.newNonce();
+  const ts = env.now(), n = (nonce != null ? nonce : env.newNonce());
   if (!AUTH_NONCE_RE.test(n)) throw new Error('nonce 형식 오류');
   return JSON.stringify({ v: AUTH_VERSION, ts, nonce: n, body, sig: env.hmacSha256(key, authSignedString(AUTH_VERSION, ts, n, body)) });
 }
-const fail = (env, reason) => { try { env.counter?.(`auth-fail:${reason}`); } catch { /* 카운터 실패는 무시 */ } return { ok: false, reason }; };
+const fail = (env, reason) => { try { (env.counter == null ? undefined : env.counter(`auth-fail:${reason}`)); } catch (e_) { /* 카운터 실패는 무시 */ } return { ok: false, reason }; };
 
 function authVerify(env, raw) {
   if (typeof raw !== 'string') return fail(env, 'bad-format');
   if (raw.length > AUTH_MAX_BYTES) return fail(env, 'too-large');
-  let msg; try { msg = JSON.parse(raw); } catch { return fail(env, 'bad-format'); }
+  let msg; try { msg = JSON.parse(raw); } catch (e_) { return fail(env, 'bad-format'); }
   if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return fail(env, 'bad-format');
   const keys = Object.keys(msg).sort().join(',');
   if (keys !== 'body,nonce,sig,ts,v') return fail(env, 'bad-format');                         // 알 수 없는 필드·누락 거부(모호성 제거)
@@ -1213,8 +1218,8 @@ function authVerify(env, raw) {
   if (typeof msg.nonce !== 'string' || !AUTH_NONCE_RE.test(msg.nonce)) return fail(env, 'bad-format');
   if (typeof msg.sig !== 'string' || !AUTH_SIG_RE.test(msg.sig)) return fail(env, 'bad-format');
   if (Math.abs(env.now() - msg.ts) > AUTH_WINDOW_MS) return fail(env, 'stale');
-  let signed; try { signed = authSignedString(msg.v, msg.ts, msg.nonce, msg.body); } catch { return fail(env, 'bad-body'); }
-  let candidates; try { candidates = env.getKeys().filter(k => typeof k === 'string' && k.length > 0); } catch { return fail(env, 'misconfigured'); }
+  let signed; try { signed = authSignedString(msg.v, msg.ts, msg.nonce, msg.body); } catch (e_) { return fail(env, 'bad-body'); }
+  let candidates; try { candidates = env.getKeys().filter(k => typeof k === 'string' && k.length > 0); } catch (e_) { return fail(env, 'misconfigured'); }
   if (!candidates.length || candidates.some(k => k.length < AUTH_MIN_KEY_LEN)) return fail(env, 'misconfigured');   // 키가 없거나 약하면 *닫힌 채로* 실패
   let matched = -1;
   candidates.forEach((k, i) => { const ok = authTimingSafeEqual(env.hmacSha256(k, signed), msg.sig); if (ok && matched < 0) matched = i; });   // 모든 후보를 끝까지 계산
@@ -1233,7 +1238,7 @@ function authVerify(env, raw) {
 const INGEST_UNAUTHORIZED = Object.freeze({ ok: false, error: 'unauthorized' });
 function ingestHandle(env, raw) {
   let auth;
-  try { auth = authVerify(env, raw); } catch { return { ...INGEST_UNAUTHORIZED }; }
+  try { auth = authVerify(env, raw); } catch (e_) { return { ...INGEST_UNAUTHORIZED }; }
   if (!auth.ok) return { ...INGEST_UNAUTHORIZED };
   const body = auth.body;
   try {
@@ -1258,12 +1263,12 @@ function ingestHandle(env, raw) {
 //  · 이 줄은 radar가 보낸 메시지(버튼을 누른 메시지)에서만 읽는다. 값 검증은 저장소 스키마(signal)가 다시 한다.
 const R9_LINE_RE = /(?:^|\n)R9 v1 ([A-Za-z0-9_.-]{1,54}) ([A-Z0-9]{2,20}USDT) (LONG|SHORT) (\d+(?:\.\d+)?) (\d+(?:\.\d+)?) (\d+(?:\.\d+)?) (\d+(?:\.\d+)?|-) ([ABS]) (\d{1,3}|-) (\d{10,14})(?=\n|$)/;
 function r9ParseSignal(text) {
-  const m = R9_LINE_RE.exec(String(text ?? '')); if (!m) return null;
+  const m = R9_LINE_RE.exec(String((text != null ? text : ''))); if (!m) return null;
   const signalAt = Number(m[10]); if (!Number.isSafeInteger(signalAt)) return null;
   return { sid: m[1], symbolId: m[2], dir: m[3], entry: m[4], stop: m[5], tp1: m[6], ...(m[7] === '-' ? {} : { tp2: m[7] }), strategy: m[8], ...(m[9] === '-' ? {} : { score: Number(m[9]) }), signalAt };
 }
 // 버튼을 누른 뒤 메시지를 다시 쓸 때 기계 줄은 빼고 사람이 읽는 부분만 남긴다.
-const r9StripLine = text => String(text ?? '').replace(R9_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trimEnd();
+const r9StripLine = text => String((text != null ? text : '')).replace(R9_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trimEnd();
 
 // ── tg.mjs ──
 // R4 Telegram 처리(수신 → 기록). 네트워크·시트·키 저장소는 전부 env 포트로 주입하므로 같은 코드를 Node 테스트(가짜 Telegram)와 Apps Script가 쓴다.
@@ -1297,12 +1302,12 @@ const TG_FAMILY = { opening: 'in', entry: 'in', add: 'in', reduce: 'out', close:
 const TG_RESP = { e: 'entered', w: 'watched', m: 'missed' };
 
 // ── kv(만료는 여기서 처리) ──
-const tgKvGet = (env, k) => { const raw = env.kv.get(k); if (raw === null || raw === undefined) return null; let o; try { o = JSON.parse(raw); } catch { return null; } if (o.exp && env.now() >= o.exp) { env.kv.del(k); return null; } return o.v; };
+const tgKvGet = (env, k) => { const raw = env.kv.get(k); if (raw === null || raw === undefined) return null; let o; try { o = JSON.parse(raw); } catch (e_) { return null; } if (o.exp && env.now() >= o.exp) { env.kv.del(k); return null; } return o.v; };
 const tgKvPut = (env, k, v, ttlSec) => env.kv.put(k, JSON.stringify({ v, exp: ttlSec ? env.now() + ttlSec * 1000 : 0 }));
 
 // ── Telegram 호출(재시도·오류 분류) ──
 function tgClassify(status, description) {
-  const d = String(description ?? '').toLowerCase();
+  const d = String((description != null ? description : '')).toLowerCase();
   if (status === 0) return 'network';
   if (status === 429) return 'rate-limit';
   if (status >= 500) return 'server';
@@ -1323,10 +1328,10 @@ function tgCall(env, method, payload) {
   let attempts = 0;
   for (;;) {
     attempts++;
-    let res; try { res = env.http.call(method, payload); } catch { res = { status: 0, body: null }; }
-    const status = Number(res?.status ?? 0), body = res?.body ?? null;
+    let res; try { res = env.http.call(method, payload); } catch (e_) { res = { status: 0, body: null }; }
+    const status = Number(((res == null ? undefined : res.status) != null ? (res == null ? undefined : res.status) : 0)), body = ((res == null ? undefined : res.body) != null ? (res == null ? undefined : res.body) : null);
     if (status === 200 && body && body.ok === true) return { ok: true, result: body.result, attempts };
-    const code = tgClassify(status, body?.description), retryAfterSec = Number(body?.parameters?.retry_after ?? 0);
+    const code = tgClassify(status, (body == null ? undefined : body.description)), retryAfterSec = Number(((body == null ? undefined : (body.parameters == null ? undefined : body.parameters.retry_after)) != null ? (body == null ? undefined : (body.parameters == null ? undefined : body.parameters.retry_after)) : 0));
     const retryable = code === 'network' || code === 'server' || code === 'rate-limit';
     let wait = code === 'rate-limit' ? Math.max(retryAfterSec, 1) * 1000 : attempts * 500;
     if (retryable && attempts < TG_MAX_ATTEMPTS && wait <= TG_MAX_WAIT_MS) { env.sleep(wait); continue; }
@@ -1336,8 +1341,8 @@ function tgCall(env, method, payload) {
 const tgPrefix = env => (typeof env.msgPrefix === 'string' ? env.msgPrefix : '');            // 테스트 환경은 모든 메시지 앞에 '[TEST] '
 const tgSend = (env, chatId, text, markup) => tgCall(env, 'sendMessage', { chat_id: chatId, text: tgPrefix(env) + text, disable_web_page_preview: true, ...(markup ? { reply_markup: markup } : {}) });
 const tgEdit = (env, cb, text, markup) => (cb.photo      // 사진 메시지는 본문이 아니라 설명(caption)을 고친다(1024자 한도)
-  ? tgCall(env, 'editMessageCaption', { chat_id: cb.chatId, message_id: cb.messageId, caption: [...(tgPrefix(env) + text)].slice(0, 1024).join(''), reply_markup: markup ?? { inline_keyboard: [] } })
-  : tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text: tgPrefix(env) + text, reply_markup: markup ?? { inline_keyboard: [] } }));
+  ? tgCall(env, 'editMessageCaption', { chat_id: cb.chatId, message_id: cb.messageId, caption: [...(tgPrefix(env) + text)].slice(0, 1024).join(''), reply_markup: (markup != null ? markup : { inline_keyboard: [] }) })
+  : tgCall(env, 'editMessageText', { chat_id: cb.chatId, message_id: cb.messageId, text: tgPrefix(env) + text, reply_markup: (markup != null ? markup : { inline_keyboard: [] }) }));
 const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callback_query_id: cbId, ...(text ? { text: String(text).slice(0, 190) } : {}) });
 const tgOkOrBenign = r => r.ok || r.benign;
 const tgSendMessage = tgSend;                  // 검증 하니스(테스트 환경 전용)가 임의 메시지를 보낼 때 사용
@@ -1353,12 +1358,12 @@ function tgParseUpdate(u) {
   const m = u.message, c = u.callback_query;
   if (m && m.from && Number.isSafeInteger(m.from.id) && m.chat && Number.isSafeInteger(m.chat.id)) return { kind: 'message', updateId: u.update_id, fromId: m.from.id, chatId: m.chat.id, chatType: m.chat.type, isBot: m.from.is_bot === true, dateMs: Number.isFinite(m.date) ? m.date * 1000 : null, text: typeof m.text === 'string' ? m.text.slice(0, 500) : '' };
   if (c && typeof c.id === 'string' && c.from && Number.isSafeInteger(c.from.id)) {
-    const cm = c.message; return { kind: 'callback', updateId: u.update_id, fromId: c.from.id, chatId: cm?.chat && Number.isSafeInteger(cm.chat.id) ? cm.chat.id : null, chatType: cm?.chat?.type, isBot: c.from.is_bot === true, cbId: c.id, data: typeof c.data === 'string' ? c.data.slice(0, 64) : '', messageId: Number.isSafeInteger(cm?.message_id) ? cm.message_id : null, msgText: typeof (cm?.text ?? cm?.caption) === 'string' ? (cm.text ?? cm.caption).slice(0, 4096) : '', isPhoto: Array.isArray(cm?.photo) };
+    const cm = c.message; return { kind: 'callback', updateId: u.update_id, fromId: c.from.id, chatId: (cm == null ? undefined : cm.chat) && Number.isSafeInteger(cm.chat.id) ? cm.chat.id : null, chatType: (cm == null ? undefined : (cm.chat == null ? undefined : cm.chat.type)), isBot: c.from.is_bot === true, cbId: c.id, data: typeof c.data === 'string' ? c.data.slice(0, 64) : '', messageId: Number.isSafeInteger((cm == null ? undefined : cm.message_id)) ? cm.message_id : null, msgText: typeof (((cm == null ? undefined : cm.text) != null ? (cm == null ? undefined : cm.text) : (cm == null ? undefined : cm.caption))) === 'string' ? ((cm.text != null ? cm.text : cm.caption)).slice(0, 4096) : '', isPhoto: Array.isArray((cm == null ? undefined : cm.photo)) };
   }
   return null;
 }
 function tgParseCommand(text) {
-  const t = String(text ?? '').trim(); if (!t.startsWith('/')) return null;
+  const t = String((text != null ? text : '')).trim(); if (!t.startsWith('/')) return null;
   const parts = t.split(/\s+/), cmd = parts[0].slice(1).split('@')[0].toLowerCase(), pos = [], opt = {};
   for (const p of parts.slice(1)) { const i = p.indexOf('='); if (i > 0) opt[p.slice(0, i).toLowerCase()] = p.slice(i + 1); else pos.push(p); }
   return { cmd, pos, opt };
@@ -1366,7 +1371,7 @@ function tgParseCommand(text) {
 // 체결 시각 입력(KST). 'HH:mm'(오늘, 미래면 어제) · 'MM-DD HH:mm' · 'YYYY-MM-DD HH:mm' (구분은 공백·T·_ 모두 허용). 비우면 undefined(=지금).
 const TG_FUTURE_SLACK_MS = 5 * 60 * 1000;
 function tgParseAt(raw, now) {
-  const t = String(raw ?? '').trim().replace(/[T_]/g, ' ').replace(/\s+/g, ' ');
+  const t = String((raw != null ? raw : '')).trim().replace(/[T_]/g, ' ').replace(/\s+/g, ' ');
   if (!t) return undefined;
   let m, ms;
   const hm = (day, h, mi) => { if (+h > 23 || +mi > 59) throw tgUserErr('시각 형식이 맞지 않습니다(예: 14:30)'); return dayStartMs(day) + (+h * 60 + +mi) * 60000; };
@@ -1381,7 +1386,7 @@ function tgParseAt(raw, now) {
   return ms;
 }
 const tgAtMs = (env, p) => (p.atMs === undefined || p.atMs === null || p.atMs === '' ? undefined : (Number.isSafeInteger(+p.atMs) && +p.atMs > 0 ? +p.atMs : (() => { throw tgUserErr('시각 값이 올바르지 않습니다'); })()));
-function tgNote(raw) { const t = String(raw ?? '').replace(/\s+/g, ' ').trim(); if (!t) return undefined; if (t.length > 300) throw tgUserErr('메모는 300자까지입니다'); return t; }
+function tgNote(raw) { const t = String((raw != null ? raw : '')).replace(/\s+/g, ' ').trim(); if (!t) return undefined; if (t.length > 300) throw tgUserErr('메모는 300자까지입니다'); return t; }
 function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
   if (raw === undefined || raw === '') return { state: 'missing' };
   const est = raw.startsWith('~'), v = est ? raw.slice(1) : raw;
@@ -1397,9 +1402,9 @@ function tgPairCreate(env) {                    // UI(소유자 로그인)에서
 }
 const tgPairedUser = env => tgKvGet(env, 'paired');
 function tgPairAttempt(env, ev, code) {                // 실패는 무응답(봇 존재·코드 유무를 알려 주지 않음). 5회 실패 시 코드 폐기.
-  const rec = tgKvGet(env, 'pair'), fails = tgKvGet(env, 'pairfail') ?? { n: 0 };
+  const rec = tgKvGet(env, 'pair'), fails = nullishOr(tgKvGet(env, 'pairfail'), { n: 0 });
   if (!rec || fails.n >= TG_PAIR_MAX_FAILS || ev.chatType !== 'private' || ev.isBot) return { status: 'ignored', action: 'pair-rejected' };
-  const ok = authTimingSafeEqual(rec.hash, env.sha256(`rich300-pair|${String(code ?? '').toUpperCase()}`));
+  const ok = authTimingSafeEqual(rec.hash, env.sha256(`rich300-pair|${String((code != null ? code : '')).toUpperCase()}`));
   if (!ok) { fails.n++; tgKvPut(env, 'pairfail', fails, TG_PAIR_TTL_SEC); if (fails.n >= TG_PAIR_MAX_FAILS) env.kv.del('pair'); return { status: 'ignored', action: 'pair-rejected' }; }
   env.kv.del('pair'); env.kv.del('pairfail'); tgKvPut(env, 'paired', { userId: ev.fromId, chatId: ev.chatId, at: env.now() });
   const s = tgSend(env, ev.chatId, 'RICH300 연결 완료. 이 계정만 응답합니다. /help');
@@ -1437,7 +1442,7 @@ function tgSendReviewPrompt(env, chatId, sid) {
 // ── 체결 초안(진입·추가·청산·부분청산) ──
 const tgFillsOf = (se, sid) => storeList(se, 'fill').map(r => r.data).filter(f => f.sid === sid);
 function tgRiskEquityMicro(env) {                      // 경고용: 오늘 시작 평가액(장부 계산 실패 시 null)
-  try { const l = storeBuildLedger(env.storeEnv(), { throughDay: kstDayOf(env.now()) }); const r = l.rows[l.rows.length - 1]; return r ? r.startMicro : null; } catch { return null; }
+  try { const l = storeBuildLedger(env.storeEnv(), { throughDay: kstDayOf(env.now()) }); const r = l.rows[l.rows.length - 1]; return r ? r.startMicro : null; } catch (e_) { return null; }
 }
 // ── 분할 진입·익절 계획(계산·경고 전용, 주문 없음) ──
 // 저장: 첫 진입 체결 때 입력(평가액·1차 진입가·손절·배율·단계 수)을 'plan'(불변)에 한 번 남긴다. 계획은 이 입력에서 결정적으로 다시 만든다.
@@ -1454,7 +1459,7 @@ const tgPlanFills = fills => fills.map(f => ({ kind: f.kind, price: Number(f.pri
 const tgPlanCtx = (env, sg) => ({ barsSinceSignal: Math.max(0, Math.floor((env.now() - sg.signalAt) / 900000)) });
 function tgPlanPreview(env, sid, equityArg) {                // 진입 전: 신호 값과 평가액으로 보여 주기만 한다(저장 없음)
   const se = env.storeEnv(), sg = storeGet(se, 'signal', sid); if (!sg || sg.void) return null;
-  const eq = equityArg ?? tgEquityNow(env); if (eq === null) return { plan: null, equity: null };
+  const eq = (equityArg != null ? equityArg : tgEquityNow(env)); if (eq === null) return { plan: null, equity: null };
   return { plan: tgPlanBuild(se, sid, sg.data, { entry: sg.data.entry, stop: sg.data.stop, equity: eq }), equity: eq };
 }
 function tgPlanCheckAdd(env, p, fills, entry, qty) {          // 추가 진입 검사: 통과 못 하면 사유 목록
@@ -1467,7 +1472,7 @@ function tgPlanEntryWarnings(env, p, qty) {                   // 첫 진입 수�
     const pv = tgPlanPreview(env, p.sid); if (!pv || !pv.plan) return [];
     if (pv.plan.status !== 'ok') return [`계획상 거래 제외: ${splanReasonText(pv.plan.reason)}`];
     const q1 = pv.plan.stages[0].qty; return Number(qty) > q1 + pv.plan.spec.step / 2 ? [`1차 계획 수량 ${splanQty(q1, pv.plan.spec)} 보다 큽니다(1차는 전체의 ${Math.round(pv.plan.stages[0].weight * 100)}%, 나머지는 사전 가격에서만)`] : [];
-  } catch { return []; }
+  } catch (e_) { return []; }
 }
 function tgBuildEntry(env, p) {                 // p: { sid, margin, leverage, entry, stop, qty?, fee?, funding? } (문자열)
   const se = env.storeEnv(), sg = storeGet(se, 'signal', p.sid);
@@ -1481,7 +1486,7 @@ function tgBuildEntry(env, p) {                 // p: { sid, margin, leverage, e
   let qty, qtySource = 'entered';
   if (p.qty !== undefined && p.qty !== '') qty = schemaDecString(p.qty, '수량', { positive: true });
   else { qty = decFormat(decDiv(decMul(dec(margin), dec(leverage)), dec(entry)), 8); qty = schemaDecString(qty, '수량(계산)', { positive: true }); qtySource = 'derived'; }
-  const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop: stop ?? entry, qty, margin, leverage, equityMicro: stop === undefined ? null : tgRiskEquityMicro(env) });
+  const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop: (stop != null ? stop : entry), qty, margin, leverage, equityMicro: stop === undefined ? null : tgRiskEquityMicro(env) });
   const atMs = tgAtMs(env, p), note = tgNote(p.note);
   const fill = { origin: 'real', sid: p.sid, kind, dir, price: entry, qty, margin, leverage, ...(stop === undefined ? {} : { plannedStop: stop }), qtySource, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩'), ...(note ? { note } : {}) };
   const extra = [];
@@ -1497,24 +1502,24 @@ function tgBuildExit(env, p) {                  // p: { sid, price, qty?('all'),
   if (!trade) throw tgUserErr('이 신호의 진입 기록이 없습니다');
   if (trade.status !== 'open') throw tgUserErr('이미 전량 청산된 포지션입니다');
   const price = schemaDecString(p.price, '청산가', { positive: true });
-  const rq = String(p.qty ?? '').trim(), pm = /^(\d+(?:\.\d+)?)%$/.exec(rq);
+  const rq = String((p.qty != null ? p.qty : '')).trim(), pm = /^(\d+(?:\.\d+)?)%$/.exec(rq);
   if (pm && !(+pm[1] > 0 && +pm[1] <= 100)) throw tgUserErr('청산 비율은 0 초과 100 이하(%)');
   const all = rq === '' || rq.toLowerCase() === 'all' || (pm && +pm[1] === 100);
   const trim12 = v => decFormat(v, 12).replace(/0+$/, '').replace(/\.$/, '');
   const qty = all ? trim12(trade.openQtyDec) : pm ? trim12(decDiv(decMul(trade.openQtyDec, dec(pm[1])), dec(100))) : schemaDecString(rq, '수량', { positive: true });
-  if (!all && pm && !(dec(qty) > 0n)) throw tgUserErr('계산된 청산 수량이 0입니다');
+  if (!all && pm && !(dec(qty) > BigInt(0))) throw tgUserErr('계산된 청산 수량이 0입니다');
   const qd = dec(qty); if (qd > trade.openQtyDec) throw tgUserErr(`보유 수량(${tgNum(decFormat(trade.openQtyDec, 8))})보다 큽니다`);
   const kind = qd === trade.openQtyDec ? 'close' : 'reduce';
   const atMs = tgAtMs(env, p), note = tgNote(p.note), lastAt = fills.reduce((m, f) => Math.max(m, f.at), 0);
   if (atMs !== undefined && atMs <= lastAt) throw tgUserErr('청산 시각은 이전 체결보다 뒤여야 합니다');
   const fill = { origin: 'real', sid: p.sid, kind, dir: trade.dir, price, qty, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩'), ...(note ? { note } : {}) };
-  const probe = tgTradeOrUserError([...fills, { ...fill, fillId: 'preview', at: atMs ?? tgNextAt(env, fills) }]), ev = probe.events[probe.events.length - 1];
+  const probe = tgTradeOrUserError([...fills, { ...fill, fillId: 'preview', at: (atMs != null ? atMs : tgNextAt(env, fills)) }]), ev = probe.events[probe.events.length - 1];
   return { type: 'exit', fill, summary: tgExitSummary(fill, ev, probe, atMs), params: { ...p }, force: p.force === true };
 }
-const tgM = m => decFormat(m * 1000000n, 2);
+const tgM = m => decFormat(m * BigInt(1000000), 2);
 const tgKstLabel = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
 function tgEntrySummary(f, r, atMs) {
-  const lines = [`${f.kind === 'add' ? '추가진입' : '진입'} ${f.dir} · ${f.sid}${atMs ? ` · ${tgKstLabel(atMs)} KST` : ''}`, `진입 ${f.price} · 수량 ${f.qty}${f.qtySource === 'derived' ? '(계산)' : ''} · 손절 ${f.plannedStop ?? '미입력'}`, r.noStop ? `증거금 ${f.margin} · ${f.leverage}x · 손절가 없음(위험 계산 생략)` : `증거금 ${f.margin} · ${f.leverage}x · 손절 시 손실 ${tgM(r.stopLossMicro)} USDT${r.riskPpmOfEquity !== null ? ` (${decFormat(BigInt(r.riskPpmOfEquity) * 100000000n, 2)}%)` : ''}`];
+  const lines = [`${f.kind === 'add' ? '추가진입' : '진입'} ${f.dir} · ${f.sid}${atMs ? ` · ${tgKstLabel(atMs)} KST` : ''}`, `진입 ${f.price} · 수량 ${f.qty}${f.qtySource === 'derived' ? '(계산)' : ''} · 손절 ${(f.plannedStop != null ? f.plannedStop : '미입력')}`, r.noStop ? `증거금 ${f.margin} · ${f.leverage}x · 손절가 없음(위험 계산 생략)` : `증거금 ${f.margin} · ${f.leverage}x · 손절 시 손실 ${tgM(r.stopLossMicro)} USDT${r.riskPpmOfEquity !== null ? ` (${decFormat(BigInt(r.riskPpmOfEquity) * BigInt(100000000), 2)}%)` : ''}`];
   const fl = r.noStop ? r.flags.filter(x => x === 'leverage-mismatch') : r.flags, w = [fl.includes('stop-on-wrong-side') && '손절가가 방향과 반대쪽', fl.includes('liquidation-before-stop') && '청산가(근사)가 손절보다 먼저', fl.includes('risk-over-2pct') && '손실 2% 초과', fl.includes('leverage-mismatch') && '레버리지 불일치'].filter(Boolean);
   if (w.length) lines.push(`⚠ ${w.join(' · ')}`);
   lines.push(`수수료 ${f.fee.state === 'missing' ? '미입력' : f.fee.amount} · 펀딩 ${f.funding.state === 'missing' ? '미입력' : f.funding.amount}`);
@@ -1539,9 +1544,9 @@ function tgStorePlan(env, f, actor) {                       // 계획은 참고�
   try {
     const se = env.storeEnv(), sg = storeGet(se, 'signal', f.sid); if (!sg || sg.void || storeGet(se, 'plan', f.sid)) return;
     const eq = tgEquityNow(env); if (eq === null) return;
-    const inp = { entry: f.price, stop: f.plannedStop ?? sg.data.stop, equity: eq }, plan = tgPlanBuild(se, f.sid, sg.data, inp); if (plan.status !== 'ok') return;
+    const inp = { entry: f.price, stop: (f.plannedStop != null ? f.plannedStop : sg.data.stop), equity: eq }, plan = tgPlanBuild(se, f.sid, sg.data, inp); if (plan.status !== 'ok') return;
     storeCreate(se, 'plan', { sid: f.sid, ...inp, lev: plan.lev, stages: plan.stagesCount, at: f.at }, { actor });
-  } catch { /* 계획 저장 실패는 무시 */ }
+  } catch (e_) { /* 계획 저장 실패는 무시 */ }
 }
 function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후에만 호출. fillId는 초안/폼 id로 고정 → 중복 확인·재처리에도 1건.
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
@@ -1549,7 +1554,7 @@ function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후�
   if (draft.params) tgRebuild(env, draft);
   const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
   if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
-  const f = { ...draft.fill, at: customAt ?? tgNextAt(env, same), fillId: draft.fillId };
+  const f = { ...draft.fill, at: (customAt != null ? customAt : tgNextAt(env, same)), fillId: draft.fillId };
   if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
     throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
   if (draft.type === 'fill') {
@@ -1566,12 +1571,12 @@ function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후�
 function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
   try {
     if (!form || typeof form !== 'object') throw tgUserErr('입력 형식 오류');
-    const sid = String(form.sid ?? ''), isExit = form.kind === 'exit', formId = String(form.formId ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || env.randomId(8), fillId = `${sid}:${formId}`;
+    const sid = String((form.sid != null ? form.sid : '')), isExit = form.kind === 'exit', formId = String((form.formId != null ? form.formId : '')).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || env.randomId(8), fillId = `${sid}:${formId}`;
     const dupe = storeGet(env.storeEnv(), 'fill', fillId);          // 같은 폼 재제출(네트워크 재시도·더블탭)은 상태가 바뀌었어도 duplicate로 수렴
     if (dupe && !dupe.void) return { ok: true, status: 'duplicate', kind: dupe.data.kind };
     const atMs = tgParseAt(form.at, env.now()), common = { fee: form.fee ? String(form.fee) : undefined, funding: form.funding ? String(form.funding) : undefined, force: form.force === true, ...(atMs === undefined ? {} : { atMs }), ...(form.note ? { note: String(form.note) } : {}) };
-    const built = isExit ? tgBuildExit(env, { sid, price: String(form.price ?? ''), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
-      : tgBuildEntry(env, { sid, margin: String(form.margin ?? ''), leverage: String(form.leverage ?? ''), entry: String(form.entry ?? ''), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
+    const built = isExit ? tgBuildExit(env, { sid, price: String((form.price != null ? form.price : '')), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
+      : tgBuildEntry(env, { sid, margin: String((form.margin != null ? form.margin : '')), leverage: String((form.leverage != null ? form.leverage : '')), entry: String((form.entry != null ? form.entry : '')), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
     if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
@@ -1592,7 +1597,7 @@ function tgConfirmDraft(env, ev, built) {
   return { status: 'handled', action: built.type === 'fill' ? 'fill-draft' : built.type === 'equity' ? 'equity-draft' : 'exit-draft', replyFailed: !s.ok };
 }
 function tgDefaultEquityDay(env) {                      // 평가액이 없는 가장 최근 *마감된* 날, 없으면 오늘(KST)
-  try { const m = closeStatus(env, { now: env.now(), days: 14 }).find(d => d.closed && d.equity === null); if (m) return m.day; } catch { /* 챌린지 없음 등 */ }
+  try { const m = closeStatus(env, { now: env.now(), days: 14 }).find(d => d.closed && d.equity === null); if (m) return m.day; } catch (e_) { /* 챌린지 없음 등 */ }
   return kstDayOf(env.now());
 }
 function tgPlanText(env, sid, equityArg) {
@@ -1607,7 +1612,7 @@ function tgPlanText(env, sid, equityArg) {
   return [...splanLines(pv.plan, { assumed: equityArg !== undefined }), '', equityArg === undefined ? '※ 오늘 시작 평가액 기준 미리보기. 첫 진입을 기록하면 이 계획이 고정됩니다' : '※ 입력한 평가액 기준 미리보기(저장되지 않음)'].join('\n');
 }
 function tgPlanCard(env, sid) {                          // [진입했어] 직후 안내: 실패해도 기록·안내에는 영향 없음
-  try { return `\n\n${tgPlanText(env, sid)}`; } catch { return ''; }
+  try { return `\n\n${tgPlanText(env, sid)}`; } catch (e_) { return ''; }
 }
 function tgOnMessage(env, ev) {
   const c = tgParseCommand(ev.text); if (!c) return { status: 'ignored', action: 'not-command' };
@@ -1620,11 +1625,11 @@ function tgOnMessage(env, ev) {
     }
     if (c.cmd === 'exit') {
       if (c.pos.length < 2) return { status: 'handled', action: 'usage', ...reply('사용법: /exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]') };
-      const atMs = tgParseAt(c.opt.at, env.now()); return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: c.pos[2] ?? c.opt.qty, fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1', ...(atMs === undefined ? {} : { atMs }), ...(c.opt.memo ? { note: c.opt.memo.replace(/_/g, ' ') } : {}) }));
+      const atMs = tgParseAt(c.opt.at, env.now()); return tgConfirmDraft(env, ev, tgBuildExit(env, { sid: c.pos[0], price: c.pos[1], qty: (c.pos[2] != null ? c.pos[2] : c.opt.qty), fee: c.opt.fee, funding: c.opt.funding, force: c.opt.force === '1', ...(atMs === undefined ? {} : { atMs }), ...(c.opt.memo ? { note: c.opt.memo.replace(/_/g, ' ') } : {}) }));
     }
     if (c.cmd === 'equity') {
       if (c.pos.length < 1) return { status: 'handled', action: 'usage', ...reply('사용법: /equity 금액 [날짜] [unrealized=값]') };
-      const day = c.pos[1] ?? tgDefaultEquityDay(env); if (!isDayString(day)) return { status: 'handled', action: 'user-error', ...reply('⚠ 날짜 형식은 YYYY-MM-DD 입니다') };
+      const day = (c.pos[1] != null ? c.pos[1] : tgDefaultEquityDay(env)); if (!isDayString(day)) return { status: 'handled', action: 'user-error', ...reply('⚠ 날짜 형식은 YYYY-MM-DD 입니다') };
       closeCheckEquityDay(env, day, env.now());
       const amount = schemaDecString(c.pos[0], '평가액', { nonNegative: true }), un = c.opt.unrealized === undefined ? undefined : schemaDecString(c.opt.unrealized, '미실현 손익');
       return tgConfirmDraft(env, ev, { type: 'equity', equity: { day, equity: amount, ...(un === undefined ? {} : { unrealized: un }) }, summary: `평가액 입력 · ${day}\n실제 계좌 평가액 ${amount} USDT${un === undefined ? '' : ` (미실현 ${un})`}\n(장부와 다르면 차이만 표시하고 손익에는 자동 반영하지 않습니다)` });
@@ -1714,7 +1719,7 @@ function tgCommitEquity(env, ev, d, cb, answer) {        // 확인(저장) 이�
   try { r = closeSubmitEquity(env, { ...d.equity, reason: 'Telegram 입력' }, { actor: 'tg', now: env.now() }); }
   catch (e) { if (e instanceof StoreError && (e.code === 'VALIDATION' || e.code === 'NOT_FOUND')) { answer('저장하지 못했습니다'); tgEdit(env, cb, `⚠ ${String(e.message).slice(0, 160)}`); return { status: 'handled', action: 'equity-invalid' }; } throw e; }
   const warn = r.flags.map(f => CLOSE_WARNING_TEXT[f]).filter(Boolean).slice(0, 3), lines = [`${r.status === 'unchanged' ? '이미 같은 값' : '저장됨 ✓'} · ${r.day} 평가액 ${d.equity.equity} USDT${r.late ? ' (마감 후 입력)' : ''}`];
-  if (r.diffLabel !== null) lines.push(`장부 기준 ${r.expectedLabel} · 차이 ${r.diffMicro && BigInt(r.diffMicro) > 0n ? '+' : ''}${r.diffLabel}`);
+  if (r.diffLabel !== null) lines.push(`장부 기준 ${r.expectedLabel} · 차이 ${r.diffMicro && BigInt(r.diffMicro) > BigInt(0) ? '+' : ''}${r.diffLabel}`);
   if (warn.length) lines.push(`⚠ ${warn.join(' · ')}`);
   const a = answer(r.status === 'unchanged' ? '이미 저장됨' : '저장했습니다'), e = tgEdit(env, cb, lines.join('\n'));
   return { status: 'handled', action: `equity-${r.status}`, replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
@@ -1743,17 +1748,17 @@ function tgPoll(env, { limit = 50, leaseMs = 55000 } = {}) {
   tgKvPut(env, 'poll', { until: env.now() + leaseMs });
   const stats = { status: 'ok', handled: 0, ignored: 0, duplicate: 0, retry: 0, poison: 0, replyFailed: 0, actions: {} };
   try {
-    const off = Number(tgKvGet(env, 'offset') ?? 0), r = tgCall(env, 'getUpdates', { ...(off ? { offset: off } : {}), limit, timeout: 0, allowed_updates: ['message', 'callback_query'] });
+    const off = Number(nullishOr(tgKvGet(env, 'offset'), 0)), r = tgCall(env, 'getUpdates', { ...(off ? { offset: off } : {}), limit, timeout: 0, allowed_updates: ['message', 'callback_query'] });
     if (!r.ok) return { ...stats, status: 'error', code: r.code, retryable: r.retryable };
-    const list = (Array.isArray(r.result) ? r.result : []).filter(u => Number.isSafeInteger(u?.update_id)).sort((a, b) => a.update_id - b.update_id);
+    const list = (Array.isArray(r.result) ? r.result : []).filter(u => Number.isSafeInteger((u == null ? undefined : u.update_id))).sort((a, b) => a.update_id - b.update_id);
     for (const u of list) {
       const x = tgHandleUpdate(env, u);
-      if (u.message && Number.isFinite(u.message.date)) (stats.lags ||= []).push(Math.max(0, env.now() - u.message.date * 1000));      // 메시지 도착→처리 지연(ms, 관측용)
+      if (u.message && Number.isFinite(u.message.date)) ((stats.lags || (stats.lags = []))).push(Math.max(0, env.now() - u.message.date * 1000));      // 메시지 도착→처리 지연(ms, 관측용)
       if (x.status === 'retry') {
-        const key = `fail:${u.update_id}`, n = (tgKvGet(env, key) ?? 0) + 1;
+        const key = `fail:${u.update_id}`, n = (nullishOr(tgKvGet(env, key), 0)) + 1;
         if (n < TG_POISON_AFTER) { tgKvPut(env, key, n, 3600); stats.retry++; break; }          // 순서 보존: 이 update에서 멈추고 다음 틱에 재시도
         stats.poison++; env.kv.del(key);                                                        // 계속 실패하는 update는 건너뛴다
-      } else { stats[x.status === 'handled' ? 'handled' : x.status === 'duplicate' ? 'duplicate' : 'ignored']++; if (x.action) stats.actions[x.action] = (stats.actions[x.action] ?? 0) + 1; }
+      } else { stats[x.status === 'handled' ? 'handled' : x.status === 'duplicate' ? 'duplicate' : 'ignored']++; if (x.action) stats.actions[x.action] = ((stats.actions[x.action] != null ? stats.actions[x.action] : 0)) + 1; }
       if (x.replyFailed) stats.replyFailed++;
       tgKvPut(env, 'offset', u.update_id + 1);
     }
@@ -1797,7 +1802,7 @@ const CLOSE_WARNING_TEXT = Object.freeze({
   'possible-missing-cashflow': '거래·입출금이 없는 날인데 평가액이 장부와 다릅니다 — 입출금 누락 의심',
   'fees-may-explain': '수수료·펀딩 미입력이 차이의 원인일 수 있습니다',
 });
-const closeUsd = micro => { const neg = micro < 0n, a = neg ? -micro : micro, s = decFormat(microToDec(a), 2); return `${neg && a >= 5000n ? '−' : ''}${s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`; };
+const closeUsd = micro => { const neg = micro < BigInt(0), a = neg ? -micro : micro, s = decFormat(microToDec(a), 2); return `${neg && a >= BigInt(5000) ? '−' : ''}${s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`; };
 
 // 진단(경고 코드): 값은 만들지 않고 *원인 후보*만 알려 준다. 자동 보정 없음.
 function closeDiagnose(row, { fillCount = 0, cashCount = 0, adjCount = 0 } = {}) {
@@ -1826,10 +1831,10 @@ function closeMessage(items, uiUrl) {          // items: [{day, walletMicro}] (�
 }
 function closeSend(env, se, days, records) {          // days: 이미 claim(pending)한 날짜들. 결과를 notice에 기록한다.
   const items = days.map(d => ({ day: d, walletMicro: records.get(d).walletMicro }));
-  let res; try { res = env.notify(closeMessage(items, env.uiUrl)); } catch { res = { ok: false, code: 'exception' }; }
+  let res; try { res = env.notify(closeMessage(items, env.uiUrl)); } catch (e_) { res = { ok: false, code: 'exception' }; }
   const ok = !!(res && res.ok), at = env.now();
   for (const d of days) {
-    storeRevise(se, 'closenotice', d, ok ? { status: 'sent', at } : { status: 'failed', at, error: String(res?.code ?? 'failed').slice(0, 40) }, { actor: 'close', reason: ok ? '발송 완료' : '발송 실패' });
+    storeRevise(se, 'closenotice', d, ok ? { status: 'sent', at } : { status: 'failed', at, error: String(((res == null ? undefined : res.code) != null ? (res == null ? undefined : res.code) : 'failed')).slice(0, 40) }, { actor: 'close', reason: ok ? '발송 완료' : '발송 실패' });
   }
   return ok;
 }
@@ -1907,7 +1912,7 @@ function closeSubmitEquity(env, { day, equity, unrealized, reason } = {}, { acto
   const late = now >= dayEndMs(day), data = { day, equity: eq, ...(un === undefined ? {} : { unrealized: un }), ...(late ? { late: true } : {}), enteredAt: now };
   const cur = storeGet(se, 'equity', day); let r;
   if (!cur || cur.void) r = storeCreate(se, 'equity', data, { actor });
-  else if (cur.data.equity === eq && (cur.data.unrealized ?? undefined) === un) r = { status: 'unchanged', key: day, rev: cur.rev };
+  else if (cur.data.equity === eq && ((cur.data.unrealized != null ? cur.data.unrealized : undefined)) === un) r = { status: 'unchanged', key: day, rev: cur.rev };
   else r = storeRevise(se, 'equity', day, { equity: eq, unrealized: un === undefined ? null : un, late: late ? true : null, enteredAt: now }, { actor, reason: typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 200) : '평가액 수정' });
   const after = storeLoadLedgerInputs(se), led = ledgerBuildDaily({ ...after, throughDay: day }), row = led.rows[led.rows.length - 1];
   return { status: r.status, day, late, diffMicro: row.diffMicro === null ? null : String(row.diffMicro), expectedMicro: row.expectedEquityMicro === null ? null : String(row.expectedEquityMicro), needsReview: row.needsReview, flags: closeDiagnose(row, closeCounts(after, day)), diffLabel: row.diffMicro === null ? null : closeUsd(row.diffMicro), expectedLabel: row.expectedEquityMicro === null ? null : closeUsd(row.expectedEquityMicro) };
@@ -1920,7 +1925,7 @@ function closeStatus(env, { now = env.now(), days = 14 } = {}) {
   for (let i = 0; i < days; i++) {
     const day = addDays(today, -i); if (dayToIndex(day) < dayToIndex(inputs.challenge.startDay)) break;
     const c = closes.get(day), e = eqs.get(day), n = notices.get(day);
-    out.push({ day, today: i === 0, closed: !!c, source: c ? c.data.source : null, equity: e ? e.data.equity : null, late: e ? !!e.data.late : false, equityRev: e ? e.rev : 0, notice: n ? n.status : null, flags: c ? c.data.flags ?? [] : [], needsReview: c ? c.data.needsReview : false, diffMicro: c ? c.data.diffMicro ?? null : null, diffLabel: c && c.data.diffMicro !== undefined ? `${BigInt(c.data.diffMicro) > 0n ? '+' : ''}${closeUsd(BigInt(c.data.diffMicro))}` : null, walletMicro: c ? c.data.walletMicro : null });
+    out.push({ day, today: i === 0, closed: !!c, source: c ? c.data.source : null, equity: e ? e.data.equity : null, late: e ? !!e.data.late : false, equityRev: e ? e.rev : 0, notice: n ? n.status : null, flags: c ? (c.data.flags != null ? c.data.flags : []) : [], needsReview: c ? c.data.needsReview : false, diffMicro: c ? (c.data.diffMicro != null ? c.data.diffMicro : null) : null, diffLabel: c && c.data.diffMicro !== undefined ? `${BigInt(c.data.diffMicro) > BigInt(0) ? '+' : ''}${closeUsd(BigInt(c.data.diffMicro))}` : null, walletMicro: c ? c.data.walletMicro : null });
   }
   return out;
 }
@@ -1937,11 +1942,11 @@ const AN_MIN_SAMPLE = 30;
 const AN_INSIGHT_MIN = 5;
 
 function anUsd(micro, { sign = false } = {}) {
-  const neg = micro < 0n, a = neg ? -micro : micro, s = decFormat(microToDec(a), 2).replace(/\B(?=(\d{3})+(?!\d))/g, ','), zero = a < 5000n;
+  const neg = micro < BigInt(0), a = neg ? -micro : micro, s = decFormat(microToDec(a), 2).replace(/\B(?=(\d{3})+(?!\d))/g, ','), zero = a < BigInt(5000);
   return `${neg && !zero ? '−' : sign && !zero ? '+' : ''}${s}`;
 }
-const anRatio = ppm => (ppm === null ? '—' : decFormat(ppm * 1000000n, 2));          // 1e6 = 1.00
-function anPct(ppm, dp = 0) { if (ppm === null) return '—'; const neg = ppm < 0n, a = neg ? -ppm : ppm, s = decFormat(a * 100000000n, dp); return `${neg && !/^[0.]*$/.test(s) ? '−' : ''}${s}%`; }
+const anRatio = ppm => (ppm === null ? '—' : decFormat(ppm * BigInt(1000000), 2));          // 1e6 = 1.00
+function anPct(ppm, dp = 0) { if (ppm === null) return '—'; const neg = ppm < BigInt(0), a = neg ? -ppm : ppm, s = decFormat(a * BigInt(100000000), dp); return `${neg && !/^[0.]*$/.test(s) ? '−' : ''}${s}%`; }
 
 function anWilson(w, n) {                                    // 표시용 부동소수(결정 로직에 쓰지 않음)
   if (n === 0) return null; const z = 1.96, p = w / n, d = 1 + (z * z) / n, c = (p + (z * z) / (2 * n)) / d, h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
@@ -1950,20 +1955,20 @@ function anWilson(w, n) {                                    // 표시용 부동
 // trades: [{ sid, netMicro: bigint, closedAt: ms, riskMicro?: bigint|null }]
 function anStats(trades, { startMicro = null } = {}) {
   const t = [...trades].sort((a, b) => a.closedAt - b.closedAt || (a.sid < b.sid ? -1 : 1)), n = t.length;
-  let winN = 0, lossN = 0, flatN = 0, sumW = 0n, sumL = 0n, net = 0n, cum = 0n, peak = 0n, maxDd = 0n, rSum = 0n, rN = 0, best = null, worst = null;
+  let winN = 0, lossN = 0, flatN = 0, sumW = BigInt(0), sumL = BigInt(0), net = BigInt(0), cum = BigInt(0), peak = BigInt(0), maxDd = BigInt(0), rSum = BigInt(0), rN = 0, best = null, worst = null;
   for (const x of t) {
     const v = x.netMicro; net += v; cum += v; if (cum > peak) peak = cum; if (peak - cum > maxDd) maxDd = peak - cum;
-    if (v > 0n) { winN++; sumW += v; } else if (v < 0n) { lossN++; sumL += v; } else flatN++;
-    if (x.riskMicro && x.riskMicro > 0n) { rSum += decRoundDiv(v * 1000000n, x.riskMicro); rN++; }
+    if (v > BigInt(0)) { winN++; sumW += v; } else if (v < BigInt(0)) { lossN++; sumL += v; } else flatN++;
+    if (x.riskMicro && x.riskMicro > BigInt(0)) { rSum += decRoundDiv(v * BigInt(1000000), x.riskMicro); rN++; }
     if (best === null || v > best) best = v; if (worst === null || v < worst) worst = v;
   }
   const ci = anWilson(winN, n), avgWin = winN ? decRoundDiv(sumW, BigInt(winN)) : null, avgLoss = lossN ? decRoundDiv(sumL, BigInt(lossN)) : null;
-  const payoffPpm = avgWin !== null && avgLoss !== null ? decRoundDiv(avgWin * 1000000n, -avgLoss) : null, pfPpm = sumL < 0n && sumW > 0n ? decRoundDiv(sumW * 1000000n, -sumL) : null;
-  return { n, wins: winN, losses: lossN, flat: flatN, winRatePpm: n ? decRoundDiv(BigInt(winN) * 1000000n, BigInt(n)) : null, winRate: n ? anPct(decRoundDiv(BigInt(winN) * 1000000n, BigInt(n))) : '—',
+  const payoffPpm = avgWin !== null && avgLoss !== null ? decRoundDiv(avgWin * BigInt(1000000), -avgLoss) : null, pfPpm = sumL < BigInt(0) && sumW > BigInt(0) ? decRoundDiv(sumW * BigInt(1000000), -sumL) : null;
+  return { n, wins: winN, losses: lossN, flat: flatN, winRatePpm: n ? decRoundDiv(BigInt(winN) * BigInt(1000000), BigInt(n)) : null, winRate: n ? anPct(decRoundDiv(BigInt(winN) * BigInt(1000000), BigInt(n))) : '—',
     winRateRange: ci ? `${Math.round(ci[0] * 100)}–${Math.round(ci[1] * 100)}%` : '—', avgWinMicro: avgWin === null ? null : String(avgWin), avgLossMicro: avgLoss === null ? null : String(avgLoss), avgWin: avgWin === null ? '—' : anUsd(avgWin, { sign: true }), avgLoss: avgLoss === null ? '—' : anUsd(avgLoss, { sign: true }),
-    payoff: anRatio(payoffPpm), profitFactor: anRatio(pfPpm), netMicro: String(net), net: anUsd(net, { sign: true }), netPositive: net > 0n, netNegative: net < 0n,
-    expectancyMicro: n ? String(decRoundDiv(net, BigInt(n))) : null, expectancy: n ? anUsd(decRoundDiv(net, BigInt(n)), { sign: true }) : '—', expectancyPositive: n > 0 && net > 0n, expectancyNegative: n > 0 && net < 0n,
-    expectancyR: rN ? `${decFormat(decRoundDiv(rSum, BigInt(rN)) * 1000000n, 2).replace('-', '−')}R` : '—', rCoverage: rN, maxDdMicro: String(maxDd), maxDd: anUsd(maxDd), maxDdOfStart: startMicro && startMicro > 0n ? anPct(decRoundDiv(maxDd * 1000000n, startMicro), 1) : '—',
+    payoff: anRatio(payoffPpm), profitFactor: anRatio(pfPpm), netMicro: String(net), net: anUsd(net, { sign: true }), netPositive: net > BigInt(0), netNegative: net < BigInt(0),
+    expectancyMicro: n ? String(decRoundDiv(net, BigInt(n))) : null, expectancy: n ? anUsd(decRoundDiv(net, BigInt(n)), { sign: true }) : '—', expectancyPositive: n > 0 && net > BigInt(0), expectancyNegative: n > 0 && net < BigInt(0),
+    expectancyR: rN ? `${decFormat(decRoundDiv(rSum, BigInt(rN)) * BigInt(1000000), 2).replace('-', '−')}R` : '—', rCoverage: rN, maxDdMicro: String(maxDd), maxDd: anUsd(maxDd), maxDdOfStart: startMicro && startMicro > BigInt(0) ? anPct(decRoundDiv(maxDd * BigInt(1000000), startMicro), 1) : '—',
     best: best === null ? '—' : anUsd(best, { sign: true }), worst: worst === null ? '—' : anUsd(worst, { sign: true }), lowSample: n < AN_MIN_SAMPLE };
 }
 const AN_STRATEGY_NAME = Object.freeze({ A: 'A전략 · 추세돌파형', B: 'B전략 · 눌림목 재진입형', S: 'COIN RADAR 신호 · 눌림 진입 후보' });
@@ -1979,7 +1984,7 @@ function anTradesFrom({ ledgerTrades, fills = [], signals = [], reviews = [] }) 
   for (const t of ledgerTrades.values()) {
     if (t.status !== 'closed') continue;
     const fe = firstEntry.get(t.sid); let risk = null;
-    if (fe && fe.plannedStop) { const d = decAbs(decSub(dec(fe.price), dec(fe.plannedStop))); risk = decToMicro(decMul(d, dec(fe.qty))); if (risk <= 0n) risk = null; }
+    if (fe && fe.plannedStop) { const d = decAbs(decSub(dec(fe.price), dec(fe.plannedStop))); risk = decToMicro(decMul(d, dec(fe.qty))); if (risk <= BigInt(0)) risk = null; }
     const s = sig.get(t.sid), r = rev.get(t.sid), last = t.events[t.events.length - 1];
     out.push({ sid: t.sid, dir: t.dir, strategy: s ? s.strategy : null, netMicro: t.totals.netEnteredMicro, closedAt: last.at, riskMicro: risk, review: r ? { plan: r.plan, mind: r.mind } : null });
   }
@@ -1991,7 +1996,7 @@ function anReviews(trades, opts) {
   const reviewed = trades.filter(t => t.review), plan = Object.keys(PLAN_CHOICES), mind = Object.keys(MIND_CHOICES);
   const byPlan = plan.map(k => ({ key: k, label: PLAN_CHOICES[k], ...anStats(reviewed.filter(t => t.review.plan === k), opts) })).filter(g => g.n > 0);
   const byMind = mind.map(k => ({ key: k, label: MIND_CHOICES[k], ...anStats(reviewed.filter(t => t.review.mind === k), opts) })).filter(g => g.n > 0);
-  const total = trades.length, rate = total ? decRoundDiv(BigInt(reviewed.length) * 1000000n, BigInt(total)) : null, insights = [];
+  const total = trades.length, rate = total ? decRoundDiv(BigInt(reviewed.length) * BigInt(1000000), BigInt(total)) : null, insights = [];
   const cmp = (label, a, b, nameA, nameB) => {
     if (a.n < AN_INSIGHT_MIN || b.n < AN_INSIGHT_MIN) return;
     const ea = BigInt(a.expectancyMicro), eb = BigInt(b.expectancyMicro); if (ea >= eb) return;
@@ -2000,7 +2005,7 @@ function anReviews(trades, opts) {
   const ok = reviewed.filter(t => t.review.plan === 'plan_ok'), bad = reviewed.filter(t => t.review.plan !== 'plan_ok'), calm = reviewed.filter(t => t.review.mind === 'calm'), tense = reviewed.filter(t => t.review.mind !== 'calm');
   cmp('plan-violation', anStats(bad, opts), anStats(ok, opts), '계획과 다르게 한 거래', '계획대로 한 거래');
   cmp('mind-unsettled', anStats(tense, opts), anStats(calm, opts), '침착하지 않았던 거래', '침착했던 거래');
-  if (total >= AN_INSIGHT_MIN && rate !== null && rate < 700000n) insights.push({ type: 'review-rate', n: total, text: `청산 ${total}건 중 복기한 거래는 ${reviewed.length}건(${anPct(rate)})입니다 — 복기가 적으면 위 분석이 한쪽으로 치우칠 수 있습니다` });
+  if (total >= AN_INSIGHT_MIN && rate !== null && rate < BigInt(700000)) insights.push({ type: 'review-rate', n: total, text: `청산 ${total}건 중 복기한 거래는 ${reviewed.length}건(${anPct(rate)})입니다 — 복기가 적으면 위 분석이 한쪽으로 치우칠 수 있습니다` });
   return { total, reviewed: reviewed.length, reviewRate: anPct(rate), byPlan, byMind, insights };
 }
 function anBuild({ ledgerTrades, fills, signals, reviews, startMicro }) {
@@ -2027,11 +2032,11 @@ const jvText = v => {
   return typeof v === 'object' ? JSON.stringify(v) : String(v);
 };
 const jvEditAmt = v => (!v || v.state === 'missing' ? '' : `${v.state === 'estimated' ? '~' : ''}${v.amount}`);   // 입력 칸 표기(R4와 동일: 추정은 ~)
-const jvParse = s => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+const jvParse = s => { try { return s ? JSON.parse(s) : null; } catch (e_) { return null; } };
 const jvFail = m => { throw new StoreError('VALIDATION', m); };
 
 function journalDiff(before, after) {          // 최상위 필드 단위 변경 목록(표시용)
-  const b = before ?? {}, a = after ?? {}, keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), out = [];
+  const b = (before != null ? before : {}), a = (after != null ? after : {}), keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), out = [];
   for (const k of keys) if (JSON.stringify(b[k]) !== JSON.stringify(a[k])) out.push({ field: k, from: jvText(b[k]), to: jvText(a[k]) });
   return out;
 }
@@ -2043,7 +2048,7 @@ function journalHistories(se) {                         // Audit 한 번 읽어 
   }
   return m;
 }
-function journalHistory(env, entity, key) { return journalHistories(env.storeEnv()).get(`${entity}|${key}`) ?? []; }
+function journalHistory(env, entity, key) { return nullishOr(journalHistories(env.storeEnv()).get(`${entity}|${key}`), []); }
 
 const JOURNAL_SEARCH_LIMIT = 200;
 function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null, q = null } = {}) {
@@ -2055,19 +2060,19 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   const allFills = storeList(se, 'fill', { includeVoid: true }), voided = allFills.filter(r => r.void).map(r => r.key);
   const bySid = new Map();
   for (const r of allFills) { const sid = r.data.sid; if (!bySid.has(sid)) bySid.set(sid, []); bySid.get(sid).push(r); }
-  const edits = (entity, key) => (hist.get(`${entity}|${key}`) ?? []).filter(h => h.rev > 1 || h.op !== 'create');
+  const edits = (entity, key) => (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create');
   const trades = [...led.trades.values()].map(t => {
-    const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (bySid.get(t.sid) ?? []).sort((a, b) => a.data.at - b.data.at);
+    const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (nullishOr(bySid.get(t.sid), [])).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
     return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
-      netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > 0n, loss: t.status === 'closed' && net < 0n, flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
+      netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > BigInt(0), loss: t.status === 'closed' && net < BigInt(0), flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
-      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: r.data.note ?? '', rev: r.rev, margin: r.data.margin ?? null, leverage: r.data.leverage ?? null, plannedStop: r.data.plannedStop ?? null, edits: edits('fill', r.key) })),
-      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: rv.memo ?? null, savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
+      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key) })),
+      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
+      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
-  const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String(t.symbol ?? t.sid).toUpperCase().includes(qSym))) : trades;
+  const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
   const warnings = [], rows = led.rows, cnt = f => rows.filter(r => r.flags.includes(f)).length;
   const mism = rows.filter(r => r.needsReview);
   if (mism.length) warnings.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${mism.length}일: ${mism.slice(-5).map(r => `${r.day}(${anUsd(r.diffMicro, { sign: true })})`).join(', ')}` });
@@ -2078,9 +2083,9 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   if (feeM) warnings.push({ type: 'fee-missing', text: `수수료 미입력 거래 ${feeM}건(손익에서 제외됨)` }); if (fundM) warnings.push({ type: 'funding-missing', text: `펀딩 미입력 거래 ${fundM}건(손익에서 제외됨)` });
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
-  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: c.note ?? '', edits: edits('cashflow', c.cfId) }));
+  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId) }));
   return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
-    closes, presetDay: (closes.find(c => c.closed && c.equity === null) ?? closes[0] ?? { day: throughDay }).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
+    closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
 }
 
 // ── 수정 ──
@@ -2116,7 +2121,7 @@ const jvStore = env => env.storeEnv();
 // ── journalview.mjs ──
 // R7 일지 화면 HTML 렌더러(서버 측, 순수 함수). 모바일 우선 · 외부 자원 없음 · 모든 동적 값 이스케이프 · 읽기/수정은 google.script.run 서버 함수로만(소유자 확인은 서버 측).
 //  수정 UI에는 사유 입력이 필수이고, 저장 결과(변경 이력)는 일지에서 diff로 확인한다. 어떤 입력도 기본값으로 자동 저장하지 않는다.
-const jvEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const jvEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const jvE = jvEsc, JV_ARROW = (p, n) => (p ? '▲' : n ? '▼' : '■'), JV_TONE = (p, n) => (p ? 'pos' : n ? 'neg' : 'zero');
 const JV_NOTICE = { off: '알림 꺼짐', sent: '알림 발송됨', failed: '알림 실패', pending: '알림 발송 중', unknown: '알림 결과 불명' };
 
@@ -2149,7 +2154,7 @@ const jvGrp = g => `<div class="card mini"><div class="row"><strong>${jvE(g.labe
 
 function jvCloseHtml(m) {
   const rows = m.closes.map(c => `<div class="day"><div class="row"><strong>${jvE(c.day)}${c.today ? ' <span class="sub">오늘</span>' : ''}</strong><span>${c.closed ? '<span class="badge">마감됨</span>' : '<span class="badge">마감 전</span>'} ${c.equity !== null ? `<span class="badge">평가액 ${jvE(c.equity)}${c.late ? ' · 마감 후 입력' : ''}</span>` : c.closed ? '<span class="badge warn">평가액 미입력</span>' : ''}</span></div>`
-    + `${c.diffMicro !== null && c.needsReview ? `<div class="sub">⚠ 장부와 차이(마감 시점 ${jvE(c.diffLabel)} USDT)</div>` : ''}${c.flags.filter(f => m.warningText[f]).map(f => `<div class="sub">· ${jvE(m.warningText[f])}</div>`).join('')}${c.notice ? `<div class="sub">${jvE(JV_NOTICE[c.notice] ?? c.notice)}</div>` : ''}</div>`).join('');
+    + `${c.diffMicro !== null && c.needsReview ? `<div class="sub">⚠ 장부와 차이(마감 시점 ${jvE(c.diffLabel)} USDT)</div>` : ''}${c.flags.filter(f => m.warningText[f]).map(f => `<div class="sub">· ${jvE(m.warningText[f])}</div>`).join('')}${c.notice ? `<div class="sub">${jvE((JV_NOTICE[c.notice] != null ? JV_NOTICE[c.notice] : c.notice))}</div>` : ''}</div>`).join('');
   const opts = m.closes.map(c => `<option value="${jvE(c.day)}"${c.day === m.presetDay ? ' selected' : ''}>${jvE(c.day)}${c.closed && c.equity === null ? ' (미입력)' : ''}</option>`).join('');
   return `<section id="close" aria-labelledby="h-close"><h2 id="h-close">일 마감 (매일 00:00 KST)</h2><div class="card">${rows || '<div class="sub">아직 마감할 날이 없습니다.</div>'}</div>
 <div class="card"><form id="eqForm"><strong>실제 계좌 평가액 입력</strong><div class="sub">거래소 화면의 평가액(미실현 포함)을 직접 입력합니다. 장부와 다르면 차이만 표시하며 손익에는 자동 반영하지 않습니다.</div>
@@ -2162,7 +2167,7 @@ function jvTradeHtml(t) {
 <details class="edit"><summary>수정 / 취소</summary><form class="fillForm" data-fill="${jvE(f.fillId)}"><div class="grid2"><div><label>가격</label><input name="price" inputmode="decimal" value="${jvE(f.price)}" data-orig="${jvE(f.price)}"></div><div><label>수량</label><input name="qty" inputmode="decimal" value="${jvE(f.qty)}" data-orig="${jvE(f.qty)}"></div><div><label>수수료 (비움=미입력, ~=추정)</label><input name="fee" value="${jvE(f.feeEdit)}" data-orig="${jvE(f.feeEdit)}"></div><div><label>펀딩 (비움=미입력, ~=추정)</label><input name="funding" value="${jvE(f.fundingEdit)}" data-orig="${jvE(f.fundingEdit)}"></div></div>
 <label>사유 (필수)</label><input name="reason" autocomplete="off"><div class="row"><button class="act" type="submit" data-act="revise">수정 저장</button><button class="act alt" type="submit" data-act="void">이 체결 취소</button></div><div class="out" role="status"></div></form></details></div>`;
   const dirTone = t.status === 'open' ? 'zero' : JV_TONE(t.win, t.loss);
-  return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE(t.symbol ?? t.sid)}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
+  return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE((t.symbol != null ? t.symbol : t.sid))}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
 <div class="sub">${t.response ? `응답: ${jvE(t.response.label)}` : '응답 기록 없음'} · 신호 ${jvE(t.sid)}</div>
 ${t.review ? `<div class="sub">복기: ${jvE(t.review.plan)} · ${jvE(t.review.mind)}${t.review.memo ? ` · ${jvE(t.review.memo)}` : ''} (${jvE(t.review.savedLabel)})</div>${edits(t.review.edits)}` : '<div class="sub">복기 안 함</div>'}
 ${t.fills.map(fill).join('')}${t.voidedFills.length ? `<div class="sub" style="margin-top:6px">취소된 체결(손익에서 제외됨)</div>${t.voidedFills.map(v => `<div class="fill"><div>${jvE(v.kindLabel)} · ${jvE(v.atLabel)} · ${jvE(v.price)} × ${jvE(v.qty)}</div>${edits(v.edits)}</div>`).join('')}` : ''}</details>`;
@@ -2218,7 +2223,7 @@ const SIGLOG_LIMIT = 80;
 const SIGLOG_FILTERS = Object.freeze({ all: '전체', entered: '진입', watched: '관망', missed: '놓침', none: '미응답' });
 const sgKst = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
 const sgTrim = v => (v === undefined || v === null ? null : String(v));
-const sgAvg = fs => { let q = 0n, c = 0n; for (const f of fs) if (f.kind === 'entry' || f.kind === 'add') { q += dec(f.qty); c += decMul(dec(f.price), dec(f.qty)); } if (q === 0n) return null; const t = decFormat(decDiv(c, q), 8); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };      // 실제 평균 진입가(체결 기준)
+const sgAvg = fs => { let q = BigInt(0), c = BigInt(0); for (const f of fs) if (f.kind === 'entry' || f.kind === 'add') { q += dec(f.qty); c += decMul(dec(f.price), dec(f.qty)); } if (q === BigInt(0)) return null; const t = decFormat(decDiv(c, q), 8); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };      // 실제 평균 진입가(체결 기준)
 
 function siglogBuild(env, { now = env.now(), filter = 'all' } = {}) {
   const se = env.storeEnv(), data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = new Map(data('response').map(r => [r.sid, r])), fills = data('fill');
@@ -2227,9 +2232,9 @@ function siglogBuild(env, { now = env.now(), filter = 'all' } = {}) {
   const f = Object.prototype.hasOwnProperty.call(SIGLOG_FILTERS, filter) ? filter : 'all';
   const rows = signals.sort((a, b) => b.signalAt - a.signalAt || (a.sid < b.sid ? 1 : -1)).map(s => {
     const r = responses.get(s.sid), t = trades.get(s.sid), choice = r ? r.choice : 'none', closed = t && t.status === 'closed', net = closed ? t.totals.netEnteredMicro : null;
-    return { sid: s.sid, atLabel: sgKst(s.signalAt), symbol: s.symbolId.replace(/USDT$/, ''), dir: s.dir, strategy: s.strategy, strategyName: AN_STRATEGY_NAME[s.strategy] ?? s.strategy, score: s.score ?? null,
-      entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: sgTrim(s.tp2), choice, choiceLabel: r ? RESPONSE_CHOICES[r.choice] : '미응답', traded: (fillsBy.get(s.sid) ?? []).length > 0, status: t ? t.status : null,
-      netLabel: net === null ? null : anUsd(net, { sign: true }), win: net !== null && net > 0n, loss: net !== null && net < 0n, avgEntry: sgAvg(fillsBy.get(s.sid) ?? []) };
+    return { sid: s.sid, atLabel: sgKst(s.signalAt), symbol: s.symbolId.replace(/USDT$/, ''), dir: s.dir, strategy: s.strategy, strategyName: (AN_STRATEGY_NAME[s.strategy] != null ? AN_STRATEGY_NAME[s.strategy] : s.strategy), score: (s.score != null ? s.score : null),
+      entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: sgTrim(s.tp2), choice, choiceLabel: r ? RESPONSE_CHOICES[r.choice] : '미응답', traded: (nullishOr(fillsBy.get(s.sid), [])).length > 0, status: t ? t.status : null,
+      netLabel: net === null ? null : anUsd(net, { sign: true }), win: net !== null && net > BigInt(0), loss: net !== null && net < BigInt(0), avgEntry: sgAvg(nullishOr(fillsBy.get(s.sid), [])) };
   });
   const count = k => rows.filter(x => x.choice === k).length, shown = rows.filter(x => f === 'all' || x.choice === f);
   return { generatedAt: now, filter: f, total: rows.length, counts: { entered: count('entered'), watched: count('watched'), missed: count('missed'), none: count('none') }, tradedCount: rows.filter(x => x.traded).length,
@@ -2280,11 +2285,11 @@ function checkPollItems(st, { minRuns = 20, last = null } = {}) {
 const checkSym = { PASS: '✔', FAIL: '✖', WARN: '▲', WAIT: '…', SKIP: '–' };
 function checkReportText(sections) {
   const all = sections.flatMap(s => s.items), sum = checkSummary(all);
-  return [`RICH300 점검 결과: ${CHECK_STATUS_LABEL[sum.verdict]} (통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT})`, ...sections.flatMap(s => [`[${s.title}]`, ...s.items.map(i => `${checkSym[i.status] ?? '?'} ${i.id} ${i.text}`)])].join('\n');
+  return [`RICH300 점검 결과: ${CHECK_STATUS_LABEL[sum.verdict]} (통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT})`, ...sections.flatMap(s => [`[${s.title}]`, ...s.items.map(i => `${(checkSym[i.status] != null ? checkSym[i.status] : '?')} ${i.id} ${i.text}`)])].join('\n');
 }
 function checkRenderHtml({ sections, generatedAt, notes = [] }, { appUrl } = {}) {
   const all = sections.flatMap(s => s.items), sum = checkSummary(all), tone = s => (s === 'PASS' ? 'pos' : s === 'FAIL' ? 'neg' : 'zero');
-  const sec = s => `<section><h2>${dashEsc(s.title)}</h2><div class="card"><table><tbody>${s.items.map(i => `<tr><td class="${tone(i.status)}">${checkSym[i.status] ?? '?'} ${dashEsc(CHECK_STATUS_LABEL[i.status] ?? i.status)}</td><td style="text-align:left">${dashEsc(i.id)} · ${dashEsc(i.text)}</td></tr>`).join('') || '<tr><td colspan="2" class="sub">항목 없음</td></tr>'}</tbody></table></div></section>`;
+  const sec = s => `<section><h2>${dashEsc(s.title)}</h2><div class="card"><table><tbody>${s.items.map(i => `<tr><td class="${tone(i.status)}">${(checkSym[i.status] != null ? checkSym[i.status] : '?')} ${dashEsc((CHECK_STATUS_LABEL[i.status] != null ? CHECK_STATUS_LABEL[i.status] : i.status))}</td><td style="text-align:left">${dashEsc(i.id)} · ${dashEsc(i.text)}</td></tr>`).join('') || '<tr><td colspan="2" class="sub">항목 없음</td></tr>'}</tbody></table></div></section>`;
   return `${dashHead('RICH300 점검')}<body><main><header><h1>RICH 300 · 설치 점검</h1></header>${dashNav('check', appUrl)}
 <section><div class="card hero"><div class="k">전체 판정</div><div class="big ${tone(sum.verdict)}">${dashEsc(CHECK_STATUS_LABEL[sum.verdict])}</div><div class="sub">통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT}${sum.WAIT ? ' — 잠시 뒤 새로 고침' : ''}</div></div></section>
 ${notes.map(n => `<div class="notice">${dashEsc(n)}</div>`).join('')}
@@ -2392,7 +2397,7 @@ const liveItem = (id, status, text, ms) => ({ id, status, text, ...(ms === undef
 const liveMs = (env, fn) => { const t0 = env.now(); const r = fn(); return { r, ms: env.now() - t0 }; };
 const livePct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : 0; };
 function liveBigIntExtras() {
-  const ok = [2n ** 200n % 1000003n === 973692n, -7n / 2n === -3n, -7n % 2n === -1n, (1n << 64n) - 1n === 18446744073709551615n, BigInt('123456789012345678901234567890') * 10n === 1234567890123456789012345678900n, typeof BigInt === 'function'];
+  const ok = [BigInt(2) ** BigInt(200) % BigInt(1000003) === BigInt(973692), -BigInt(7) / BigInt(2) === -BigInt(3), -BigInt(7) % BigInt(2) === -BigInt(1), (BigInt(1) << BigInt(64)) - BigInt(1) === BigInt("18446744073709551615"), BigInt('123456789012345678901234567890') * BigInt(10) === BigInt("1234567890123456789012345678900"), typeof BigInt === 'function'];
   return ok.every(Boolean);
 }
 
@@ -2401,7 +2406,7 @@ function liveCompat(env) {
   const items = [];
   const t0 = env.now(); let bad = 0, total = 0;
   for (const v of LIVE_DEC_VECTORS) { total += 3; const a = dec(v.a), b = dec(v.b); if (String(decMul(a, b)) !== v.mul) bad++; if (String(decDiv(a, b)) !== v.div) bad++; if (String(decToMicro(a)) !== v.micro) bad++; }
-  const ideal = compoundIdealSeries({ startMicro: 300000000n, startDay: '2026-01-01', schedule: [{ from: '2026-01-01', rate: '0.05' }], throughDay: addDays('2026-01-01', 364) });
+  const ideal = compoundIdealSeries({ startMicro: BigInt(300000000), startDay: '2026-01-01', schedule: [{ from: '2026-01-01', rate: '0.05' }], throughDay: addDays('2026-01-01', 364) });
   for (const [n, micro] of LIVE_IDEAL_VECTORS) { total++; if (String(ideal[n].idealMicro) !== micro) bad++; }
   let events = 0;
   LIVE_PNL_VECTORS.forEach((o, i) => { const fills = o.fills.map((f, k) => ({ origin: 'real', sid: `P${i}`, dir: o.dir, at: Date.UTC(2026, 9, 24) + k * 1000, fee: { state: 'entered', amount: '0' }, funding: { state: 'entered', amount: '0' }, ...f })), t = pnlComputeTrade(fills); t.events.forEach((e, k) => { total++; events++; if (String(e.grossMicro) !== o.grossMicroPerEvent[k]) bad++; }); });
@@ -2473,11 +2478,11 @@ function liveBackup(env) {
   try { const latest = list.sort((a, b) => (a.name < b.name ? 1 : -1))[0]; rest = backupRestore(benv, latest.id, { now: t1 + 30 * DAY }); g4 = JSON.stringify(backupFingerprint(scr.se)) === live0 && storeIntegrityCheck(benv.drive.openStore(rest.id)).ok; } catch (e) { g4 = false; }
   items.push(liveItem('G4', g4 ? 'PASS' : 'FAIL', `복원은 새 사본으로 생성·검증, 원본 불변 ${g4 ? '확인' : '실패'}`));
   let g5 = false, g6 = false;
-  if (rest) { env.tamper(rest.id); const ic = storeIntegrityCheck(benv.drive.openStore(rest.id)), sw = backupSwitchChecks(benv, rest.id, { expectEnv: 'test' }); g5 = !ic.ok && !sw.ok; g6 = backupSwitchChecks(benv, list.find(x => x.id !== rest.id)?.id ?? rest.id, { expectEnv: 'prod' }).issues.includes('env-mismatch'); }
+  if (rest) { env.tamper(rest.id); const ic = storeIntegrityCheck(benv.drive.openStore(rest.id)), sw = backupSwitchChecks(benv, rest.id, { expectEnv: 'test' }); g5 = !ic.ok && !sw.ok; g6 = backupSwitchChecks(benv, nullishOr(nullishOr(list.find(x => x.id !== rest.id), {}).id, rest.id), { expectEnv: 'prod' }).issues.includes('env-mismatch'); }
   items.push(liveItem('G5', g5 ? 'PASS' : 'FAIL', `임시 복원본 변조(셀 1개) ${g5 ? '무결성 실패로 탐지·전환 거부' : '탐지 실패'}`));
   items.push(liveItem('G6', g6 ? 'PASS' : 'FAIL', `환경 표식 불일치(test 시트를 prod 기대로 점검) ${g6 ? '거부' : '통과됨(위험)'}`));
   storeCreate(scr.se, 'setting', { name: 'backupTelegramCsv', value: 'on' }, A); const h0 = env.httpCount(); let g7;
-  try { const r = backupRun(benv, { now: t1 + 40 * DAY }); g7 = r.warnings.includes('telegram-csv-unsupported') && env.httpCount() === h0; } catch { g7 = false; }
+  try { const r = backupRun(benv, { now: t1 + 40 * DAY }); g7 = r.warnings.includes('telegram-csv-unsupported') && env.httpCount() === h0; } catch (e_) { g7 = false; }
   items.push(liveItem('G7', g7 ? 'PASS' : 'FAIL', `Telegram CSV 설정을 켜도 전송 0건(경고만) ${g7 ? '확인' : '실패'}`));
   return items;
 }
@@ -2489,7 +2494,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**

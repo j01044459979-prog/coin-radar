@@ -1,7 +1,7 @@
 // R7 일지 화면 HTML 렌더러(서버 측, 순수 함수). 모바일 우선 · 외부 자원 없음 · 모든 동적 값 이스케이프 · 읽기/수정은 google.script.run 서버 함수로만(소유자 확인은 서버 측).
 //  수정 UI에는 사유 입력이 필수이고, 저장 결과(변경 이력)는 일지에서 diff로 확인한다. 어떤 입력도 기본값으로 자동 저장하지 않는다.
 import { dashNav } from './dashview.mjs';
-export const jvEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const jvEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const jvE = jvEsc, JV_ARROW = (p, n) => (p ? '▲' : n ? '▼' : '■'), JV_TONE = (p, n) => (p ? 'pos' : n ? 'neg' : 'zero');
 const JV_NOTICE = { off: '알림 꺼짐', sent: '알림 발송됨', failed: '알림 실패', pending: '알림 발송 중', unknown: '알림 결과 불명' };
 
@@ -34,7 +34,7 @@ const jvGrp = g => `<div class="card mini"><div class="row"><strong>${jvE(g.labe
 
 function jvCloseHtml(m) {
   const rows = m.closes.map(c => `<div class="day"><div class="row"><strong>${jvE(c.day)}${c.today ? ' <span class="sub">오늘</span>' : ''}</strong><span>${c.closed ? '<span class="badge">마감됨</span>' : '<span class="badge">마감 전</span>'} ${c.equity !== null ? `<span class="badge">평가액 ${jvE(c.equity)}${c.late ? ' · 마감 후 입력' : ''}</span>` : c.closed ? '<span class="badge warn">평가액 미입력</span>' : ''}</span></div>`
-    + `${c.diffMicro !== null && c.needsReview ? `<div class="sub">⚠ 장부와 차이(마감 시점 ${jvE(c.diffLabel)} USDT)</div>` : ''}${c.flags.filter(f => m.warningText[f]).map(f => `<div class="sub">· ${jvE(m.warningText[f])}</div>`).join('')}${c.notice ? `<div class="sub">${jvE(JV_NOTICE[c.notice] ?? c.notice)}</div>` : ''}</div>`).join('');
+    + `${c.diffMicro !== null && c.needsReview ? `<div class="sub">⚠ 장부와 차이(마감 시점 ${jvE(c.diffLabel)} USDT)</div>` : ''}${c.flags.filter(f => m.warningText[f]).map(f => `<div class="sub">· ${jvE(m.warningText[f])}</div>`).join('')}${c.notice ? `<div class="sub">${jvE((JV_NOTICE[c.notice] != null ? JV_NOTICE[c.notice] : c.notice))}</div>` : ''}</div>`).join('');
   const opts = m.closes.map(c => `<option value="${jvE(c.day)}"${c.day === m.presetDay ? ' selected' : ''}>${jvE(c.day)}${c.closed && c.equity === null ? ' (미입력)' : ''}</option>`).join('');
   return `<section id="close" aria-labelledby="h-close"><h2 id="h-close">일 마감 (매일 00:00 KST)</h2><div class="card">${rows || '<div class="sub">아직 마감할 날이 없습니다.</div>'}</div>
 <div class="card"><form id="eqForm"><strong>실제 계좌 평가액 입력</strong><div class="sub">거래소 화면의 평가액(미실현 포함)을 직접 입력합니다. 장부와 다르면 차이만 표시하며 손익에는 자동 반영하지 않습니다.</div>
@@ -47,7 +47,7 @@ function jvTradeHtml(t) {
 <details class="edit"><summary>수정 / 취소</summary><form class="fillForm" data-fill="${jvE(f.fillId)}"><div class="grid2"><div><label>가격</label><input name="price" inputmode="decimal" value="${jvE(f.price)}" data-orig="${jvE(f.price)}"></div><div><label>수량</label><input name="qty" inputmode="decimal" value="${jvE(f.qty)}" data-orig="${jvE(f.qty)}"></div><div><label>수수료 (비움=미입력, ~=추정)</label><input name="fee" value="${jvE(f.feeEdit)}" data-orig="${jvE(f.feeEdit)}"></div><div><label>펀딩 (비움=미입력, ~=추정)</label><input name="funding" value="${jvE(f.fundingEdit)}" data-orig="${jvE(f.fundingEdit)}"></div></div>
 <label>사유 (필수)</label><input name="reason" autocomplete="off"><div class="row"><button class="act" type="submit" data-act="revise">수정 저장</button><button class="act alt" type="submit" data-act="void">이 체결 취소</button></div><div class="out" role="status"></div></form></details></div>`;
   const dirTone = t.status === 'open' ? 'zero' : JV_TONE(t.win, t.loss);
-  return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE(t.symbol ?? t.sid)}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
+  return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE((t.symbol != null ? t.symbol : t.sid))}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
 <div class="sub">${t.response ? `응답: ${jvE(t.response.label)}` : '응답 기록 없음'} · 신호 ${jvE(t.sid)}</div>
 ${t.review ? `<div class="sub">복기: ${jvE(t.review.plan)} · ${jvE(t.review.mind)}${t.review.memo ? ` · ${jvE(t.review.memo)}` : ''} (${jvE(t.review.savedLabel)})</div>${edits(t.review.edits)}` : '<div class="sub">복기 안 함</div>'}
 ${t.fills.map(fill).join('')}${t.voidedFills.length ? `<div class="sub" style="margin-top:6px">취소된 체결(손익에서 제외됨)</div>${t.voidedFills.map(v => `<div class="fill"><div>${jvE(v.kindLabel)} · ${jvE(v.atLabel)} · ${jvE(v.price)} × ${jvE(v.qty)}</div>${edits(v.edits)}</div>`).join('')}` : ''}</details>`;

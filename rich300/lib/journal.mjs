@@ -11,6 +11,7 @@ import { StoreError, ENTITIES, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, sch
 import { storeLoadLedgerInputs, storeList, storeGet, storeCreate, storeRevise, storeVoid, storeReadAudit } from './store.mjs';
 import { anBuild, anUsd } from './analytics.mjs';
 import { closeStatus, closeDiagnose, CLOSE_WARNING_TEXT } from './close.mjs';
+import { nullishOr } from './nullish.mjs';
 
 export const JOURNAL_FILL_EDITABLE = Object.freeze(['price', 'qty', 'at', 'margin', 'leverage', 'plannedStop', 'fee', 'funding', 'note']);
 export const JOURNAL_LIMIT = 40;
@@ -23,11 +24,11 @@ const jvText = v => {
   return typeof v === 'object' ? JSON.stringify(v) : String(v);
 };
 const jvEditAmt = v => (!v || v.state === 'missing' ? '' : `${v.state === 'estimated' ? '~' : ''}${v.amount}`);   // 입력 칸 표기(R4와 동일: 추정은 ~)
-const jvParse = s => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+const jvParse = s => { try { return s ? JSON.parse(s) : null; } catch (e_) { return null; } };
 const jvFail = m => { throw new StoreError('VALIDATION', m); };
 
 export function journalDiff(before, after) {          // 최상위 필드 단위 변경 목록(표시용)
-  const b = before ?? {}, a = after ?? {}, keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), out = [];
+  const b = (before != null ? before : {}), a = (after != null ? after : {}), keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), out = [];
   for (const k of keys) if (JSON.stringify(b[k]) !== JSON.stringify(a[k])) out.push({ field: k, from: jvText(b[k]), to: jvText(a[k]) });
   return out;
 }
@@ -39,7 +40,7 @@ function journalHistories(se) {                         // Audit 한 번 읽어 
   }
   return m;
 }
-export function journalHistory(env, entity, key) { return journalHistories(env.storeEnv()).get(`${entity}|${key}`) ?? []; }
+export function journalHistory(env, entity, key) { return nullishOr(journalHistories(env.storeEnv()).get(`${entity}|${key}`), []); }
 
 export const JOURNAL_SEARCH_LIMIT = 200;
 export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null, q = null } = {}) {
@@ -51,19 +52,19 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
   const allFills = storeList(se, 'fill', { includeVoid: true }), voided = allFills.filter(r => r.void).map(r => r.key);
   const bySid = new Map();
   for (const r of allFills) { const sid = r.data.sid; if (!bySid.has(sid)) bySid.set(sid, []); bySid.get(sid).push(r); }
-  const edits = (entity, key) => (hist.get(`${entity}|${key}`) ?? []).filter(h => h.rev > 1 || h.op !== 'create');
+  const edits = (entity, key) => (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create');
   const trades = [...led.trades.values()].map(t => {
-    const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (bySid.get(t.sid) ?? []).sort((a, b) => a.data.at - b.data.at);
+    const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (nullishOr(bySid.get(t.sid), [])).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
     return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
-      netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > 0n, loss: t.status === 'closed' && net < 0n, flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
+      netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > BigInt(0), loss: t.status === 'closed' && net < BigInt(0), flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
-      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: r.data.note ?? '', rev: r.rev, margin: r.data.margin ?? null, leverage: r.data.leverage ?? null, plannedStop: r.data.plannedStop ?? null, edits: edits('fill', r.key) })),
-      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: JV_KIND[r.data.kind] ?? r.data.kind, atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: rv.memo ?? null, savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
+      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key) })),
+      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
+      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
-  const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String(t.symbol ?? t.sid).toUpperCase().includes(qSym))) : trades;
+  const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
   const warnings = [], rows = led.rows, cnt = f => rows.filter(r => r.flags.includes(f)).length;
   const mism = rows.filter(r => r.needsReview);
   if (mism.length) warnings.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${mism.length}일: ${mism.slice(-5).map(r => `${r.day}(${anUsd(r.diffMicro, { sign: true })})`).join(', ')}` });
@@ -74,9 +75,9 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
   if (feeM) warnings.push({ type: 'fee-missing', text: `수수료 미입력 거래 ${feeM}건(손익에서 제외됨)` }); if (fundM) warnings.push({ type: 'funding-missing', text: `펀딩 미입력 거래 ${fundM}건(손익에서 제외됨)` });
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
-  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: c.note ?? '', edits: edits('cashflow', c.cfId) }));
+  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId) }));
   return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
-    closes, presetDay: (closes.find(c => c.closed && c.equity === null) ?? closes[0] ?? { day: throughDay }).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
+    closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
 }
 
 // ── 수정 ──

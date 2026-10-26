@@ -18,6 +18,7 @@ import { deployMarkEnv } from './deploy.mjs';
 import { journalBuild } from './journal.mjs';
 import { journalRenderHtml } from './journalview.mjs';
 import { LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS } from './livevectors.mjs';
+import { nullishOr } from './nullish.mjs';
 
 export const LIVE_THRESH = Object.freeze({ ledgerPassMs: 3000, ledgerWarnMs: 10000, renderPassMs: 5000, writeP50Ms: 1000, writeP90Ms: 2500, read5kPassMs: 6000, read5kWarnMs: 20000, backupPassMs: 30000 });
 export const LIVE_SHA_VECTORS = Object.freeze([['abc', 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'], ['', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'], ['한글🙂', 'dfe2c239b4dd154b386d368f1a32320bf4d637035d973e943c9b7b3b790aa047']]);
@@ -89,7 +90,7 @@ const liveItem = (id, status, text, ms) => ({ id, status, text, ...(ms === undef
 const liveMs = (env, fn) => { const t0 = env.now(); const r = fn(); return { r, ms: env.now() - t0 }; };
 const livePct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : 0; };
 function liveBigIntExtras() {
-  const ok = [2n ** 200n % 1000003n === 973692n, -7n / 2n === -3n, -7n % 2n === -1n, (1n << 64n) - 1n === 18446744073709551615n, BigInt('123456789012345678901234567890') * 10n === 1234567890123456789012345678900n, typeof BigInt === 'function'];
+  const ok = [BigInt(2) ** BigInt(200) % BigInt(1000003) === BigInt(973692), -BigInt(7) / BigInt(2) === -BigInt(3), -BigInt(7) % BigInt(2) === -BigInt(1), (BigInt(1) << BigInt(64)) - BigInt(1) === BigInt("18446744073709551615"), BigInt('123456789012345678901234567890') * BigInt(10) === BigInt("1234567890123456789012345678900"), typeof BigInt === 'function'];
   return ok.every(Boolean);
 }
 
@@ -98,7 +99,7 @@ export function liveCompat(env) {
   const items = [];
   const t0 = env.now(); let bad = 0, total = 0;
   for (const v of LIVE_DEC_VECTORS) { total += 3; const a = dec(v.a), b = dec(v.b); if (String(decMul(a, b)) !== v.mul) bad++; if (String(decDiv(a, b)) !== v.div) bad++; if (String(decToMicro(a)) !== v.micro) bad++; }
-  const ideal = compoundIdealSeries({ startMicro: 300000000n, startDay: '2026-01-01', schedule: [{ from: '2026-01-01', rate: '0.05' }], throughDay: addDays('2026-01-01', 364) });
+  const ideal = compoundIdealSeries({ startMicro: BigInt(300000000), startDay: '2026-01-01', schedule: [{ from: '2026-01-01', rate: '0.05' }], throughDay: addDays('2026-01-01', 364) });
   for (const [n, micro] of LIVE_IDEAL_VECTORS) { total++; if (String(ideal[n].idealMicro) !== micro) bad++; }
   let events = 0;
   LIVE_PNL_VECTORS.forEach((o, i) => { const fills = o.fills.map((f, k) => ({ origin: 'real', sid: `P${i}`, dir: o.dir, at: Date.UTC(2026, 9, 24) + k * 1000, fee: { state: 'entered', amount: '0' }, funding: { state: 'entered', amount: '0' }, ...f })), t = pnlComputeTrade(fills); t.events.forEach((e, k) => { total++; events++; if (String(e.grossMicro) !== o.grossMicroPerEvent[k]) bad++; }); });
@@ -170,11 +171,11 @@ export function liveBackup(env) {
   try { const latest = list.sort((a, b) => (a.name < b.name ? 1 : -1))[0]; rest = backupRestore(benv, latest.id, { now: t1 + 30 * DAY }); g4 = JSON.stringify(backupFingerprint(scr.se)) === live0 && storeIntegrityCheck(benv.drive.openStore(rest.id)).ok; } catch (e) { g4 = false; }
   items.push(liveItem('G4', g4 ? 'PASS' : 'FAIL', `복원은 새 사본으로 생성·검증, 원본 불변 ${g4 ? '확인' : '실패'}`));
   let g5 = false, g6 = false;
-  if (rest) { env.tamper(rest.id); const ic = storeIntegrityCheck(benv.drive.openStore(rest.id)), sw = backupSwitchChecks(benv, rest.id, { expectEnv: 'test' }); g5 = !ic.ok && !sw.ok; g6 = backupSwitchChecks(benv, list.find(x => x.id !== rest.id)?.id ?? rest.id, { expectEnv: 'prod' }).issues.includes('env-mismatch'); }
+  if (rest) { env.tamper(rest.id); const ic = storeIntegrityCheck(benv.drive.openStore(rest.id)), sw = backupSwitchChecks(benv, rest.id, { expectEnv: 'test' }); g5 = !ic.ok && !sw.ok; g6 = backupSwitchChecks(benv, nullishOr(nullishOr(list.find(x => x.id !== rest.id), {}).id, rest.id), { expectEnv: 'prod' }).issues.includes('env-mismatch'); }
   items.push(liveItem('G5', g5 ? 'PASS' : 'FAIL', `임시 복원본 변조(셀 1개) ${g5 ? '무결성 실패로 탐지·전환 거부' : '탐지 실패'}`));
   items.push(liveItem('G6', g6 ? 'PASS' : 'FAIL', `환경 표식 불일치(test 시트를 prod 기대로 점검) ${g6 ? '거부' : '통과됨(위험)'}`));
   storeCreate(scr.se, 'setting', { name: 'backupTelegramCsv', value: 'on' }, A); const h0 = env.httpCount(); let g7;
-  try { const r = backupRun(benv, { now: t1 + 40 * DAY }); g7 = r.warnings.includes('telegram-csv-unsupported') && env.httpCount() === h0; } catch { g7 = false; }
+  try { const r = backupRun(benv, { now: t1 + 40 * DAY }); g7 = r.warnings.includes('telegram-csv-unsupported') && env.httpCount() === h0; } catch (e_) { g7 = false; }
   items.push(liveItem('G7', g7 ? 'PASS' : 'FAIL', `Telegram CSV 설정을 켜도 전송 0건(경고만) ${g7 ? '확인' : '실패'}`));
   return items;
 }

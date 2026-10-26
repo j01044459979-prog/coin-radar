@@ -25,11 +25,11 @@ export function checkPollItems(st, { minRuns = 20, last = null } = {}) {
 const checkSym = { PASS: '✔', FAIL: '✖', WARN: '▲', WAIT: '…', SKIP: '–' };
 export function checkReportText(sections) {
   const all = sections.flatMap(s => s.items), sum = checkSummary(all);
-  return [`RICH300 점검 결과: ${CHECK_STATUS_LABEL[sum.verdict]} (통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT})`, ...sections.flatMap(s => [`[${s.title}]`, ...s.items.map(i => `${checkSym[i.status] ?? '?'} ${i.id} ${i.text}`)])].join('\n');
+  return [`RICH300 점검 결과: ${CHECK_STATUS_LABEL[sum.verdict]} (통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT})`, ...sections.flatMap(s => [`[${s.title}]`, ...s.items.map(i => `${(checkSym[i.status] != null ? checkSym[i.status] : '?')} ${i.id} ${i.text}`)])].join('\n');
 }
 export function checkRenderHtml({ sections, generatedAt, notes = [] }, { appUrl } = {}) {
   const all = sections.flatMap(s => s.items), sum = checkSummary(all), tone = s => (s === 'PASS' ? 'pos' : s === 'FAIL' ? 'neg' : 'zero');
-  const sec = s => `<section><h2>${dashEsc(s.title)}</h2><div class="card"><table><tbody>${s.items.map(i => `<tr><td class="${tone(i.status)}">${checkSym[i.status] ?? '?'} ${dashEsc(CHECK_STATUS_LABEL[i.status] ?? i.status)}</td><td style="text-align:left">${dashEsc(i.id)} · ${dashEsc(i.text)}</td></tr>`).join('') || '<tr><td colspan="2" class="sub">항목 없음</td></tr>'}</tbody></table></div></section>`;
+  const sec = s => `<section><h2>${dashEsc(s.title)}</h2><div class="card"><table><tbody>${s.items.map(i => `<tr><td class="${tone(i.status)}">${(checkSym[i.status] != null ? checkSym[i.status] : '?')} ${dashEsc((CHECK_STATUS_LABEL[i.status] != null ? CHECK_STATUS_LABEL[i.status] : i.status))}</td><td style="text-align:left">${dashEsc(i.id)} · ${dashEsc(i.text)}</td></tr>`).join('') || '<tr><td colspan="2" class="sub">항목 없음</td></tr>'}</tbody></table></div></section>`;
   return `${dashHead('RICH300 점검')}<body><main><header><h1>RICH 300 · 설치 점검</h1></header>${dashNav('check', appUrl)}
 <section><div class="card hero"><div class="k">전체 판정</div><div class="big ${tone(sum.verdict)}">${dashEsc(CHECK_STATUS_LABEL[sum.verdict])}</div><div class="sub">통과 ${sum.PASS} · 실패 ${sum.FAIL} · 주의 ${sum.WARN} · 진행 중 ${sum.WAIT}${sum.WAIT ? ' — 잠시 뒤 새로 고침' : ''}</div></div></section>
 ${notes.map(n => `<div class="notice">${dashEsc(n)}</div>`).join('')}

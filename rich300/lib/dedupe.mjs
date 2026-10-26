@@ -2,7 +2,7 @@
 export function dedupeCanonical(v) { return JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? `${x}n` : x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x)); }
 export const dedupeSame = (a, b) => dedupeCanonical(a) === dedupeCanonical(b);
 export function dedupeAppend(list, rec, keyField) {
-  const key = rec?.[keyField];
+  const key = (rec == null ? undefined : rec[keyField]);
   if (key === undefined || key === null || key === '') throw new Error(`${keyField} 필요`);
   const prev = list.find(r => r[keyField] === key);
   if (!prev) return { list: [...list, rec], status: 'added' };
@@ -22,7 +22,7 @@ export function dedupeRevise(log, key, patch, meta = {}) {
   const prev = dedupeLatest(log).get(key);
   if (!prev) throw new Error(`수정 대상 없음: ${key}`);
   if (prev.void) throw new Error(`취소된 기록은 수정할 수 없음: ${key}`);
-  return [...log, { ...prev, ...patch, key, rev: prev.rev + 1, prevRev: prev.rev, at: meta.at ?? null, reason: meta.reason ?? null }];
+  return [...log, { ...prev, ...patch, key, rev: prev.rev + 1, prevRev: prev.rev, at: (meta.at != null ? meta.at : null), reason: (meta.reason != null ? meta.reason : null) }];
 }
 export const dedupeVoid = (log, key, meta = {}) => dedupeRevise(log, key, { void: true }, meta);
 export function dedupeLatest(log) { const m = new Map(); for (const r of log) { const p = m.get(r.key); if (!p || r.rev > p.rev) m.set(r.key, r); } return m; }

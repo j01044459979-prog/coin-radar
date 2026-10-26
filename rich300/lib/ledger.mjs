@@ -9,14 +9,15 @@ import { dayEndMs, dayRange, dayStartMs, dayToIndex, kstDayOf } from './time.mjs
 import { compoundIdealSeries, compoundNextTarget, compoundRateOn } from './compound.mjs';
 import { pnlComputeAll, pnlDailyFlows } from './pnl.mjs';
 import { dedupeAppend } from './dedupe.mjs';
+import { nullishOr } from './nullish.mjs';
 
-export const LEDGER_REVIEW_ABS_MICRO = 1000000n;        // 1 USDT
-export const LEDGER_REVIEW_PPM = 5000n;                  // 0.5%
+export const LEDGER_REVIEW_ABS_MICRO = BigInt(1000000);        // 1 USDT
+export const LEDGER_REVIEW_PPM = BigInt(5000);                  // 0.5%
 
 const ledgerMicro = v => decToMicro(dec(v));
 function ledgerUnique(list, keyField, label) {
   let out = [];
-  for (const r of list ?? []) { const x = dedupeAppend(out, r, keyField); if (x.status === 'conflict') throw new Error(`${label} 충돌(같은 ${keyField}, 다른 내용): ${r[keyField]}`); out = x.list; }
+  for (const r of (list != null ? list : [])) { const x = dedupeAppend(out, r, keyField); if (x.status === 'conflict') throw new Error(`${label} 충돌(같은 ${keyField}, 다른 내용): ${r[keyField]}`); out = x.list; }
   return out;                                              // 같은 id·같은 내용의 재전송은 한 번만 반영
 }
 
@@ -39,24 +40,24 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
   const rows = []; let prevClose = startMicro, ledgerWallet = startMicro;
   // 한 번만 훑는 색인: 일별 입출금·조정 합계, 체결 시간순 이벤트(미결제 상태 갱신), 일별 미입력 수수료·펀딩 표시
   const cashByDay = new Map(), adjByDay = new Map(), missingByDay = new Map(), evs = [];
-  for (const c of uCash) { const k = kstDayOf(c.at); cashByDay.set(k, (cashByDay.get(k) ?? 0n) + ledgerMicro(c.amount)); }
-  for (const a of uAdj) { const k = kstDayOf(a.at); adjByDay.set(k, (adjByDay.get(k) ?? 0n) + ledgerMicro(a.amount)); }
+  for (const c of uCash) { const k = kstDayOf(c.at); cashByDay.set(k, (nullishOr(cashByDay.get(k), BigInt(0))) + ledgerMicro(c.amount)); }
+  for (const a of uAdj) { const k = kstDayOf(a.at); adjByDay.set(k, (nullishOr(adjByDay.get(k), BigInt(0))) + ledgerMicro(a.amount)); }
   for (const t of trades.values()) for (const e of t.events) {
     evs.push({ at: e.at, sid: t.sid, dir: t.dir, qtyAfter: e.qtyAfter });
-    if (e.feeState === 'missing' || e.fundingState === 'missing') { const m = missingByDay.get(e.day) ?? new Set(); if (e.feeState === 'missing') m.add('fee-missing'); if (e.fundingState === 'missing') m.add('funding-missing'); missingByDay.set(e.day, m); }
+    if (e.feeState === 'missing' || e.fundingState === 'missing') { const m = nullishOr(missingByDay.get(e.day), new Set()); if (e.feeState === 'missing') m.add('fee-missing'); if (e.fundingState === 'missing') m.add('funding-missing'); missingByDay.set(e.day, m); }
   }
   evs.sort((a, b) => a.at - b.at); let evPtr = 0; const openQty = new Map();
   for (let i = 0; i < days.length; i++) {
     const day = days[i], endMs = dayEndMs(day), rate = compoundRateOn(day, schedule);
-    const fl = flows.get(day) ?? { netEnteredMicro: 0n, grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n };
-    const cash = cashByDay.get(day) ?? 0n, adj = adjByDay.get(day) ?? 0n;
+    const fl = nullishOr(flows.get(day), { netEnteredMicro: BigInt(0), grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0) });
+    const cash = nullishOr(cashByDay.get(day), BigInt(0)), adj = nullishOr(adjByDay.get(day), BigInt(0));
     ledgerWallet += fl.netEnteredMicro + cash + adj;
     const target = compoundNextTarget(prevClose, rate);
-    const eq = eqByDay.get(day) ?? null, equityIn = eq ? ledgerMicro(eq.equity) : null;
+    const eq = nullishOr(eqByDay.get(day), null), equityIn = eq ? ledgerMicro(eq.equity) : null;
     // 그날 끝 미결제 포지션과 opening 기준 미실현 보정
-    while (evPtr < evs.length && evs[evPtr].at < endMs) { const e = evs[evPtr++]; if (e.qtyAfter > 0n) openQty.set(e.sid, { dir: e.dir, qty: e.qtyAfter }); else openQty.delete(e.sid); }
+    while (evPtr < evs.length && evs[evPtr].at < endMs) { const e = evs[evPtr++]; if (e.qtyAfter > BigInt(0)) openQty.set(e.sid, { dir: e.dir, qty: e.qtyAfter }); else openQty.delete(e.sid); }
     const openNow = [...openQty.entries()].map(([sid, v]) => ({ sid, dir: v.dir, openQtyDec: v.qty }));
-    let openingU = 0n, openingUnknown = false;
+    let openingU = BigInt(0), openingUnknown = false;
     for (const t of openNow) {
       const o = openingSids.get(t.sid); if (!o) continue;
       if (o.origEntry === undefined || o.origEntry === null) { openingUnknown = true; continue; }
@@ -68,11 +69,11 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
     let diffMicro = null, uncertain = false, needsReview = false, expected = null;
     if (equityIn !== null) {
       if (unrl === null && openNow.length) { uncertain = true; rowFlags.push('unrealized-missing'); expected = ledgerWallet; }
-      else if (openingUnknown) { uncertain = true; rowFlags.push('opening-basis-unknown'); expected = ledgerWallet + (unrl ?? 0n); }
-      else expected = ledgerWallet + (unrl ?? 0n) - openingU;
+      else if (openingUnknown) { uncertain = true; rowFlags.push('opening-basis-unknown'); expected = ledgerWallet + ((unrl != null ? unrl : BigInt(0))); }
+      else expected = ledgerWallet + ((unrl != null ? unrl : BigInt(0))) - openingU;
       diffMicro = equityIn - expected;
-      const rel = decRoundDiv((equityIn < 0n ? -equityIn : equityIn) * LEDGER_REVIEW_PPM, 1000000n), tol = rel > LEDGER_REVIEW_ABS_MICRO ? rel : LEDGER_REVIEW_ABS_MICRO;
-      needsReview = (diffMicro < 0n ? -diffMicro : diffMicro) > tol;
+      const rel = decRoundDiv((equityIn < BigInt(0) ? -equityIn : equityIn) * LEDGER_REVIEW_PPM, BigInt(1000000)), tol = rel > LEDGER_REVIEW_ABS_MICRO ? rel : LEDGER_REVIEW_ABS_MICRO;
+      needsReview = (diffMicro < BigInt(0) ? -diffMicro : diffMicro) > tol;
       if (needsReview) rowFlags.push('ledger-mismatch');
       if (eq.late) rowFlags.push('late-entry');
     }
@@ -81,11 +82,11 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
     const closeSource = equityIn !== null ? 'input' : 'ledger';
     if (closeSource === 'ledger') rowFlags.push('close-from-ledger');
     if (fl.feeEstimatedMicro || fl.fundingEstimatedMicro) rowFlags.push('has-estimates');
-    for (const f of missingByDay.get(day) ?? []) if (!rowFlags.includes(f)) rowFlags.push(f);
+    for (const f of nullishOr(missingByDay.get(day), [])) if (!rowFlags.includes(f)) rowFlags.push(f);
     const pnl = close - prevClose - cash;
     rows.push({ day, n: i + 1, rate, startMicro: prevClose, targetCloseMicro: target.targetCloseMicro, targetProfitMicro: target.targetProfitMicro,
       idealMicro: ideal[i + 1].idealMicro, closeMicro: close, closeSource, cashflowMicro: cash, adjustmentMicro: adj, pnlMicro: pnl,
-      achievementPpm: target.targetProfitMicro > 0n ? decRoundDiv(pnl * 1000000n, target.targetProfitMicro) : null,
+      achievementPpm: target.targetProfitMicro > BigInt(0) ? decRoundDiv(pnl * BigInt(1000000), target.targetProfitMicro) : null,
       ledgerWalletMicro: ledgerWallet, expectedEquityMicro: expected, diffMicro, needsReview, uncertain,
       realizedGrossMicro: fl.grossMicro, realizedNetMicro: fl.netEnteredMicro, feesEnteredMicro: fl.feeEnteredMicro, fundingEnteredMicro: fl.fundingEnteredMicro, openPositions: openNow.length, flags: rowFlags });
     prevClose = close;
@@ -96,19 +97,19 @@ export function ledgerBuildDaily({ challenge, fills = [], cashflows = [], equity
 // 요약: 누적 수익률(시작 자금 대비 단순), 최고 평가액, 최대 낙폭(입출금을 제거한 곡선 기준)
 export function ledgerSummarize(rows, startMicro) {
   if (!rows.length) return null;
-  let cum = 0n, peak = startMicro, maxDd = 0n, maxDdPpm = 0n, highest = startMicro, met = 0, inputDays = 0, ledgerDays = 0, review = 0, curve = startMicro;
+  let cum = BigInt(0), peak = startMicro, maxDd = BigInt(0), maxDdPpm = BigInt(0), highest = startMicro, met = 0, inputDays = 0, ledgerDays = 0, review = 0, curve = startMicro;
   for (const r of rows) {
     cum += r.cashflowMicro; curve = r.closeMicro - cum;
     if (curve > peak) peak = curve;
-    const dd = peak - curve; if (dd > maxDd) { maxDd = dd; maxDdPpm = peak > 0n ? decRoundDiv(dd * 1000000n, peak) : 0n; }
+    const dd = peak - curve; if (dd > maxDd) { maxDd = dd; maxDdPpm = peak > BigInt(0) ? decRoundDiv(dd * BigInt(1000000), peak) : BigInt(0); }
     if (r.closeMicro > highest) highest = r.closeMicro;
-    if (r.targetProfitMicro > 0n && r.pnlMicro >= r.targetProfitMicro) met++;
+    if (r.targetProfitMicro > BigInt(0) && r.pnlMicro >= r.targetProfitMicro) met++;
     if (r.closeSource === 'input') inputDays++; else ledgerDays++;
     if (r.needsReview) review++;
   }
   const last = rows[rows.length - 1], pnlTotal = last.closeMicro - startMicro - cum, curDd = peak - curve;
-  return { startMicro, latestCloseMicro: last.closeMicro, netCashflowMicro: cum, pnlTotalMicro: pnlTotal, returnOnStartPpm: startMicro > 0n ? decRoundDiv(pnlTotal * 1000000n, startMicro) : null,
-    highestEquityMicro: highest, maxDrawdownMicro: maxDd, maxDrawdownPpm: maxDdPpm, currentDrawdownMicro: curDd, currentDrawdownPpm: peak > 0n ? decRoundDiv(curDd * 1000000n, peak) : 0n,
+  return { startMicro, latestCloseMicro: last.closeMicro, netCashflowMicro: cum, pnlTotalMicro: pnlTotal, returnOnStartPpm: startMicro > BigInt(0) ? decRoundDiv(pnlTotal * BigInt(1000000), startMicro) : null,
+    highestEquityMicro: highest, maxDrawdownMicro: maxDd, maxDrawdownPpm: maxDdPpm, currentDrawdownMicro: curDd, currentDrawdownPpm: peak > BigInt(0) ? decRoundDiv(curDd * BigInt(1000000), peak) : BigInt(0),
     daysTargetMet: met, days: rows.length, daysWithInput: inputDays, daysLedgerOnly: ledgerDays, daysNeedingReview: review, idealLatestMicro: last.idealMicro, gapToIdealMicro: last.closeMicro - last.idealMicro };
 }
 export const ledgerMicroLabel = (m, dp = 2) => decFormat(microToDec(m), dp);

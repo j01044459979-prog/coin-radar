@@ -13,20 +13,20 @@ import { storeLoadLedgerInputs } from './store.mjs';
 
 const dashGroup = s => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 export function dashUsd(micro, { sign = false, dp = 2 } = {}) {      // 마이크로 → "1,234.56" (sign=true면 +/− 부호)
-  const neg = micro < 0n, a = neg ? -micro : micro, s = decFormat(a * 1000000n, dp), [i, f] = s.split('.');
+  const neg = micro < BigInt(0), a = neg ? -micro : micro, s = decFormat(a * BigInt(1000000), dp), [i, f] = s.split('.');
   const body = f === undefined ? dashGroup(i) : `${dashGroup(i)}.${f}`, zero = /^[0.,]*$/.test(body);
   return `${neg && !zero ? '−' : sign && !zero ? '+' : ''}${body}`;
 }
 export function dashPct(ppm, { sign = false, dp = 2 } = {}) {        // ppm(1e6=100%) → "12.34%"
   if (ppm === null || ppm === undefined) return '—';
-  const neg = ppm < 0n, a = neg ? -ppm : ppm, s = decFormat(a * 100000000n, dp), zero = /^[0.]*$/.test(s);   // ppm/1e4 = %, 십진 1e-12 단위로 변환
+  const neg = ppm < BigInt(0), a = neg ? -ppm : ppm, s = decFormat(a * BigInt(100000000), dp), zero = /^[0.]*$/.test(s);   // ppm/1e4 = %, 십진 1e-12 단위로 변환
   return `${neg && !zero ? '−' : sign && !zero ? '+' : ''}${s}%`;
 }
 const dashTrim = v => { const t = String(v); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };
 const dashRatePct = rate => `${dashTrim(decFormat(decMul(dec(rate), dec(100)), 2))}%`;
 
 export const DASH_DAILY_LIMIT = 30;
-const dashZeroFloor = v => (v < 0n ? 0n : v);
+const dashZeroFloor = v => (v < BigInt(0) ? BigInt(0) : v);
 
 // inputs: storeLoadLedgerInputs 형태
 export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
@@ -35,24 +35,24 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   if (!led.rows.length) return { ...model, daily: [], warnings: [{ type: 'not-started', text: '챌린지 시작일 전입니다' }] };
   const rows = led.rows, t = rows[rows.length - 1];
   // ── 1~3. 현재 총자산·누적 손익·누적 수익률: 입력된 평가액 기준(외부 입출금은 손익에서 제외) ──
-  let cur = null, cum = 0n, curCash = 0n;
+  let cur = null, cum = BigInt(0), curCash = BigInt(0);
   for (const r of rows) { cum += r.cashflowMicro; if (r.closeSource === 'input') { cur = r; curCash = cum; } }
   const todayInput = t.closeSource === 'input';
   if (cur) {
-    const pnl = cur.closeMicro - startMicro - curCash, ppm = decRoundDiv(pnl * 1000000n, startMicro);
-    model.current = { label: dashUsd(cur.closeMicro), micro: String(cur.closeMicro), day: cur.day, today: todayInput, stale: !todayInput, pnlLabel: dashUsd(pnl, { sign: true }), pnlPositive: pnl > 0n, pnlNegative: pnl < 0n,
-      returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === 0n ? null : dashUsd(curCash, { sign: true }) };
+    const pnl = cur.closeMicro - startMicro - curCash, ppm = decRoundDiv(pnl * BigInt(1000000), startMicro);
+    model.current = { label: dashUsd(cur.closeMicro), micro: String(cur.closeMicro), day: cur.day, today: todayInput, stale: !todayInput, pnlLabel: dashUsd(pnl, { sign: true }), pnlPositive: pnl > BigInt(0), pnlNegative: pnl < BigInt(0),
+      returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === BigInt(0) ? null : dashUsd(curCash, { sign: true }) };
   } else model.current = null;
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
   const rem = cur ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
   const real = t.realizedNetMicro;
   model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
-    realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > 0n, realizedNegative: real < 0n, remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
+    realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
     needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
   model.daily = rows.slice(-DASH_DAILY_LIMIT).reverse().map(r => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
-    return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > 0n, pnlNegative: p < 0n, pnlBasis: input ? 'equity' : 'realized',
+    return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > BigInt(0), pnlNegative: p < BigInt(0), pnlBasis: input ? 'equity' : 'realized',
       targetLabel: dashUsd(r.targetCloseMicro), met: input && r.closeMicro >= r.targetCloseMicro, review: r.needsReview };
   });
   model.dailyTotal = rows.length;
@@ -99,7 +99,7 @@ export function dashSampleInputs() {
   const inputs = { challenge: { startEquity: '300', startDay, rateSchedule }, fills, cashflows, adjustments: [], openingPositions: [], equityInputs: [] }, throughDay = addDays(startDay, days - 1);
   // 평가액 입력은 장부 잔고를 기준으로 만들되, 이틀은 일부러 비워 "장부 근사" 표시를 보여 준다.
   const led = ledgerBuildDaily({ ...inputs, throughDay });
-  inputs.equityInputs = led.rows.filter((r, i) => i !== 5 && i !== 14).map(r => ({ day: r.day, equity: decFormat(r.ledgerWalletMicro * 1000000n, 2) }));
+  inputs.equityInputs = led.rows.filter((r, i) => i !== 5 && i !== 14).map(r => ({ day: r.day, equity: decFormat(r.ledgerWalletMicro * BigInt(1000000), 2) }));
   return { inputs, signals, responses, reviews, throughDay };
 }
 export function dashSampleModel(now) { const s = dashSampleInputs(); return dashBuildModel({ inputs: s.inputs, throughDay: s.throughDay, now, sample: true }); }

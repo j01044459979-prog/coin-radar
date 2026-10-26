@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { buildEngine } from '../build.mjs';
+import { checkGasSyntax } from './gas-compat.mjs';
 
 const here = p => new URL(p, import.meta.url);
 export const BUNDLE_GAS_ORDER = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Install.gs'];
@@ -18,6 +19,7 @@ export function makeBundle({ env = 'prod' } = {}) {
   const html = Object.fromEntries(present.filter(f => f.endsWith('.html')).map(f => [f, readFileSync(new URL(f, dir), 'utf8')]));
   const manifest = readFileSync(here('./appsscript.json'), 'utf8');
   new vm.Script(code);                                                                  // 문법 검사
+  const incompat = checkGasSyntax(code); if (incompat.length) throw new Error(`Apps Script 가 거부할 수 있는 문법 ${incompat.length}건 (첫 곳: Code.gs ${incompat[0].line}번째 줄 '${incompat[0].token.trim()}' — ${incompat[0].why}). 소스(rich300/lib)에서 고치세요`);   // Apps Script 호환 검사
   if (/\bs0[A-Z]\w*\s*\(/.test(code)) throw new Error('S0 프로브 코드가 섞였습니다');
   const files = { 'Code.gs': code, ...html, 'appsscript.json': manifest };
   const lines = Object.entries(files).map(([n, c]) => `${createHash('sha256').update(c).digest('hex')}  ${String(Buffer.byteLength(c)).padStart(8)}  ${n}`);

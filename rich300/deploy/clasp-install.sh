@@ -7,21 +7,57 @@
 #  하지 않는 일: 새 프로젝트 생성, 프로젝트 삭제, 웹 앱 배포, Telegram 호출, 스크립트 속성 변경. 비밀값을 다루지 않는다.
 #  로그인: Cloud Shell(원격)에서는 clasp 의 '--no-localhost' 방식 — 주소를 열어 승인하면 열리지 않는 페이지(localhost)로 이동하고, 그 주소창의 URL 전체(code= 포함)를 이 터미널에 붙여 넣는다(채팅에 공유하지 말 것). 내 PC(브라우저와 같은 기기)에서 실행하면 붙여 넣기 없이 자동 완료된다.
 #  권한: 기본 clasp 로그인은 cloud-platform 등 넓은 범위를 요청하므로, 이 스크립트는 임시 폴더의 매니페스트로 script.projects·userinfo.email 두 범위만 요청한다(--use-project-scopes). 부족하면 RICH300_SCOPES=default 로 기본 범위 사용.
-#  시험·자동화용 환경 변수: RICH300_CONFIRM(확인 값 = ID 마지막 6글자), RICH300_TTY(키보드 입력 장치 대체, 기본 /dev/tty), RICH300_LOGIN(paste|local), RICH300_SCOPES(default), RICH300_SRC_DIR(로컬 저장소 사본, 시험 전용), RICH300_REPO, RICH300_CLASP(clasp 명령 대체).
+#  시험·자동화용 환경 변수: RICH300_CONFIRM(확인 값 = ID 마지막 6글자), RICH300_TTY(키보드 입력 장치 대체, 기본 /dev/tty), RICH300_LOGIN(paste|local), RICH300_SCOPES(default), RICH300_SRC_DIR(로컬 저장소 사본, 시험 전용), RICH300_REPO, RICH300_CLASP(clasp 명령 대체), RICH300_CLASP_VERSION(npx 로 받을 때 버전, 기본 3.4.1 — PATH 에 clasp 3.x 가 있으면 그것을 씀).
+#  push 실패 시: clasp 가 가린 Google 오류 본문을 Apps Script API 직접 호출(projects.updateContent)로 그대로 보여 주고, 그 호출이 성공하면 반영된 것으로 보고 다시 내려받아 확인한다. 실패하면 원격이 바뀌지 않았는지 확인하고 백업 기준으로 복구한다. API 시험용: RICH300_API_BASE, RICH300_TOKEN_URL, RICH300_CLASPRC.
 set -euo pipefail
 SCRIPT_ID="${1:-}"; COMMIT="${2:-}"
 REPO="${RICH300_REPO:-https://github.com/j01044459979-prog/coin-radar.git}"
-CLASP="${RICH300_CLASP:-npx -y @google/clasp@3.3.0}"
+CLASP_PIN="${RICH300_CLASP_VERSION:-3.4.1}"
+# clasp: 이미 설치된 clasp 3.x(Cloud Shell 에서 쓰던 것)를 그대로 쓴다. 없거나 3.x 가 아니면 고정 버전을 npx 로 쓴다(로그인한 clasp 와 push 하는 clasp 버전이 달라지지 않게).
+if [[ -n "${RICH300_CLASP:-}" ]]; then CLASP="$RICH300_CLASP"
+elif command -v clasp >/dev/null 2>&1 && [[ "$(clasp --version </dev/null 2>/dev/null | head -n1)" =~ ^3\. ]]; then CLASP="clasp"
+else CLASP="npx -y @google/clasp@$CLASP_PIN"; fi
 WORK="$(mktemp -d)"; BACKUP=""; WE_LOGGED_IN=0; TTY_DEV="${RICH300_TTY:-/dev/tty}"; TTY_OPEN=0
 cleanup() { [[ "$WE_LOGGED_IN" == 1 ]] && { $CLASP logout </dev/null >/dev/null 2>&1 || true; }; rm -rf "$WORK"; }
 trap cleanup EXIT
 say() { printf '%s\n' "$*"; }
 fail() { say "[FAIL] $*"; [[ -n "$BACKUP" ]] && say "백업 폴더: $BACKUP"; exit 1; }
+say "(clasp: $CLASP)"
 [[ -n "$SCRIPT_ID" && -n "$COMMIT" ]] || fail "사용법: bash -s -- <프로젝트ID> <커밋40자> (두 값 모두 필수, 기본값 없음). 프로젝트 ID 는 편집기 주소 https://script.google.com/home/projects/<ID>/edit 의 <ID> 입니다"
 [[ "$SCRIPT_ID" =~ ^[A-Za-z0-9_-]{20,80}$ ]] || fail "프로젝트 ID 형식이 올바르지 않습니다"
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail "커밋은 40자리 16진수 전체여야 합니다"
 command -v node >/dev/null || fail "node 가 필요합니다(Cloud Shell 에는 기본 설치)"
 write_clasp() { printf '{"scriptId":"%s","rootDir":".","fileExtension":"gs"}\n' "$SCRIPT_ID" > "$1/.clasp.json"; }
+# Google Apps Script API 직접 호출(진단 겸 대체 경로): clasp 는 push 실패 때 API 오류 본문을 버리고 짧은 문장만 보여 주므로, 같은 요청(projects.updateContent)을 직접 보내 HTTP 상태·오류 본문(토큰은 출력하지 않음)을 그대로 보여 준다. 성공하면 clasp push 와 같은 결과다.
+API_JS="$WORK/api-push.mjs"
+cat > "$API_JS" <<'APIJS'
+import fs from 'node:fs'; import path from 'node:path';
+const [scriptId, dir] = process.argv.slice(2), env = process.env, say = (...a) => console.log(...a);
+const API = env.RICH300_API_BASE || 'https://script.googleapis.com', TOK = env.RICH300_TOKEN_URL || 'https://oauth2.googleapis.com/token', rc = env.RICH300_CLASPRC || path.join(env.HOME, '.clasprc.json');
+const show = async r => { const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch {} return { status: r.status, j, t }; };
+const err = x => { const e = x.j && x.j.error; return e && typeof e === 'object' ? { status: e.status, message: e.message, details: e.details } : e ? { error: e, description: x.j.error_description } : x.t.slice(0, 1500); };
+const hint = (st, msg = '') => st === 401 ? '로그인 토큰이 만료·취소됨 → 아래 명령으로 로그아웃 후 다시 실행: clasp logout' : st === 403 && /has not been used|disabled|SERVICE_DISABLED/i.test(msg) ? 'Apps Script API 가 꺼져 있음 → https://script.google.com/home/usersettings 에서 켜기(몇 분 걸릴 수 있음)' : st === 403 ? '권한 없음 → 이 프로젝트를 만든 같은 Google 계정으로 로그인했는지, 요청 권한(script.projects)이 승인됐는지 확인' : st === 404 ? '프로젝트 ID 가 틀리거나 이 계정에 없는 프로젝트' : st === 400 ? '요청 내용 거부(매니페스트·코드 형식 문제일 수 있음) — 위 오류 본문의 message 확인' : st === 429 ? '요청 한도 초과 — 잠시 후 다시' : '';
+let store; try { store = JSON.parse(fs.readFileSync(rc, 'utf8')); } catch (e) { say('  인증 파일(' + rc + ')을 읽지 못했습니다: ' + e.message); process.exit(2); }
+const c = (store.tokens && store.tokens.default) || (store.token && store.oauth2ClientSettings ? { ...store.token, client_id: store.oauth2ClientSettings.clientId, client_secret: store.oauth2ClientSettings.clientSecret } : null) || (store.refresh_token ? store : null);
+if (!c) { say('  인증 파일에 로그인 정보가 없습니다 — clasp login 을 다시 하세요'); process.exit(2); }
+let access = c.access_token;
+if (c.refresh_token && c.client_id && c.client_secret) {
+  const r = await show(await fetch(TOK, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: c.client_id, client_secret: c.client_secret, refresh_token: c.refresh_token, grant_type: 'refresh_token' }) }));
+  if (r.status !== 200) { say('  토큰 갱신 실패: HTTP ' + r.status + ' ' + JSON.stringify(err(r))); say('  → ' + hint(401)); process.exit(3); }
+  access = r.j.access_token; say('  토큰 갱신 OK — 승인된 권한 범위: ' + (r.j.scope || '(알 수 없음)').split(' ').map(x => x.replace('https://www.googleapis.com/auth/', '')).join(', '));
+}
+if (!access) { say('  액세스 토큰이 없습니다 — clasp login 을 다시 하세요'); process.exit(2); }
+const TYPES = { gs: 'SERVER_JS', js: 'SERVER_JS', html: 'HTML', json: 'JSON' }, files = [];
+for (const f of fs.readdirSync(dir).sort()) { if (f === '.clasp.json' || f.startsWith('.')) continue; const ext = f.split('.').pop(), name = f.slice(0, -(ext.length + 1)); if (!TYPES[ext] || (ext === 'json' && name !== 'appsscript')) continue; files.push({ name, type: TYPES[ext], source: fs.readFileSync(path.join(dir, f), 'utf8') }); }
+if (!files.some(f => f.name === 'appsscript')) { say('  appsscript.json 이 없어 보내지 않습니다'); process.exit(2); }
+say('  전송 대상 ' + files.length + '개: ' + files.map(f => f.name + '(' + f.type + ',' + Buffer.byteLength(f.source) + 'B)').join(', '));
+const r = await show(await fetch(API + '/v1/projects/' + encodeURIComponent(scriptId) + '/content', { method: 'PUT', headers: { authorization: 'Bearer ' + access, 'content-type': 'application/json' }, body: JSON.stringify({ files }) }));
+if (r.status === 200) { say('  Apps Script API 응답: HTTP 200 (반영됨)'); process.exit(0); }
+const e = err(r); say('  Apps Script API 응답: HTTP ' + r.status); say('  오류 본문: ' + (typeof e === 'string' ? e : JSON.stringify(e, null, 2).replace(/\n/g, '\n  '))); const h = hint(r.status, JSON.stringify(e)); if (h) say('  → ' + h); process.exit(4);
+APIJS
+api_push() {  # $1=폴더 — 종료코드 0=반영됨
+  node "$API_JS" "$SCRIPT_ID" "$1" </dev/null
+}
 # 디렉터리에서 이름(확장자 제외)으로 파일 찾기: Code → Code.gs 또는 Code.js
 find_src() { local d="$1" n="$2"; for e in gs js; do [[ -f "$d/$n.$e" ]] && { printf '%s' "$d/$n.$e"; return 0; }; done; return 1; }
 # 키보드(터미널) 입력: '| bash' 로 실행되면 stdin 은 스크립트 자신이므로, 사용자 입력은 항상 터미널(fd 3)에서만 읽고 clasp 로그인에도 fd 3 을 물려 준다.
@@ -40,6 +76,8 @@ mkdir -p "$WORK/push"; for f in Code.gs Fill.html appsscript.json; do
   [[ -n "$want" && "$want" == "$got" ]] || fail "$f 가 MANIFEST 와 다릅니다(잘렸거나 손상)"; cp "$SRC/$f" "$WORK/push/$f"; done
 node -e "process.exit(require('fs').readFileSync('$WORK/push/Code.gs','utf8').endsWith('\n}\n')?0:1)" || fail "Code.gs 끝부분이 완결되지 않았습니다"
 node -e "new (require('vm').Script)(require('fs').readFileSync('$WORK/push/Code.gs','utf8'))" 2>/dev/null || fail "Code.gs 문법 검사 실패"
+[[ -f "$SRC/../deploy/gas-compat.mjs" ]] || fail "Apps Script 호환 검사 도구(rich300/deploy/gas-compat.mjs)가 이 커밋에 없습니다"
+COMPAT_OUT="$(node "$SRC/../deploy/gas-compat.mjs" "$WORK/push/Code.gs" 2>&1)" || fail "Code.gs 에 Apps Script 가 거부할 수 있는 최신 문법이 있습니다(push 하면 'Syntax error: ParseError' 로 실패): $(printf '%s' "$COMPAT_OUT" | head -n 5 | tr '\n' ' ')"
 node -e "const m=JSON.parse(require('fs').readFileSync('$WORK/push/appsscript.json','utf8'));const w=m.webapp||{};if(w.access!=='MYSELF'||w.executeAs!=='USER_ACCESSING'||m.runtimeVersion!=='V8')process.exit(1)" || fail "매니페스트가 '나만 접근·접속한 사용자로 실행·V8' 이 아닙니다"
 say "[PASS] 설치 파일 3개(커밋 ${COMMIT:0:12}): SHA-256·문법·매니페스트 확인"
 # ② 로그인(이미 되어 있으면 건너뜀)
@@ -118,14 +156,18 @@ restore() {
   say "[복구] 백업 기준으로 원격을 확인합니다: $BACKUP"
   if poll_verify "$BACKUP" "$WORK/check0"; then say "[복구 불필요] 원격이 이미 설치 전 상태(백업과 같음)입니다 — 설치 파일이 반영되지 않았거나 이미 되돌아가 있습니다."; return 0; fi
   say "[복구] 백업으로 되돌립니다"
-  ( cd "$BACKUP" && $CLASP push -f </dev/null ) || true
+  ( cd "$BACKUP" && $CLASP push -f </dev/null ) || { say "[복구] clasp push 실패 — Apps Script API 직접 호출로 다시 시도"; api_push "$BACKUP" || true; }
   if poll_verify "$BACKUP" "$WORK/check"; then say "[복구 완료] 프로젝트를 설치 전 상태로 되돌리고 확인했습니다."
-  else say "[복구 실패] 자동 복구가 끝나지 않았습니다. 백업 폴더: $BACKUP — 그 폴더에서 'npx -y @google/clasp@3.3.0 push -f' 로 수동 복구하거나, 편집기의 버전 기록에서 되돌리세요."; fi
+  else say "[복구 실패] 자동 복구가 끝나지 않았습니다. 백업 폴더: $BACKUP — 그 폴더에서 'clasp push -f' 로 수동 복구하거나, 편집기의 버전 기록에서 되돌리세요."; fi
 }
 write_clasp "$WORK/push"
 PUSH_OUT="$( cd "$WORK/push" && $CLASP push -f </dev/null 2>&1 )" && PUSH_OK=1 || PUSH_OK=0
 printf '%s\n' "$PUSH_OUT"
-if [[ "$PUSH_OK" != 1 ]]; then say "[FAIL] push 실패(Apps Script API 사용자 설정·같은 Google 계정인지 확인)"; restore; exit 1; fi
+if [[ "$PUSH_OK" != 1 ]]; then
+  say "[주의] clasp push 실패(위 메시지). clasp 는 Google 오류 본문을 줄여 보여 주므로, 같은 요청을 Apps Script API 로 직접 보내 실제 오류를 확인합니다(같은 파일 3개·같은 프로젝트, 토큰은 출력하지 않음):"
+  if api_push "$WORK/push"; then say "[정보] clasp 대신 API 직접 호출로 반영했습니다 — 아래에서 다시 내려받아 일치를 확인합니다."
+  else say "[FAIL] push 실패 — 위 'Apps Script API 응답/오류 본문'이 Google 이 돌려준 실제 오류입니다. 원격은 바뀌지 않았는지 확인합니다."; restore; exit 1; fi
+fi
 if printf '%s' "$PUSH_OUT" | grep -qi 'already up to date'; then say "[주의] clasp 가 '이미 최신'이라고 했지만 원격은 설치 파일과 달랐습니다(위 비교). 서버 반영 지연이거나 다른 프로젝트를 보고 있을 수 있어 다시 읽어 확인합니다."; fi
 if poll_verify "$WORK/push" "$WORK/pull"; then
   say "[PASS] 반영 완료: Code·Fill 내용 일치, 매니페스트(런타임·시간대·웹 앱: 나만·접속한 사용자) 확인. 이전 내용 백업: $BACKUP"

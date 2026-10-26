@@ -7,12 +7,13 @@ import { pnlComputeAll } from './pnl.mjs';
 import { dec, decMul, decDiv, decFormat } from './decimal.mjs';
 import { RESPONSE_CHOICES } from './schema.mjs';
 import { storeList } from './store.mjs';
+import { nullishOr } from './nullish.mjs';
 
 export const SIGLOG_LIMIT = 80;
 export const SIGLOG_FILTERS = Object.freeze({ all: '전체', entered: '진입', watched: '관망', missed: '놓침', none: '미응답' });
 const sgKst = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
 const sgTrim = v => (v === undefined || v === null ? null : String(v));
-const sgAvg = fs => { let q = 0n, c = 0n; for (const f of fs) if (f.kind === 'entry' || f.kind === 'add') { q += dec(f.qty); c += decMul(dec(f.price), dec(f.qty)); } if (q === 0n) return null; const t = decFormat(decDiv(c, q), 8); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };      // 실제 평균 진입가(체결 기준)
+const sgAvg = fs => { let q = BigInt(0), c = BigInt(0); for (const f of fs) if (f.kind === 'entry' || f.kind === 'add') { q += dec(f.qty); c += decMul(dec(f.price), dec(f.qty)); } if (q === BigInt(0)) return null; const t = decFormat(decDiv(c, q), 8); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };      // 실제 평균 진입가(체결 기준)
 
 export function siglogBuild(env, { now = env.now(), filter = 'all' } = {}) {
   const se = env.storeEnv(), data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = new Map(data('response').map(r => [r.sid, r])), fills = data('fill');
@@ -21,9 +22,9 @@ export function siglogBuild(env, { now = env.now(), filter = 'all' } = {}) {
   const f = Object.prototype.hasOwnProperty.call(SIGLOG_FILTERS, filter) ? filter : 'all';
   const rows = signals.sort((a, b) => b.signalAt - a.signalAt || (a.sid < b.sid ? 1 : -1)).map(s => {
     const r = responses.get(s.sid), t = trades.get(s.sid), choice = r ? r.choice : 'none', closed = t && t.status === 'closed', net = closed ? t.totals.netEnteredMicro : null;
-    return { sid: s.sid, atLabel: sgKst(s.signalAt), symbol: s.symbolId.replace(/USDT$/, ''), dir: s.dir, strategy: s.strategy, strategyName: AN_STRATEGY_NAME[s.strategy] ?? s.strategy, score: s.score ?? null,
-      entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: sgTrim(s.tp2), choice, choiceLabel: r ? RESPONSE_CHOICES[r.choice] : '미응답', traded: (fillsBy.get(s.sid) ?? []).length > 0, status: t ? t.status : null,
-      netLabel: net === null ? null : anUsd(net, { sign: true }), win: net !== null && net > 0n, loss: net !== null && net < 0n, avgEntry: sgAvg(fillsBy.get(s.sid) ?? []) };
+    return { sid: s.sid, atLabel: sgKst(s.signalAt), symbol: s.symbolId.replace(/USDT$/, ''), dir: s.dir, strategy: s.strategy, strategyName: (AN_STRATEGY_NAME[s.strategy] != null ? AN_STRATEGY_NAME[s.strategy] : s.strategy), score: (s.score != null ? s.score : null),
+      entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: sgTrim(s.tp2), choice, choiceLabel: r ? RESPONSE_CHOICES[r.choice] : '미응답', traded: (nullishOr(fillsBy.get(s.sid), [])).length > 0, status: t ? t.status : null,
+      netLabel: net === null ? null : anUsd(net, { sign: true }), win: net !== null && net > BigInt(0), loss: net !== null && net < BigInt(0), avgEntry: sgAvg(nullishOr(fillsBy.get(s.sid), [])) };
   });
   const count = k => rows.filter(x => x.choice === k).length, shown = rows.filter(x => f === 'all' || x.choice === f);
   return { generatedAt: now, filter: f, total: rows.length, counts: { entered: count('entered'), watched: count('watched'), missed: count('missed'), none: count('none') }, tradedCount: rows.filter(x => x.traded).length,

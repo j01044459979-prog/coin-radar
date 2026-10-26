@@ -33,16 +33,16 @@ export function authCanonicalBody(body) {
 export const authSignedString = (v, ts, nonce, body) => `${v}.${ts}.${nonce}.${authCanonicalBody(body)}`;
 export function authBuildRequest(env, key, body, { nonce } = {}) {
   if (typeof key !== 'string' || key.length < AUTH_MIN_KEY_LEN) throw new Error('키가 너무 짧음');
-  const ts = env.now(), n = nonce ?? env.newNonce();
+  const ts = env.now(), n = (nonce != null ? nonce : env.newNonce());
   if (!AUTH_NONCE_RE.test(n)) throw new Error('nonce 형식 오류');
   return JSON.stringify({ v: AUTH_VERSION, ts, nonce: n, body, sig: env.hmacSha256(key, authSignedString(AUTH_VERSION, ts, n, body)) });
 }
-const fail = (env, reason) => { try { env.counter?.(`auth-fail:${reason}`); } catch { /* 카운터 실패는 무시 */ } return { ok: false, reason }; };
+const fail = (env, reason) => { try { (env.counter == null ? undefined : env.counter(`auth-fail:${reason}`)); } catch (e_) { /* 카운터 실패는 무시 */ } return { ok: false, reason }; };
 
 export function authVerify(env, raw) {
   if (typeof raw !== 'string') return fail(env, 'bad-format');
   if (raw.length > AUTH_MAX_BYTES) return fail(env, 'too-large');
-  let msg; try { msg = JSON.parse(raw); } catch { return fail(env, 'bad-format'); }
+  let msg; try { msg = JSON.parse(raw); } catch (e_) { return fail(env, 'bad-format'); }
   if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) return fail(env, 'bad-format');
   const keys = Object.keys(msg).sort().join(',');
   if (keys !== 'body,nonce,sig,ts,v') return fail(env, 'bad-format');                         // 알 수 없는 필드·누락 거부(모호성 제거)
@@ -51,8 +51,8 @@ export function authVerify(env, raw) {
   if (typeof msg.nonce !== 'string' || !AUTH_NONCE_RE.test(msg.nonce)) return fail(env, 'bad-format');
   if (typeof msg.sig !== 'string' || !AUTH_SIG_RE.test(msg.sig)) return fail(env, 'bad-format');
   if (Math.abs(env.now() - msg.ts) > AUTH_WINDOW_MS) return fail(env, 'stale');
-  let signed; try { signed = authSignedString(msg.v, msg.ts, msg.nonce, msg.body); } catch { return fail(env, 'bad-body'); }
-  let candidates; try { candidates = env.getKeys().filter(k => typeof k === 'string' && k.length > 0); } catch { return fail(env, 'misconfigured'); }
+  let signed; try { signed = authSignedString(msg.v, msg.ts, msg.nonce, msg.body); } catch (e_) { return fail(env, 'bad-body'); }
+  let candidates; try { candidates = env.getKeys().filter(k => typeof k === 'string' && k.length > 0); } catch (e_) { return fail(env, 'misconfigured'); }
   if (!candidates.length || candidates.some(k => k.length < AUTH_MIN_KEY_LEN)) return fail(env, 'misconfigured');   // 키가 없거나 약하면 *닫힌 채로* 실패
   let matched = -1;
   candidates.forEach((k, i) => { const ok = authTimingSafeEqual(env.hmacSha256(k, signed), msg.sig); if (ok && matched < 0) matched = i; });   // 모든 후보를 끝까지 계산

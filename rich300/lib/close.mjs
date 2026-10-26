@@ -28,7 +28,7 @@ export const CLOSE_WARNING_TEXT = Object.freeze({
   'possible-missing-cashflow': '거래·입출금이 없는 날인데 평가액이 장부와 다릅니다 — 입출금 누락 의심',
   'fees-may-explain': '수수료·펀딩 미입력이 차이의 원인일 수 있습니다',
 });
-export const closeUsd = micro => { const neg = micro < 0n, a = neg ? -micro : micro, s = decFormat(microToDec(a), 2); return `${neg && a >= 5000n ? '−' : ''}${s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`; };
+export const closeUsd = micro => { const neg = micro < BigInt(0), a = neg ? -micro : micro, s = decFormat(microToDec(a), 2); return `${neg && a >= BigInt(5000) ? '−' : ''}${s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`; };
 
 // 진단(경고 코드): 값은 만들지 않고 *원인 후보*만 알려 준다. 자동 보정 없음.
 export function closeDiagnose(row, { fillCount = 0, cashCount = 0, adjCount = 0 } = {}) {
@@ -57,10 +57,10 @@ export function closeMessage(items, uiUrl) {          // items: [{day, walletMic
 }
 function closeSend(env, se, days, records) {          // days: 이미 claim(pending)한 날짜들. 결과를 notice에 기록한다.
   const items = days.map(d => ({ day: d, walletMicro: records.get(d).walletMicro }));
-  let res; try { res = env.notify(closeMessage(items, env.uiUrl)); } catch { res = { ok: false, code: 'exception' }; }
+  let res; try { res = env.notify(closeMessage(items, env.uiUrl)); } catch (e_) { res = { ok: false, code: 'exception' }; }
   const ok = !!(res && res.ok), at = env.now();
   for (const d of days) {
-    storeRevise(se, 'closenotice', d, ok ? { status: 'sent', at } : { status: 'failed', at, error: String(res?.code ?? 'failed').slice(0, 40) }, { actor: 'close', reason: ok ? '발송 완료' : '발송 실패' });
+    storeRevise(se, 'closenotice', d, ok ? { status: 'sent', at } : { status: 'failed', at, error: String(((res == null ? undefined : res.code) != null ? (res == null ? undefined : res.code) : 'failed')).slice(0, 40) }, { actor: 'close', reason: ok ? '발송 완료' : '발송 실패' });
   }
   return ok;
 }
@@ -138,7 +138,7 @@ export function closeSubmitEquity(env, { day, equity, unrealized, reason } = {},
   const late = now >= dayEndMs(day), data = { day, equity: eq, ...(un === undefined ? {} : { unrealized: un }), ...(late ? { late: true } : {}), enteredAt: now };
   const cur = storeGet(se, 'equity', day); let r;
   if (!cur || cur.void) r = storeCreate(se, 'equity', data, { actor });
-  else if (cur.data.equity === eq && (cur.data.unrealized ?? undefined) === un) r = { status: 'unchanged', key: day, rev: cur.rev };
+  else if (cur.data.equity === eq && ((cur.data.unrealized != null ? cur.data.unrealized : undefined)) === un) r = { status: 'unchanged', key: day, rev: cur.rev };
   else r = storeRevise(se, 'equity', day, { equity: eq, unrealized: un === undefined ? null : un, late: late ? true : null, enteredAt: now }, { actor, reason: typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 200) : '평가액 수정' });
   const after = storeLoadLedgerInputs(se), led = ledgerBuildDaily({ ...after, throughDay: day }), row = led.rows[led.rows.length - 1];
   return { status: r.status, day, late, diffMicro: row.diffMicro === null ? null : String(row.diffMicro), expectedMicro: row.expectedEquityMicro === null ? null : String(row.expectedEquityMicro), needsReview: row.needsReview, flags: closeDiagnose(row, closeCounts(after, day)), diffLabel: row.diffMicro === null ? null : closeUsd(row.diffMicro), expectedLabel: row.expectedEquityMicro === null ? null : closeUsd(row.expectedEquityMicro) };
@@ -151,7 +151,7 @@ export function closeStatus(env, { now = env.now(), days = 14 } = {}) {
   for (let i = 0; i < days; i++) {
     const day = addDays(today, -i); if (dayToIndex(day) < dayToIndex(inputs.challenge.startDay)) break;
     const c = closes.get(day), e = eqs.get(day), n = notices.get(day);
-    out.push({ day, today: i === 0, closed: !!c, source: c ? c.data.source : null, equity: e ? e.data.equity : null, late: e ? !!e.data.late : false, equityRev: e ? e.rev : 0, notice: n ? n.status : null, flags: c ? c.data.flags ?? [] : [], needsReview: c ? c.data.needsReview : false, diffMicro: c ? c.data.diffMicro ?? null : null, diffLabel: c && c.data.diffMicro !== undefined ? `${BigInt(c.data.diffMicro) > 0n ? '+' : ''}${closeUsd(BigInt(c.data.diffMicro))}` : null, walletMicro: c ? c.data.walletMicro : null });
+    out.push({ day, today: i === 0, closed: !!c, source: c ? c.data.source : null, equity: e ? e.data.equity : null, late: e ? !!e.data.late : false, equityRev: e ? e.rev : 0, notice: n ? n.status : null, flags: c ? (c.data.flags != null ? c.data.flags : []) : [], needsReview: c ? c.data.needsReview : false, diffMicro: c ? (c.data.diffMicro != null ? c.data.diffMicro : null) : null, diffLabel: c && c.data.diffMicro !== undefined ? `${BigInt(c.data.diffMicro) > BigInt(0) ? '+' : ''}${closeUsd(BigInt(c.data.diffMicro))}` : null, walletMicro: c ? c.data.walletMicro : null });
   }
   return out;
 }
