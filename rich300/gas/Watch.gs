@@ -19,7 +19,7 @@ function rich300WatchMarket_(symbolId) {
   var bars = { '15m': { okx: '15m', byb: '15', ms: 900000, n: 6, ttl: 60 }, '1h': { okx: '1H', byb: '60', ms: 3600000, n: 100, ttl: 150 }, '4h': { okx: '4H', byb: '240', ms: 14400000, n: 100, ttl: 600 } };
   function cached(k) { try { var c = cache.get('wc:' + symbolId + ':' + k); return c ? JSON.parse(c) : null; } catch (err) { return null; } }
   function keep(k, v, ttl) { try { cache.put('wc:' + symbolId + ':' + k, JSON.stringify(v), ttl); } catch (err) { /* 캐시 실패는 무시 */ } }
-  var out = { ok: false, source: null, price: 0, priceAt: 0, bars15m: cached('15m'), bars1h: cached('1h'), bars4h: cached('4h') };
+  var out = { ok: false, source: null, price: 0, priceAt: 0, why: '', bars15m: cached('15m'), bars1h: cached('1h'), bars4h: cached('4h') };
   var sources = ['OKX', 'Bybit'];
   for (var si = 0; si < sources.length && !out.ok; si++) {
     var src = sources[si], reqs = [], keys = [];
@@ -30,13 +30,14 @@ function rich300WatchMarket_(symbolId) {
       if (src === 'OKX') add('https://www.okx.com/api/v5/market/candles?instId=' + inst + '&bar=' + bars[k].okx + '&limit=' + bars[k].n, k);
       else add('https://api.bybit.com/v5/market/kline?category=linear&symbol=' + symbolId + '&interval=' + bars[k].byb + '&limit=' + bars[k].n, k);
     });
-    var res; try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { continue; }
+    var res; try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { out.why += src + '[fetch-exception] '; continue; }
     var tk = null, got = {};
     for (var i = 0; i < keys.length; i++) {
       var j = rich300WatchJson_(res[i]);
       if (keys[i] === 'ticker') tk = src === 'OKX' ? E.watchParseOkxTicker(j) : E.watchParseBybitTicker(j);
       else got[keys[i]] = src === 'OKX' ? E.watchParseOkxBars(j) : E.watchParseBybitBars(j, bars[keys[i]].ms, now);
     }
+    out.why += src + '[http ' + res.map(function (r) { return r.getResponseCode(); }).join('/') + ' ticker ' + (tk ? 'ok' : 'bad') + '] ';      // 상태 코드만(본문·값 없음)
     if (!tk) continue;
     ['15m', '1h', '4h'].forEach(function (k) { if (got[k] && got[k].length) { out['bars' + k] = got[k]; keep(k, got[k], bars[k].ttl); } });
     if (out.bars15m && out.bars1h && out.bars4h) { out.ok = true; out.source = src; out.price = tk.price; out.priceAt = tk.priceAt; }
@@ -96,4 +97,29 @@ function rich300WatchInstallTrigger() {
 }
 function rich300WatchRemoveTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'rich300WatchTick') ScriptApp.deleteTrigger(t); });
+}
+
+/**
+ * 감시가 *지금 실제로* 꺼져 있는지 진단한다(읽기 전용: 속성 읽기·트리거 목록·가드 상태만, 시세·시트·텔레그램 호출 없음).
+ *  prop: 'unset'(속성 없음) | 'off' | 'preview' | 'on' | 'invalid'(인식할 수 없는 값 — 길이만 표시, 동작은 꺼짐과 같음)
+ *  effective: 실제 동작 — 'nothing'(아무것도 안 함) | 'preview-only' | 'sends'(전송 가능)
+ */
+function rich300WatchState_() {
+  var props = PropertiesService.getScriptProperties(), raw = props.getProperty('RICH300_WATCH_ALERTS'), prop, v = raw === null || raw === undefined ? null : String(raw);
+  if (v === null) prop = 'unset'; else { var t = v.trim().toLowerCase(); prop = t === 'on' ? 'on' : t === 'preview' ? 'preview' : t === 'off' ? 'off' : 'invalid'; }
+  var triggers = ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300WatchTick'; }).length;
+  var gateBlocked = typeof rich300TgGate_ === 'function' ? !!rich300TgGate_('sendMessage') : true, paired = false;
+  try { paired = !!RICH300_ENGINE.tgPairedUser(rich300TgEnv_()); } catch (err) { paired = false; }
+  var canSend = !gateBlocked && paired, mode = rich300WatchMode_();
+  var last = null; try { var raw2 = props.getProperty('watch:last'); last = raw2 ? JSON.parse(raw2) : null; } catch (err) { last = null; }
+  return { prop: prop, invalidLen: prop === 'invalid' ? v.length : 0, mode: mode, gateBlocked: gateBlocked, paired: paired, triggers: triggers, last: last,
+    effective: mode === 'off' ? 'nothing' : mode === 'preview' ? 'preview-only' : (canSend ? 'sends' : 'preview-only') };
+}
+/** ?p=watch — 소유자 전용. 기본 방문은 상태만 읽는다(시세 호출 없음). ?p=watch&run=1 은 *미리보기*를 실행한다: 전송·트리거·상태 저장 없음(마지막 실행 기록 속성만 갱신). */
+function rich300PageWatch_(e) {
+  var t0 = Date.now(), run = !!(e && e.parameter && e.parameter.run === '1'), result = null, err = null;
+  try { if (run) result = rich300WatchRun_('preview'); } catch (x) { err = RICH300_ENGINE.shellErrorCode(x); }
+  var state = rich300WatchState_();
+  var html = RICH300_ENGINE.shellRenderWatch({ state: state, result: result, ran: run, error: err, ms: Date.now() - t0, appUrl: rich300AppUrl_(), build: RICH300_BUILD });
+  return rich300Html_(html, 'RICH300 감시 점검');
 }

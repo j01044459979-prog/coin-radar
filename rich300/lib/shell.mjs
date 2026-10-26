@@ -39,3 +39,22 @@ export function shellRenderHealth({ steps = [], build = 'dev', appUrl = '', tota
 <section class="card"><h2>최근 응답시간(서버 처리 기준)</h2>${perfRows}<div class="sub">목표: 첫 화면 3초 · 기록 조회·저장 2초 이내. '첫 실행'은 최근 10분간 실행이 없던 뒤의 첫 요청입니다.</div></section>
 <section class="card"><h2>바로가기</h2>${links.map(([p, u]) => `<a class="cta" target="_top" href="${dashEsc(u)}">${dashEsc(p)}</a>`).join(' ')}</section>`);
 }
+// 감시 점검 화면(?p=watch): state = rich300WatchState_() 결과, result = 미리보기 실행 결과(개수·코드만). 값·ID·이메일·토큰 없음.
+export function shellRenderWatch({ state, result = null, ran = false, error = null, ms = 0, appUrl = '', build = 'dev' } = {}) {
+  const propText = { unset: '속성 없음(미설정)', off: 'off', preview: 'preview', on: 'on', invalid: `인식할 수 없는 값(길이 ${state.invalidLen}) — 꺼짐과 동일하게 동작` }[state.prop], eff = { nothing: '아무것도 하지 않음(꺼짐)', 'preview-only': '계산만 하고 전송하지 않음', sends: '전송 가능' }[state.effective];
+  const runUrl = shellUrl(appUrl, 'watch&run=1'), li = t => `<li>${dashEsc(t)}</li>`;
+  const rows = [`스크립트 속성 RICH300_WATCH_ALERTS: ${propText}`, `실제 동작(지금 트리거가 돌면): ${eff}`, `감시 트리거: ${state.triggers ? `${state.triggers}개 설치됨` : '없음(설치 안 됨)'}`, `텔레그램 전송 가드: ${state.gateBlocked ? '막힘(운영 승인 전)' : '통과'} · 연결: ${state.paired ? '됨' : '안 됨'}`,
+    state.last ? `마지막 실행 기록: ${Math.round((Date.now() - state.last.at) / 60000)}분 전 · ${state.last.status} (요청 ${state.last.requested})` : '마지막 실행 기록: 없음'];
+  let body = `<section class="card"><div class="k">감시 상태(읽기 전용 진단)</div><ul class="warn" style="list-style:none;padding:0">${rows.map(li).join('')}</ul></section>`;
+  if (ran) {
+    if (error || !result) body += `<section class="card" role="alert"><p><strong>미리보기를 실행하지 못했습니다.</strong></p><p class="sub">오류 코드: ${dashEsc(error || 'none')}</p></section>`;
+    else {
+      const mk = (result.market || []).map(m => `${m.symbol}: ${m.ok ? `성공(${m.source}, 시세 ${m.ageSec}초 전, 봉 15m ${m.n15}/1h ${m.n1h}/4h ${m.n4h})` : `**실패** — ${m.why}`}`);
+      const bt = Object.entries(result.byType || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음', sb = Object.entries(result.skippedBy || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음';
+      const failed = result.marketFail > 0;
+      body += `<section class="card"><div class="k">미리보기 결과 (전송 없음 · ${dashEsc(String(ms))}ms)</div><div class="v">${result.status === 'ok' ? (failed ? '시세 조회 실패 있음' : '정상') : result.status === 'idle' ? '보유 포지션 없음(시세 호출 없음)' : result.status === 'busy' ? '다른 감시 실행 중(잠시 후 다시)' : dashEsc(String(result.status))}</div><ul class="warn" style="list-style:none;padding:0">${[`감시 대상 포지션: ${result.positions || 0}건 (제외: ${sb})`, `계산된 이벤트: ${result.events || 0}건 (${bt})`, `시세 조회: ${failed ? `${result.marketFail}개 종목 실패` : (result.market && result.market.length ? '모두 성공' : '조회할 종목 없음')}`, ...mk.map(x => x.replace(/\*\*/g, ''))].map(li).join('')}</ul></section>`;
+    }
+  }
+  const links = runUrl ? `<a class="cta" target="_top" href="${dashEsc(runUrl)}">미리보기 실행(전송 없음)</a>` : '';
+  return shellPage('RICH300 감시 점검', `<header><h1>RICH 300 · 감시 점검</h1></header>${dashNav('', appUrl)}${body}<section class="card"><div class="sub">빌드 ${dashEsc(build)} · 이 화면은 텔레그램을 보내지 않고 트리거를 만들지 않으며 감시 설정을 바꾸지 않습니다. 미리보기는 거래소 공개 시세를 읽기만 합니다.</div>${links}</section>`);
+}

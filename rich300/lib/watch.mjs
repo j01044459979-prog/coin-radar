@@ -209,10 +209,14 @@ export function watchTick(env) {
   if (mode === 'on') for (const k of env.kv.keys()) if (k.startsWith('pos:') && !live.has(k.slice(4))) env.kv.del(k);        // 청산된 포지션의 상태 정리(알림 종료)
   if (!positions.length) return { status: 'idle', positions: 0, skipped: skipped.length };
   const out = { status: 'ok', mode, positions: positions.length, skipped: skipped.length, events: 0, sent: 0, failed: 0, capped: 0, stale: 0, marketFail: 0 };
-  const markets = new Map();
+  const markets = new Map(); out.market = []; out.skippedBy = {}; out.byType = {};
+  for (const k of skipped) out.skippedBy[k.reason] = (out.skippedBy[k.reason] || 0) + 1;
   for (const sym of new Set(positions.map(p => p.symbolId))) {
-    let m; try { m = env.market(sym); } catch (e_) { m = { ok: false }; }
-    if (m && m.ok && now - m.priceAt <= WATCH.staleMarketMs && m.bars1h.length >= WATCH.minBars && m.bars4h.length >= WATCH.minBars) markets.set(sym, { ...m, fetchedAt: now }); else { out.marketFail++; if (m && m.ok) out.stale++; }
+    let m; try { m = env.market(sym); } catch (e_) { m = { ok: false, why: 'exception' }; }
+    const good = !!(m && m.ok && now - m.priceAt <= WATCH.staleMarketMs && m.bars1h.length >= WATCH.minBars && m.bars4h.length >= WATCH.minBars);
+    out.market.push({ symbol: sym, ok: good, source: (m && m.source) || null, ageSec: m && m.ok ? Math.round((now - m.priceAt) / 1000) : null, n15: m && m.bars15m ? m.bars15m.length : 0, n1h: m && m.bars1h ? m.bars1h.length : 0, n4h: m && m.bars4h ? m.bars4h.length : 0,
+      why: good ? null : (!m || !m.ok ? String((m && m.why) || 'fetch-failed').slice(0, 160) : now - m.priceAt > WATCH.staleMarketMs ? 'stale-price' : 'few-bars') });
+    if (good) markets.set(sym, { ...m, fetchedAt: now }); else { out.marketFail++; if (m && m.ok) out.stale++; }
   }
   // 시세 장애: 연속 실패 N회 뒤 한 번만 알림, 복구되면 해제
   let mk = {}; try { mk = JSON.parse(env.kv.get('market') || '{}'); } catch (e_) { mk = {}; }
@@ -230,7 +234,7 @@ export function watchTick(env) {
     const m = markets.get(pos.symbolId); if (!m) continue;
     const state = wLoadState(env.kv, pos.sid);
     const ev = watchEvaluate({ pos, market: m, now, state, dayBlocked });
-    out.events += ev.events.length;
+    out.events += ev.events.length; for (const e of ev.events) out.byType[e.type] = (out.byType[e.type] || 0) + 1;
     if (mode === 'preview') continue;                                                                           // 미리보기: 계산만(상태·전송 없음)
     const sorted = ev.events.sort((a, b) => ({ critical: 0, warn: 1, info: 2 })[a.level] - ({ critical: 0, warn: 1, info: 2 })[b.level]).slice(0, WATCH.maxPerPosTick);
     let st = ev.state; st.sent = { ...state.sent };

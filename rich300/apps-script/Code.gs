@@ -836,6 +836,25 @@ function shellRenderHealth({ steps = [], build = 'dev', appUrl = '', totalMs = 0
 <section class="card"><h2>최근 응답시간(서버 처리 기준)</h2>${perfRows}<div class="sub">목표: 첫 화면 3초 · 기록 조회·저장 2초 이내. '첫 실행'은 최근 10분간 실행이 없던 뒤의 첫 요청입니다.</div></section>
 <section class="card"><h2>바로가기</h2>${links.map(([p, u]) => `<a class="cta" target="_top" href="${dashEsc(u)}">${dashEsc(p)}</a>`).join(' ')}</section>`);
 }
+// 감시 점검 화면(?p=watch): state = rich300WatchState_() 결과, result = 미리보기 실행 결과(개수·코드만). 값·ID·이메일·토큰 없음.
+function shellRenderWatch({ state, result = null, ran = false, error = null, ms = 0, appUrl = '', build = 'dev' } = {}) {
+  const propText = { unset: '속성 없음(미설정)', off: 'off', preview: 'preview', on: 'on', invalid: `인식할 수 없는 값(길이 ${state.invalidLen}) — 꺼짐과 동일하게 동작` }[state.prop], eff = { nothing: '아무것도 하지 않음(꺼짐)', 'preview-only': '계산만 하고 전송하지 않음', sends: '전송 가능' }[state.effective];
+  const runUrl = shellUrl(appUrl, 'watch&run=1'), li = t => `<li>${dashEsc(t)}</li>`;
+  const rows = [`스크립트 속성 RICH300_WATCH_ALERTS: ${propText}`, `실제 동작(지금 트리거가 돌면): ${eff}`, `감시 트리거: ${state.triggers ? `${state.triggers}개 설치됨` : '없음(설치 안 됨)'}`, `텔레그램 전송 가드: ${state.gateBlocked ? '막힘(운영 승인 전)' : '통과'} · 연결: ${state.paired ? '됨' : '안 됨'}`,
+    state.last ? `마지막 실행 기록: ${Math.round((Date.now() - state.last.at) / 60000)}분 전 · ${state.last.status} (요청 ${state.last.requested})` : '마지막 실행 기록: 없음'];
+  let body = `<section class="card"><div class="k">감시 상태(읽기 전용 진단)</div><ul class="warn" style="list-style:none;padding:0">${rows.map(li).join('')}</ul></section>`;
+  if (ran) {
+    if (error || !result) body += `<section class="card" role="alert"><p><strong>미리보기를 실행하지 못했습니다.</strong></p><p class="sub">오류 코드: ${dashEsc(error || 'none')}</p></section>`;
+    else {
+      const mk = (result.market || []).map(m => `${m.symbol}: ${m.ok ? `성공(${m.source}, 시세 ${m.ageSec}초 전, 봉 15m ${m.n15}/1h ${m.n1h}/4h ${m.n4h})` : `**실패** — ${m.why}`}`);
+      const bt = Object.entries(result.byType || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음', sb = Object.entries(result.skippedBy || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음';
+      const failed = result.marketFail > 0;
+      body += `<section class="card"><div class="k">미리보기 결과 (전송 없음 · ${dashEsc(String(ms))}ms)</div><div class="v">${result.status === 'ok' ? (failed ? '시세 조회 실패 있음' : '정상') : result.status === 'idle' ? '보유 포지션 없음(시세 호출 없음)' : result.status === 'busy' ? '다른 감시 실행 중(잠시 후 다시)' : dashEsc(String(result.status))}</div><ul class="warn" style="list-style:none;padding:0">${[`감시 대상 포지션: ${result.positions || 0}건 (제외: ${sb})`, `계산된 이벤트: ${result.events || 0}건 (${bt})`, `시세 조회: ${failed ? `${result.marketFail}개 종목 실패` : (result.market && result.market.length ? '모두 성공' : '조회할 종목 없음')}`, ...mk.map(x => x.replace(/\*\*/g, ''))].map(li).join('')}</ul></section>`;
+    }
+  }
+  const links = runUrl ? `<a class="cta" target="_top" href="${dashEsc(runUrl)}">미리보기 실행(전송 없음)</a>` : '';
+  return shellPage('RICH300 감시 점검', `<header><h1>RICH 300 · 감시 점검</h1></header>${dashNav('', appUrl)}${body}<section class="card"><div class="sub">빌드 ${dashEsc(build)} · 이 화면은 텔레그램을 보내지 않고 트리거를 만들지 않으며 감시 설정을 바꾸지 않습니다. 미리보기는 거래소 공개 시세를 읽기만 합니다.</div>${links}</section>`);
+}
 
 // ── schema.mjs ──
 // RICH 300 저장소 스키마: 엔티티 정의·검증·정규화. 순수 함수(저장소·시간 의존 없음).
@@ -2043,10 +2062,14 @@ function watchTick(env) {
   if (mode === 'on') for (const k of env.kv.keys()) if (k.startsWith('pos:') && !live.has(k.slice(4))) env.kv.del(k);        // 청산된 포지션의 상태 정리(알림 종료)
   if (!positions.length) return { status: 'idle', positions: 0, skipped: skipped.length };
   const out = { status: 'ok', mode, positions: positions.length, skipped: skipped.length, events: 0, sent: 0, failed: 0, capped: 0, stale: 0, marketFail: 0 };
-  const markets = new Map();
+  const markets = new Map(); out.market = []; out.skippedBy = {}; out.byType = {};
+  for (const k of skipped) out.skippedBy[k.reason] = (out.skippedBy[k.reason] || 0) + 1;
   for (const sym of new Set(positions.map(p => p.symbolId))) {
-    let m; try { m = env.market(sym); } catch (e_) { m = { ok: false }; }
-    if (m && m.ok && now - m.priceAt <= WATCH.staleMarketMs && m.bars1h.length >= WATCH.minBars && m.bars4h.length >= WATCH.minBars) markets.set(sym, { ...m, fetchedAt: now }); else { out.marketFail++; if (m && m.ok) out.stale++; }
+    let m; try { m = env.market(sym); } catch (e_) { m = { ok: false, why: 'exception' }; }
+    const good = !!(m && m.ok && now - m.priceAt <= WATCH.staleMarketMs && m.bars1h.length >= WATCH.minBars && m.bars4h.length >= WATCH.minBars);
+    out.market.push({ symbol: sym, ok: good, source: (m && m.source) || null, ageSec: m && m.ok ? Math.round((now - m.priceAt) / 1000) : null, n15: m && m.bars15m ? m.bars15m.length : 0, n1h: m && m.bars1h ? m.bars1h.length : 0, n4h: m && m.bars4h ? m.bars4h.length : 0,
+      why: good ? null : (!m || !m.ok ? String((m && m.why) || 'fetch-failed').slice(0, 160) : now - m.priceAt > WATCH.staleMarketMs ? 'stale-price' : 'few-bars') });
+    if (good) markets.set(sym, { ...m, fetchedAt: now }); else { out.marketFail++; if (m && m.ok) out.stale++; }
   }
   // 시세 장애: 연속 실패 N회 뒤 한 번만 알림, 복구되면 해제
   let mk = {}; try { mk = JSON.parse(env.kv.get('market') || '{}'); } catch (e_) { mk = {}; }
@@ -2064,7 +2087,7 @@ function watchTick(env) {
     const m = markets.get(pos.symbolId); if (!m) continue;
     const state = wLoadState(env.kv, pos.sid);
     const ev = watchEvaluate({ pos, market: m, now, state, dayBlocked });
-    out.events += ev.events.length;
+    out.events += ev.events.length; for (const e of ev.events) out.byType[e.type] = (out.byType[e.type] || 0) + 1;
     if (mode === 'preview') continue;                                                                           // 미리보기: 계산만(상태·전송 없음)
     const sorted = ev.events.sort((a, b) => ({ critical: 0, warn: 1, info: 2 })[a.level] - ({ critical: 0, warn: 1, info: 2 })[b.level]).slice(0, WATCH.maxPerPosTick);
     let st = ev.state; st.sent = { ...state.sent };
@@ -2800,7 +2823,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, WATCH, watchEma, watchTrend, watchVolRatio, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, watchEvaluate, watchMessage, watchTick, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, WATCH, watchEma, watchTrend, watchVolRatio, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, watchEvaluate, watchMessage, watchTick, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -2894,8 +2917,8 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '3a4b2bf567eb';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_' };
+var RICH300_BUILD = 'e222d58c63e1';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -3393,13 +3416,12 @@ function rich300PageHealth_(e) {
     var ms = Date.now(), jenv = rich300JournalEnv_(); E.journalBuild(jenv, { now: Date.now(), limit: 40 }); var t = Date.now() - ms;
     return { status: t < 2000 ? 'PASS' : 'WAIT', text: '기록 조회(최근 40건) 생성 ' + t + 'ms — 목표 2000ms' };
   });
-  step('H11', '보유 포지션 감시 상태', function () {      // 속성만 읽는다(시세·시트 호출 없음). 켜짐/꺼짐과 마지막 실행 결과
-    var mode = rich300WatchMode_(), raw = props.getProperty('watch:last'), last = null;
-    try { last = raw ? JSON.parse(raw) : null; } catch (e1) { last = null; }
-    var trig = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'rich300WatchTick'; }).length;
-    if (mode === 'off') return { status: 'WAIT', text: '보유 포지션 감시: 꺼짐(기본) · 트리거 ' + (trig ? '있음' : '없음') + ' — 승인 후 켭니다' };
-    var age = last ? Math.round((Date.now() - last.at) / 60000) : null;
-    return { status: trig && last && age <= 15 && last.status !== 'exception' ? 'PASS' : 'WAIT', text: '보유 포지션 감시: ' + (mode === 'on' ? '켜짐' : '미리보기') + ' · 트리거 ' + (trig ? '있음' : '없음') + (last ? ' · 마지막 ' + age + '분 전 ' + last.status + ' (포지션 ' + last.positions + ', 이벤트 ' + last.events + ', 전송 ' + last.sent + ', 실패 ' + last.failed + ', 시세실패 ' + last.marketFail + (last.mode !== last.requested ? ', 전송 가드로 미리보기' : '') + ')' : ' · 아직 실행 기록 없음') };
+  step('H11', '보유 포지션 감시 상태', function () {      // 속성·트리거·가드 상태만 읽는다(시세·시트·텔레그램 호출 없음)
+    var st = rich300WatchState_(), age = st.last ? Math.round((Date.now() - st.last.at) / 60000) : null;
+    var propText = { unset: '속성 없음', off: 'off', preview: 'preview', on: 'on', invalid: '인식 불가 값(길이 ' + st.invalidLen + ')' }[st.prop];
+    var eff = { nothing: '실제 동작: 아무것도 하지 않음(꺼짐)', 'preview-only': '실제 동작: 계산만, 전송 없음', sends: '실제 동작: 전송 가능' }[st.effective];
+    var base = '보유 포지션 감시 — 속성 ' + propText + ' · ' + eff + ' · 트리거 ' + (st.triggers ? st.triggers + '개' : '없음') + ' · 전송 가드 ' + (st.gateBlocked ? '막힘' : '통과') + '/연결 ' + (st.paired ? '됨' : '안 됨') + (st.last ? ' · 마지막 실행 ' + age + '분 전 ' + st.last.status : ' · 실행 기록 없음');
+    return { status: st.effective === 'nothing' ? 'WAIT' : (st.triggers && st.last && age <= 15 && st.last.status !== 'exception' ? 'PASS' : 'WAIT'), text: base };
   });
   var html = E.shellRenderHealth({ steps: steps, build: RICH300_BUILD, appUrl: rich300AppUrl_(), totalMs: Date.now() - t0, perf: { recent: rich300PerfRecent_() } });
   return rich300Html_(html, 'RICH300 상태 점검');
@@ -3427,7 +3449,7 @@ function rich300WatchMarket_(symbolId) {
   var bars = { '15m': { okx: '15m', byb: '15', ms: 900000, n: 6, ttl: 60 }, '1h': { okx: '1H', byb: '60', ms: 3600000, n: 100, ttl: 150 }, '4h': { okx: '4H', byb: '240', ms: 14400000, n: 100, ttl: 600 } };
   function cached(k) { try { var c = cache.get('wc:' + symbolId + ':' + k); return c ? JSON.parse(c) : null; } catch (err) { return null; } }
   function keep(k, v, ttl) { try { cache.put('wc:' + symbolId + ':' + k, JSON.stringify(v), ttl); } catch (err) { /* 캐시 실패는 무시 */ } }
-  var out = { ok: false, source: null, price: 0, priceAt: 0, bars15m: cached('15m'), bars1h: cached('1h'), bars4h: cached('4h') };
+  var out = { ok: false, source: null, price: 0, priceAt: 0, why: '', bars15m: cached('15m'), bars1h: cached('1h'), bars4h: cached('4h') };
   var sources = ['OKX', 'Bybit'];
   for (var si = 0; si < sources.length && !out.ok; si++) {
     var src = sources[si], reqs = [], keys = [];
@@ -3438,13 +3460,14 @@ function rich300WatchMarket_(symbolId) {
       if (src === 'OKX') add('https://www.okx.com/api/v5/market/candles?instId=' + inst + '&bar=' + bars[k].okx + '&limit=' + bars[k].n, k);
       else add('https://api.bybit.com/v5/market/kline?category=linear&symbol=' + symbolId + '&interval=' + bars[k].byb + '&limit=' + bars[k].n, k);
     });
-    var res; try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { continue; }
+    var res; try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { out.why += src + '[fetch-exception] '; continue; }
     var tk = null, got = {};
     for (var i = 0; i < keys.length; i++) {
       var j = rich300WatchJson_(res[i]);
       if (keys[i] === 'ticker') tk = src === 'OKX' ? E.watchParseOkxTicker(j) : E.watchParseBybitTicker(j);
       else got[keys[i]] = src === 'OKX' ? E.watchParseOkxBars(j) : E.watchParseBybitBars(j, bars[keys[i]].ms, now);
     }
+    out.why += src + '[http ' + res.map(function (r) { return r.getResponseCode(); }).join('/') + ' ticker ' + (tk ? 'ok' : 'bad') + '] ';      // 상태 코드만(본문·값 없음)
     if (!tk) continue;
     ['15m', '1h', '4h'].forEach(function (k) { if (got[k] && got[k].length) { out['bars' + k] = got[k]; keep(k, got[k], bars[k].ttl); } });
     if (out.bars15m && out.bars1h && out.bars4h) { out.ok = true; out.source = src; out.price = tk.price; out.priceAt = tk.priceAt; }
@@ -3504,6 +3527,31 @@ function rich300WatchInstallTrigger() {
 }
 function rich300WatchRemoveTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'rich300WatchTick') ScriptApp.deleteTrigger(t); });
+}
+
+/**
+ * 감시가 *지금 실제로* 꺼져 있는지 진단한다(읽기 전용: 속성 읽기·트리거 목록·가드 상태만, 시세·시트·텔레그램 호출 없음).
+ *  prop: 'unset'(속성 없음) | 'off' | 'preview' | 'on' | 'invalid'(인식할 수 없는 값 — 길이만 표시, 동작은 꺼짐과 같음)
+ *  effective: 실제 동작 — 'nothing'(아무것도 안 함) | 'preview-only' | 'sends'(전송 가능)
+ */
+function rich300WatchState_() {
+  var props = PropertiesService.getScriptProperties(), raw = props.getProperty('RICH300_WATCH_ALERTS'), prop, v = raw === null || raw === undefined ? null : String(raw);
+  if (v === null) prop = 'unset'; else { var t = v.trim().toLowerCase(); prop = t === 'on' ? 'on' : t === 'preview' ? 'preview' : t === 'off' ? 'off' : 'invalid'; }
+  var triggers = ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300WatchTick'; }).length;
+  var gateBlocked = typeof rich300TgGate_ === 'function' ? !!rich300TgGate_('sendMessage') : true, paired = false;
+  try { paired = !!RICH300_ENGINE.tgPairedUser(rich300TgEnv_()); } catch (err) { paired = false; }
+  var canSend = !gateBlocked && paired, mode = rich300WatchMode_();
+  var last = null; try { var raw2 = props.getProperty('watch:last'); last = raw2 ? JSON.parse(raw2) : null; } catch (err) { last = null; }
+  return { prop: prop, invalidLen: prop === 'invalid' ? v.length : 0, mode: mode, gateBlocked: gateBlocked, paired: paired, triggers: triggers, last: last,
+    effective: mode === 'off' ? 'nothing' : mode === 'preview' ? 'preview-only' : (canSend ? 'sends' : 'preview-only') };
+}
+/** ?p=watch — 소유자 전용. 기본 방문은 상태만 읽는다(시세 호출 없음). ?p=watch&run=1 은 *미리보기*를 실행한다: 전송·트리거·상태 저장 없음(마지막 실행 기록 속성만 갱신). */
+function rich300PageWatch_(e) {
+  var t0 = Date.now(), run = !!(e && e.parameter && e.parameter.run === '1'), result = null, err = null;
+  try { if (run) result = rich300WatchRun_('preview'); } catch (x) { err = RICH300_ENGINE.shellErrorCode(x); }
+  var state = rich300WatchState_();
+  var html = RICH300_ENGINE.shellRenderWatch({ state: state, result: result, ran: run, error: err, ms: Date.now() - t0, appUrl: rich300AppUrl_(), build: RICH300_BUILD });
+  return rich300Html_(html, 'RICH300 감시 점검');
 }
 
 // ── gas/Install.gs ──

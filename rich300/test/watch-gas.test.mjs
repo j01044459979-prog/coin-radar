@@ -68,3 +68,40 @@ test('트리거 설치·제거는 감시 트리거만 바꾼다(기존 트리거
 test('홈 화면은 감시와 무관: 감시를 켜도 ?p=dash 의 Sheets·시세 호출이 늘지 않는다', () => {
   const w = world(); const h0 = w.hits.length; w.g.ctx.doGet({ parameter: { p: 'dash' } }); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); w.g.ctx.doGet({ parameter: { p: 'dash' } }); assert.equal(w.hits.length, h0);
 });
+
+// ── ?p=watch 진단 화면과 상태 진단 ──
+const strip = h => h.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ');
+const snapshot = g => JSON.stringify(g.P.getKeys().sort().map(k => [k, g.P.getProperty(k)]));
+test('?p=watch 는 소유자만 · 기본 방문은 읽기 전용(시세 0·텔레그램 0·속성 쓰기 0·트리거 0)', () => {
+  const w = world(); const before = snapshot(w.g), trig = w.g.spy.triggers.length;
+  const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch' } }).html); assert.match(t, /RICH300_WATCH_ALERTS: 속성 없음\(미설정\)/); assert.match(t, /실제 동작\(지금 트리거가 돌면\): 아무것도 하지 않음\(꺼짐\)/); assert.match(t, /감시 트리거: 없음\(설치 안 됨\)/);
+  assert.equal(w.hits.length, 0); assert.equal(w.g.tele.sent.length, 0); assert.equal(snapshot(w.g), before); assert.equal(w.g.spy.triggers.length, trig);
+  const other = loadProd({ email: 'other@example.com' }); assert.match(other.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html, /접근 제한/);
+});
+test('상태 진단: 속성 없음/off/preview/on/인식 불가 값을 구분해 보여 주고, 인식 불가 값은 길이만(값 비노출)·꺼짐과 동일 동작', () => {
+  const cases = [[undefined, /속성 없음\(미설정\)/, /아무것도 하지 않음/], ['off', /RICH300_WATCH_ALERTS: off/, /아무것도 하지 않음/], ['preview', /RICH300_WATCH_ALERTS: preview/, /계산만 하고 전송하지 않음/], [' ON ', /RICH300_WATCH_ALERTS: on/, /전송 가능/], ['yes-secret', /인식할 수 없는 값\(길이 10\)/, /아무것도 하지 않음/]];
+  for (const [val, re1, re2] of cases) {
+    const w = world(); if (val !== undefined) w.g.P.setProperty('RICH300_WATCH_ALERTS', val); const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch' } }).html);
+    assert.match(t, re1, String(val)); assert.match(t, re2, String(val)); assert.ok(!/yes-secret/.test(t));
+  }
+  const g = world({ approved: false }); g.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); assert.match(strip(g.g.ctx.doGet({ parameter: { p: 'watch' } }).html), /계산만 하고 전송하지 않음/);          // ON 이어도 가드 때문에 전송 불가
+});
+test('?p=watch&run=1 미리보기: 포지션·이벤트·시세 결과를 보여 주고, ON+승인+연결 상태여도 텔레그램 0 · w: 상태 0 · 트리거 불변', () => {
+  const w = world(); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); const trig = w.g.spy.triggers.length;
+  const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html);
+  assert.match(t, /감시 대상 포지션: 1건/); assert.match(t, /계산된 이벤트: \d+건 \(.*TP1 1/); assert.match(t, /ETHUSDT: 성공\(OKX, 시세 \d+초 전, 봉 15m 1\/1h 100\/4h 100\)/); assert.match(t, /시세 조회: 모두 성공/);
+  assert.equal(w.g.tele.sent.length, 0); assert.equal(w.g.P.getKeys().filter(k => k.startsWith('w:')).length, 0); assert.equal(w.g.spy.triggers.length, trig); assert.ok(w.hits.length >= 4);
+});
+test('시세 조회 실패는 성공으로 보고하지 않는다: 실패 종목과 시도 코드(HTTP 상태)를 표시', () => {
+  const w = world(); w.g.spy.marketHandler = url => { w.hits.push(url); return { status: 503, body: 'down' }; };
+  const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html); assert.match(t, /시세 조회 실패 있음/); assert.match(t, /ETHUSDT: \*?\*?실패/); assert.match(t, /OKX\[http 503\/503\/503\/503 ticker bad\]/); assert.match(t, /Bybit\[http 503/);
+  assert.ok(!/시세 조회: 모두 성공/.test(t)); assert.ok(!/>정상</.test(w.g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html));
+  w.g.spy.marketHandler = () => ({ status: 200, body: { code: '51001', msg: 'x' } }); assert.match(strip(w.g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html), /ticker bad/);          // 응답 구조가 다르면 실패로 처리
+});
+test('보유 포지션이 없으면 미리보기는 시세를 호출하지 않는다', () => {
+  const g = loadProd(); seed(g, 3); g.ctx.rich300Install(); g.spy.marketHandler = () => ({ status: 200, body: {} }); const t = strip(g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html);
+  assert.match(t, /보유 포지션 없음\(시세 호출 없음\)/); assert.equal(g.spy.market || 0, 0);
+});
+test('?p=health 의 감시 줄도 같은 진단을 보여 준다(속성·실제 동작·트리거·가드)', () => {
+  const w = world(); const t = strip(w.g.ctx.doGet({ parameter: { p: 'health' } }).html); assert.match(t, /보유 포지션 감시 — 속성 속성 없음 · 실제 동작: 아무것도 하지 않음\(꺼짐\) · 트리거 없음 · 전송 가드 통과\/연결 됨/);
+});
