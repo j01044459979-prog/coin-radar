@@ -58,7 +58,7 @@ test('종단 간: 허용되지 않은 사용자의 버튼·명령은 무시되�
   assert.equal(g.rows('signal').length, 0); assert.equal(g.rows('response').length, 0); assert.equal(g.tele.sent.length, 0);
   const g2 = loadProd({ props: { RICH300_PROD_APPROVED: 'yes' } }); g2.ctx.rich300Install(); press(g2, msg, 'e'); assert.equal(g2.rows('signal').length, 0);          // 페어링 전에는 누구도 기록할 수 없다
 });
-test('종단 간: 웹앱은 소유자만(타인·익명은 빈 응답), 입력·검증 서버 함수도 소유자 확인', async () => {
+test('종단 간: 웹앱은 소유자만(타인·익명은 접근 안내만), 입력·검증 서버 함수도 소유자 확인', async () => {
   const g = world(); for (const p of ['dash', 'journal', 'signals', 'stats', 'assets', 'fill', 'check']) assert.ok(g.ctx.doGet({ parameter: { p } }).html || g.ctx.doGet({ parameter: { p } }).title, p);
-  for (const email of ['', 'other@example.com']) { const o = loadProd({ props: { RICH300_PROD_APPROVED: 'yes' }, email }); o.ctx.rich300Install(); for (const p of ['dash', 'journal', 'signals', 'stats', 'assets', 'fill', 'check']) assert.equal(o.ctx.doGet({ parameter: { p } }).text, '', `${email}:${p}`); assert.equal(o.ctx.rich300FillSubmit({ kind: 'entry', sid: 'x' }).error, 'forbidden'); }
+  for (const email of ['', 'other@example.com']) { const o = loadProd({ props: { RICH300_PROD_APPROVED: 'yes' }, email }); o.ctx.rich300Install(); for (const p of ['dash', 'journal', 'signals', 'stats', 'assets', 'fill', 'check']) assert.match(o.ctx.doGet({ parameter: { p } }).html, /접근 제한/, `${email}:${p}`); assert.equal(o.ctx.rich300FillSubmit({ kind: 'entry', sid: 'x' }).error, 'forbidden'); }
 });

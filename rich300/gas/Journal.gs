@@ -39,10 +39,11 @@ function rich300PageJournal_(e, tab) {
   var html, appUrl = rich300AppUrl_();
   try {
     var env = rich300JournalEnv_(), prm = (e && e.parameter) || {}, day = /^\d{4}-\d{2}-\d{2}$/.test(String(prm.day || '')) ? String(prm.day) : null, q = prm.q ? String(prm.q).slice(0, 20) : null;
-    var model = RICH300_ENGINE.journalBuild(env, { now: Date.now(), day: tab === 'journal' || !tab ? day : null, q: tab === 'journal' || !tab ? q : null });
+    var nParam = parseInt(prm.n, 10), limit = tab === 'stats' || tab === 'assets' ? 0 : (nParam > 0 ? Math.min(Math.max(nParam, 40), 200) : 40);      // 기록 목록은 최근 40건부터, '더 보기'로 40건씩(최대 200). 통계·자산 화면은 목록이 필요 없다
+    var model = RICH300_ENGINE.journalBuild(env, { now: Date.now(), limit: limit, day: tab === 'journal' || !tab ? day : null, q: tab === 'journal' || !tab ? q : null });
     if (day && tab !== 'journal' && tab) model.presetDay = day;
     html = RICH300_ENGINE.journalRenderHtml(model, { appUrl: appUrl, tab: tab || 'all', query: { day: day, q: q } });
-  } catch (err) { html = RICH300_ENGINE.journalRenderError(); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '일지', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: tab === 'stats' ? 'stats' : tab === 'assets' ? 'assets' : 'journal' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 일지').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 function rich300PageJournalTab_(e) { return rich300PageJournal_(e, 'journal'); }
@@ -53,7 +54,7 @@ function rich300PageSignals_(e) {
   try {
     var env = rich300JournalEnv_(), r = e && e.parameter && e.parameter.r;
     html = RICH300_ENGINE.siglogRenderHtml(RICH300_ENGINE.siglogBuild(env, { now: Date.now(), filter: r }), { appUrl: appUrl });
-  } catch (err) { html = RICH300_ENGINE.siglogRenderError(appUrl); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '추천 기록', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'signals' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 추천 기록').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 

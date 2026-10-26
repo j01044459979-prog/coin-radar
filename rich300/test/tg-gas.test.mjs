@@ -20,7 +20,7 @@ function load({ email = 'me@example.com', token = FAKE_TOKEN, fetchThrows = fals
     Utilities: { ...sheets.ctx.Utilities, getUuid: () => randomUUID(), sleep: ms => { tele.sleeps.push(ms); } },
     UrlFetchApp: { fetch: (url, opt) => { spy.urls.push(url); if (fetchThrows) throw new Error(`DNS failure for ${url}`); const m = /\/bot[^/]+\/(\w+)$/.exec(url)[1]; const r = tele.http.call(m, JSON.parse(opt.payload)); return { getResponseCode: () => r.status, getContentText: () => JSON.stringify(r.body) }; } },
     ScriptApp: { getProjectTriggers: () => spy.triggers.filter(t => !t.deleted), deleteTrigger: t => { t.deleted = true; }, newTrigger: fn => { const t = { fn, getHandlerFunction: () => fn, deleted: false }; return { timeBased: () => ({ everyMinutes: n => ({ create: () => { t.every = n; spy.triggers.push(t); } }) }) }; } },
-    HtmlService: { createTemplateFromFile: name => { const t = { name, evaluate: () => { const o = { title: '', meta: [], setTitle(x) { this.title = x; return this; }, addMetaTag(a, b) { this.meta.push([a, b]); return this; }, preset: t.preset }; spy.pages.push(o); return o; } }; return t; } } };
+    HtmlService: { createHtmlOutput: h => ({ html: h, setTitle(t) { this.title = t; return this; }, addMetaTag() { return this; } }), createTemplateFromFile: name => { const t = { name, evaluate: () => { const o = { title: '', meta: [], setTitle(x) { this.title = x; return this; }, addMetaTag(a, b) { this.meta.push([a, b]); return this; }, preset: t.preset }; spy.pages.push(o); return o; } }; return t; } } };
   vm.createContext(ctx);
   vm.runInContext([buildEngine(), read('gas/Adapters.gs'), read('gas/Api.gs'), read('gas/Telegram.gs'), read('gas/Deploy.gs')].join('\n'), ctx);
   const E = () => ctx.RICH300_ENGINE;
@@ -60,7 +60,7 @@ test('입력 화면: ?p=fill 은 소유자만, 서버가 값을 JSON으로 주�
   const g = load(); g.E().storeInit(g.storeEnv()); g.E().storeCreate(g.storeEnv(), 'signal', SIG, { actor: 't' });
   const out = g.ctx.doGet({ parameter: { p: 'fill', sid: 'A-BTC-1</script><b>', dir: 'LONG', entry: '100', stop: '98' } }); assert.equal(out.title, '입력'.length ? 'RICH300 입력' : '');
   assert.ok(!out.preset.includes('<') && JSON.parse(out.preset.replace(/\\u003c/g, '<')).sid.includes('</script>')); assert.deepEqual(out.meta, [['viewport', 'width=device-width, initial-scale=1']]);
-  const other = load({ email: 'other@example.com' }); assert.equal(other.ctx.doGet({ parameter: { p: 'fill' } }).text, ''); assert.deepEqual(j(other.ctx.rich300FillSubmit({ sid: 'A-BTC-1' })), { ok: false, error: 'forbidden' });
+  const other = load({ email: 'other@example.com' }); assert.match(other.ctx.doGet({ parameter: { p: 'fill' } }).html, /접근 제한/); assert.deepEqual(j(other.ctx.rich300FillSubmit({ sid: 'A-BTC-1' })), { ok: false, error: 'forbidden' });
   const form = { sid: 'A-BTC-1', margin: '30', leverage: '10', entry: '100', stop: '98', formId: 'abc123' };
   assert.deepEqual([g.ctx.rich300FillSubmit(form).ok, g.ctx.rich300FillSubmit(form).status], [true, 'duplicate']); assert.equal(g.rows('fill').length, 1);
   const html = read('gas/Fill.html'); assert.ok(!/<script[^>]+src=/i.test(html) && !/https?:\/\//.test(html.replace(/<\?!=[^?]*\?>/g, ''))); assert.ok(!/innerHTML|eval\(|document\.write/.test(html));

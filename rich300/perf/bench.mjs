@@ -11,6 +11,7 @@ export function instrument(g) {
   const wrapRange = (r, nr, nc) => new Proxy(r, { get: (t, k) => { const v = t[k]; if (typeof v !== 'function') return v; return (...a) => { const out = v.apply(t, a);
     if (k === 'getValues') hit('getValues', COST.getValuesBase, nr * nc); else if (k === 'setValues') hit('setValues', COST.setValuesBase, nr * nc); else if (k === 'setNumberFormat') hit('setNumberFormat', COST.setNumberFormat); return out === t ? wrapRange(t, nr, nc) : out; }; } });
   const wrapSheet = s => new Proxy(s, { get: (t, k) => { const v = t[k]; if (typeof v !== 'function') return v;
+    if (k === 'getDataRange') return () => { hit('getRange', COST.getRange); return wrapRange(t.getDataRange(), Math.max(t.getLastRow(), 1), Math.max(t.getLastColumn(), 1)); };
     if (k === 'getRange') return (r, c, nr = 1, nc = 1) => { hit('getRange', COST.getRange); return wrapRange(t.getRange(r, c, nr, nc), nr, nc); };
     return (...a) => { if (k === 'getLastRow') hit('getLastRow', COST.getLastRow); else if (k === 'getLastColumn') hit('getLastColumn', COST.getLastColumn); else if (k === 'insertRowsAfter') hit('insertRows', COST.insertRows); return v.apply(t, a); }; } });
   const SA = g.ctx.SpreadsheetApp, open = SA.openById.bind(SA);
@@ -40,6 +41,7 @@ export async function runBench({ days = 90 } = {}) {
   for (const label of ['first(초기 실행: 캐시 비어 있음)', 'repeat(재실행: 직전 실행 뒤)']) {
     const g = loadProd({ props: { RICH300_PROD_APPROVED: '' } }), info = seed(g, days); g.pm.set('RICH300_SHEET_ID', 'sheet'); g.ctx.rich300Install && g.ctx.rich300Install();
     const inst = instrument(g), run = (name, fn) => { inst.reset(); const t0 = process.hrtime.bigint(); const r = fn(); const wall = Number(process.hrtime.bigint() - t0) / 1e6; const s = inst.snapshot(); return { name, calls: s.calls, totalCalls: Object.values(s.calls).reduce((a, b) => a + b, 0), cells: s.cells, modeledMs: Math.round(s.ms), nodeCpuMs: Math.round(wall), result: r }; };
+    if (label.startsWith('first')) { if (g.cache.evictAll) g.cache.evictAll(); }          // 초기 실행: 캐시(초기화 표시·워밍 기록)를 비운 상태
     if (label.startsWith('repeat')) { g.ctx.doGet({ parameter: { p: 'dash' } }); g.ctx.doGet({ parameter: { p: 'journal' } }); }          // 직전 실행으로 캐시를 데운다
     const rows = [], sid = info.last, nextSid = 'S99999';
     g.ctx.RICH300_ENGINE.storeCreate(g.ctx.rich300GasEnv_('sheet'), 'signal', { sid: nextSid, strategy: 'A', symbolId: 'ETHUSDT', dir: 'LONG', signalAt: 1789999000000, entry: '100.00', stop: '98.50', tp1: '102.20' }, { actor: 'seed' });

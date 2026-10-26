@@ -17,6 +17,7 @@ export const ENGINE_MODULES = [
   'ledger',
   'dashboard',
   'dashview',
+  'shell',
   'schema',
   'store',
   'backup',

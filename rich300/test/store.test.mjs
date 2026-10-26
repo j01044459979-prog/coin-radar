@@ -80,12 +80,13 @@ test('텔레그램 중복 방지: update_id·callback_id는 처음 한 번만 tr
   const m = fresh(); assert.equal(storeClaimUpdate(m.env, 'u', 1001, 'tg'), true); assert.equal(storeClaimUpdate(m.env, 'u', 1001, 'tg'), false); assert.equal(storeClaimUpdate(m.env, 'cb', 1001, 'tg'), true); assert.equal(storeClaimUpdate(m.env, 'cb', '1001', 'tg'), false);
   assert.equal(storeReadAudit(m.env).length, 2);
 });
-test('잠금: 락을 못 얻으면 LOCK 오류로 아무것도 쓰지 않고, 쓰기 중 중첩 쓰기도 거부, 예외가 나도 락은 해제', () => {
+test('잠금: 락을 못 얻으면 LOCK 오류로 아무것도 쓰지 않고, 같은 요청 안의 묶음 쓰기는 락 한 번으로 처리(중첩 허용), 예외가 나도 락은 해제', () => {
   const m = fresh({ lockBusy: true }); assert.equal(code(() => storeCreate(m.env, 'fill', fill(), A)) instanceof Promise, true);
   assert.throws(() => storeCreate(m.env, 'fill', fill(), A), e => e.code === 'LOCK'); assert.equal(storeReadAudit(m.env).length, 0);
   m.setLockBusy(false);
-  assert.throws(() => storeWithLock(m.env, () => storeCreate(m.env, 'fill', fill(), A)), e => e.code === 'LOCK');          // 쓰기 도중 다른 쓰기는 거부
-  assert.throws(() => storeWithLock(m.env, () => { throw new Error('boom'); }), /boom/); assert.equal(storeCreate(m.env, 'fill', fill(), A).status, 'added');   // 예외 후에도 락 해제됨
+  assert.equal(storeWithLock(m.env, () => storeCreate(m.env, 'fill', fill(), A)).status, 'added');          // 묶음 안의 쓰기는 같은 락을 쓴다(락 한 번·flush 한 번)
+  assert.equal(m.env.__lockDepth, 0); assert.equal(m.env.lock.tryLock(1), true); m.env.lock.release();       // 끝나면 락이 풀려 있다
+  assert.throws(() => storeWithLock(m.env, () => { throw new Error('boom'); }), /boom/); assert.equal(storeCreate(m.env, 'fill', { ...fill(), fillId: 'f-2' }, A).status, 'added');   // 예외 후에도 락 해제됨
 });
 test('장애 복구 — 쓰기 지점마다 고장 주입: 어디서 끊겨도 재시도하면 최종 상태가 정상 실행과 동일(중복·누락 없음), 무결성 통과', () => {
   const day = '2026-10-24', t0 = dayStartMs(day);

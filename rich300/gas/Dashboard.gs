@@ -10,6 +10,6 @@ function rich300PageDash_(e) {
     var se = rich300GasEnv_(PropertiesService.getScriptProperties().getProperty('RICH300_SHEET_ID'));
     RICH300_ENGINE.storeInit(se);
     html = RICH300_ENGINE.dashRenderHtml(RICH300_ENGINE.dashBuildFromStore(se, { now: Date.now() }), { appUrl: rich300AppUrl_() });
-  } catch (err) { html = RICH300_ENGINE.dashRenderError(rich300AppUrl_()); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '홈', code: RICH300_ENGINE.shellErrorCode(err), appUrl: rich300AppUrl_(), page: 'dash' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
