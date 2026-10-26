@@ -1,7 +1,7 @@
 // clasp 설치 스크립트 시험: 가짜 clasp(원격 프로젝트 = 임시 디렉터리)·로컬 git 저장소 사본으로 실행한다. 네트워크·Google 호출 없음.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -14,7 +14,8 @@ const FAKE = `#!/usr/bin/env bash
 echo "$@ [id=$(grep -o '"scriptId":"[^"]*"' .clasp.json 2>/dev/null | cut -d'"' -f4)]" >> "$FAKE_LOG"
 case "$1" in
   login) { tr -d '\n' < appsscript.json; echo; } >> "$FAKE_LOG.scopes" 2>/dev/null; [[ "$FAKE_LOGIN_FAIL" == 1 ]] && exit 1; IFS= read -r line; echo "stdin-line: $line" >> "$FAKE_LOG.stdin"; [[ "$line" == *code=* ]] || { echo 'Missing code in response URL' >&2; exit 1; }; echo '{}' > "$HOME/.clasprc.json" ;;
-  push) n=$(cat "$FAKE_STATE/pushes" 2>/dev/null || echo 0); echo $((n+1)) > "$FAKE_STATE/pushes"
+  push) [[ "$FAKE_PUSH_REJECT" == 1 ]] && { echo 'Request contains an invalid argument.' >&2; exit 1; }
+        n=$(cat "$FAKE_STATE/pushes" 2>/dev/null || echo 0); echo $((n+1)) > "$FAKE_STATE/pushes"
         if [[ "$FAKE_NOOP_PUSH" == 1 && "$n" == 0 ]]; then echo "Script is already up to date."; exit 0; fi
         if [[ "$n" == 0 && "$FAKE_PUSH_FAIL" == 1 ]]; then cp Code.gs "$FAKE_REMOTE/Code.gs"; exit 1; fi
         if [[ "$n" -ge 1 && "$FAKE_RESTORE_FAIL" == 1 ]]; then exit 1; fi
@@ -28,6 +29,7 @@ case "$1" in
         if [[ "$FAKE_CRLF" == 1 && -f Code.gs ]]; then sed -i 's/$/\r/' Code.gs; fi
         echo "Pulled 3 files." ;;
   logout) rm -f "$HOME/.clasprc.json" ;;
+  --version) echo 3.4.1 ;;
   *) echo "허용되지 않은 clasp 명령: $1" >&2; exit 9 ;;
 esac`;
 const BOOT = "function rich300Bootstrap() {}\nfunction rich300BootstrapCheck() {}\n";
@@ -114,7 +116,7 @@ test('복구: 반영 결과가 다르면(또는 push 가 중간에 실패하면)
   }
 });
 test('복구도 실패하면 백업 폴더 위치와 수동 복구 방법을 알리고 비정상 종료한다', () => {
-  const w = setup(), x = run(w, { env: { FAKE_CORRUPT_ONCE: '1', FAKE_RESTORE_FAIL: '1' } }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[복구 실패\]/); assert.match(x.out, /rich300-backup-/); assert.match(x.out, /clasp@3\.3\.0 push -f/); assert.ok(x.cmds.includes('logout'));
+  const w = setup(), x = run(w, { env: { FAKE_CORRUPT_ONCE: '1', FAKE_RESTORE_FAIL: '1' } }); assert.notEqual(x.r.status, 0); assert.match(x.out, /\[복구 실패\]/); assert.match(x.out, /rich300-backup-/); assert.match(x.out, /push -f/); assert.ok(x.cmds.includes('logout'));
 });
 test('백업 실패·로그인 실패는 push 전에 중단하고 로그아웃한다', () => {
   let w = setup(), x = run(w, { env: { FAKE_PULL_FAIL: '1' } }); assert.notEqual(x.r.status, 0); assert.ok(!x.cmds.includes('push')); assert.match(x.out, /백업하지 못했습니다/); assert.ok(x.cmds.includes('logout'));
@@ -145,8 +147,42 @@ test('clasp 가 변경을 건너뛰었는데 원격이 설치 파일과 다르�
   assert.match(x.out, /\[복구 불필요\]/); assert.equal(x.cmds.filter(c => c === 'push').length, 1); assert.equal(remoteFiles(w)['Code.gs'], BOOT);
 });
 test('스크립트 자체: create·deploy·delete·run·Telegram·스크립트 속성 변경 없음, clasp 버전 고정, fileExtension=gs 로 Code.gs 이름 고정', () => {
-  const s = readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, ''); assert.ok(!/\$CLASP\s+(create|deploy|delete|undeploy|run|setting|open|versions)\b/.test(s)); assert.ok(!/api\.telegram|TELEGRAM|TG_TOKEN|PROD_APPROVED/.test(s)); assert.match(s, /@google\/clasp@3\.3\.0/); assert.match(s, /"fileExtension":"gs"/); assert.match(s, /set -euo pipefail/);
+  const s = readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, ''); assert.ok(!/\$CLASP\s+(create|deploy|delete|undeploy|run|setting|open|versions)\b/.test(s)); assert.ok(!/api\.telegram|TELEGRAM|TG_TOKEN|PROD_APPROVED/.test(s)); assert.match(s, /@google\/clasp@\$CLASP_PIN/); assert.match(s, /CLASP_PIN="\$\{RICH300_CLASP_VERSION:-3\.4\.1\}"/); assert.match(s, /"fileExtension":"gs"/); assert.match(s, /set -euo pipefail/);
   assert.ok(!/\$CLASP (pull|push)[^\n]*\)/.test(s.replace(/<\/dev\/null/g, '')) || /\$CLASP (pull|push)[^<\n]*<\/dev\/null/.test(s));          // 로그인 외 clasp 호출은 stdin 을 읽지 않는다
   for (const m of s.matchAll(/\$CLASP (pull|push)[^\n]*/g)) assert.match(m[0], /<\/dev\/null/);
   assert.ok(!/rm -rf "\$HOME|rm -rf \/|rm -rf "\$BACKUP/.test(s));                                           // 백업은 지우지 않는다
+});
+
+// ---- push 실패 진단(clasp 3.4.1 호환): 가짜 Apps Script API 서버(자식 프로세스)로 실제 오류 본문 출력·대체 반영을 시험한다
+const SERVER = `const http=require('http'),fs=require('fs');const R=process.env.FAKE_REMOTE,M=process.env.API_MODE;
+const srv=http.createServer((q,s)=>{const ch=[];q.on('data',c=>ch.push(c));q.on('end',()=>{const b=Buffer.concat(ch).toString('utf8');s.setHeader('content-type','application/json');
+  if(q.url==='/token')return s.end(JSON.stringify({access_token:'AT',scope:'https://www.googleapis.com/auth/script.projects https://www.googleapis.com/auth/userinfo.email'}));
+  if(M==='ok'){for(const n of fs.readdirSync(R))fs.rmSync(R+'/'+n);for(const x of JSON.parse(b).files)fs.writeFileSync(R+'/'+x.name+({SERVER_JS:'.gs',HTML:'.html',JSON:'.json'})[x.type],x.source);return s.end('{}')}
+  s.statusCode=Number(M);s.end(JSON.stringify({error:{code:Number(M),status:'INVALID_ARGUMENT',message:'Invalid manifest: SECRET_DETAIL_XYZ',details:[{reason:'X'}]}}))})});
+srv.listen(0,'127.0.0.1',()=>console.log('port='+srv.address().port));`;
+function startApi(w, mode) {
+  const child = spawn(process.execPath, ['-e', SERVER], { env: { ...process.env, FAKE_REMOTE: w.rem, API_MODE: String(mode) }, stdio: ['ignore', 'pipe', 'inherit'] });
+  return new Promise(res => child.stdout.once('data', d => res({ child, base: `http://127.0.0.1:${/port=(\d+)/.exec(String(d))[1]}` })));
+}
+const apiEnv = (api, w) => { writeFileSync(`${w.home}/.clasprc.json`, JSON.stringify({ tokens: { default: { client_id: 'cid', client_secret: 'csec', refresh_token: 'RT', access_token: 'OLD' } } })); return { RICH300_API_BASE: api.base, RICH300_TOKEN_URL: `${api.base}/token`, }; };
+test('push 실패 → 실제 Google API 오류 본문(상태·message)을 그대로 출력하고, 원격은 바뀌지 않았음을 확인하며, 비밀(토큰·client secret)은 출력하지 않는다', async () => {
+  const w = setup(), api = await startApi(w, 400); try {
+    const x = run(w, { env: { ...apiEnv(api, w), FAKE_PUSH_REJECT: '1' }, ttyLines: [] });
+    assert.notEqual(x.r.status, 0); assert.match(x.out, /HTTP 400/); assert.match(x.out, /Invalid manifest: SECRET_DETAIL_XYZ/); assert.match(x.out, /INVALID_ARGUMENT/); assert.match(x.out, /매니페스트·코드 형식/); assert.match(x.out, /승인된 권한 범위: script\.projects, userinfo\.email/);
+    assert.ok(!/csec|RT\b|"AT"|Bearer/.test(x.out)); assert.match(x.out, /\[FAIL\] push 실패/); assert.equal(remoteFiles(w)['Code.gs'], BOOT); assert.equal(x.backups.length, 1);
+  } finally { api.child.kill(); }
+});
+test('clasp push 만 실패하고 API 는 성공(clasp 쪽 문제) → API 직접 반영 후 다시 내려받아 일치 확인 → PASS', async () => {
+  const w = setup(), api = await startApi(w, 'ok'); try {
+    const x = run(w, { env: { ...apiEnv(api, w), FAKE_PUSH_REJECT: '1' }, ttyLines: [] });
+    assert.equal(x.r.status, 0, x.out); assert.match(x.out, /clasp 대신 API 직접 호출로 반영/); assert.match(x.out, /HTTP 200/); assert.match(x.out, /\[PASS\] 반영 완료/); assert.equal(remoteFiles(w)['Code.gs'], readFileSync(`${DIST}/Code.gs`, 'utf8')); assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'Fill.html', 'appsscript.json']);
+  } finally { api.child.kill(); }
+});
+test('clasp 선택: PATH 의 clasp 3.x 를 우선 쓰고, 없으면 3.4.1 로 고정한 npx 를 쓴다(스크립트 기본값은 더 이상 3.3.0 이 아님)', () => {
+  const w = setup(), bindir = `${w.root}/bin`; mkdirSync(bindir); writeFileSync(`${bindir}/clasp`, FAKE, { mode: 0o755 });
+  const base = { RICH300_CLASP: '' }, chk = (env, re) => { const x = run(w, { env: { ...base, ...env, RICH300_CONFIRM: 'ZZZZZZ' } }); assert.match(x.out, re, x.out); };
+  chk({ PATH: `${bindir}:${process.env.PATH}` }, /\(clasp: clasp\)/);
+  chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':') }, /\(clasp: npx -y @google\/clasp@3\.4\.1\)/);
+  chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':'), RICH300_CLASP_VERSION: '3.4.0' }, /clasp@3\.4\.0/);
+  assert.ok(!/clasp@3\.3\.0/.test(readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, '')));
 });
