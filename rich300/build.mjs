@@ -12,6 +12,7 @@ export const ENGINE_MODULES = [
   'dedupe',
   'pnl',
   'risk',
+  'scaleplan',
   'ledger',
   'dashboard',
   'dashview',

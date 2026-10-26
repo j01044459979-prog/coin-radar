@@ -1,0 +1,31 @@
+name: scale-backtest
+# 분할 진입·익절 비율 비교(읽기 전용): 공개 OKX 시세로 단일 진입과 여러 분할 비율을 같은 위험 한도에서 비교해 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시·주문이 없고 운영 radar 워크플로, 스케줄과 무관하다. 수동 실행(workflow_dispatch) 전용.
+on:
+  workflow_dispatch:
+    inputs:
+      top: { description: 'symbols', default: '20' }
+      days: { description: 'days', default: '120' }
+      equity: { description: 'account equity (USDT)', default: '300' }
+permissions:
+  contents: read
+concurrency:
+  group: scale-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/scale-plan.test.mjs radar-service/test/scale-sim.test.mjs radar-service/test/signal-backtest.test.mjs
+      - name: Backtest (public OKX data, no Telegram)
+        run: node radar-service/signal/scale-backtest-cli.mjs --top "${{ inputs.top }}" --days "${{ inputs.days }}" --equity "${{ inputs.equity }}" | tee "$RUNNER_TEMP/scale-backtest.txt"
+      - name: Summary
+        run: |
+          { echo '### Scale-plan comparison (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/scale-backtest.txt"; } >> "$GITHUB_STEP_SUMMARY"

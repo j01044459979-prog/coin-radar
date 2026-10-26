@@ -87,20 +87,20 @@ test('/fill: 확인 전에는 기록 없음, 저장 후 진입 1건(수량 계�
   click(x, m, yes); x.tele.updates.push(u); x.kv.del('offset'); poll(x); assert.equal(rows(x, 'fill').length, 1);                // 재클릭·재전달
   assert.equal(x.tele.answers.at(-1).text, '이미 저장됨');
   // 취소
-  say(x, `/fill ${SID} 10 10 100 98`); const m2 = lastSent(x); click(x, m2, btn(m2, '취소')); assert.equal(rows(x, 'fill').length, 1); assert.equal(x.tele.edits.at(-1).text, '취소됨'); click(x, m2, btn(m2, '저장')); assert.equal(rows(x, 'fill').length, 1);
+  say(x, `/fill ${SID} 10 10 100 98 force=1`); const m2 = lastSent(x); click(x, m2, btn(m2, '취소')); assert.equal(rows(x, 'fill').length, 1); assert.equal(x.tele.edits.at(-1).text, '취소됨'); click(x, m2, btn(m2, '저장')); assert.equal(rows(x, 'fill').length, 1);
   // 만료
-  say(x, `/fill ${SID} 10 10 100 98`); const m3 = lastSent(x); x.advance(10 * 60 * 1000 + 1); click(x, m3, btn(m3, '저장')); assert.equal(rows(x, 'fill').length, 1); assert.match(x.tele.answers.at(-1).text, /만료/);
+  say(x, `/fill ${SID} 10 10 100 98 force=1`); const m3 = lastSent(x); x.advance(10 * 60 * 1000 + 1); click(x, m3, btn(m3, '저장')); assert.equal(rows(x, 'fill').length, 1); assert.match(x.tele.answers.at(-1).text, /만료/);
   // 타인이 같은 초안 버튼을 눌러도 무시
-  say(x, `/fill ${SID} 10 10 100 98`); const m4 = lastSent(x); click(x, m4, btn(m4, '저장'), STRANGER); assert.equal(rows(x, 'fill').length, 1);
+  say(x, `/fill ${SID} 10 10 100 98 force=1`); const m4 = lastSent(x); click(x, m4, btn(m4, '저장'), STRANGER); assert.equal(rows(x, 'fill').length, 1);
 });
 test('/fill: 추가진입(kind=add)·qty·추정 수수료·펀딩 옵션, 위험 경고, 이미 청산됨·관망 기록·미지의 신호·형식 오류는 초안 없이 안내', () => {
   const x = setup(); enter(x);
-  say(x, `/fill ${SID} 20 10 101 99 qty=1.5 fee=~0.12 funding=-0.03`); const m = lastSent(x);
-  assert.match(m.text, /추가진입 LONG/); assert.match(m.text, /수량 1\.5 /); assert.match(m.text, /수수료 0\.12 · 펀딩 -0\.03/); click(x, m, btn(m, '저장'));
+  say(x, `/fill ${SID} 20 10 101 99 qty=1.5 fee=~0.12 funding=-0.03 force=1`); const m = lastSent(x);
+  assert.match(m.text, /추가진입 LONG/); assert.match(m.text, /계획 밖 추가 진입\(force\)/); assert.match(m.text, /수량 1\.5 /); assert.match(m.text, /수수료 0\.12 · 펀딩 -0\.03/); click(x, m, btn(m, '저장'));
   const f = rows(x, 'fill').find(r => r.kind === 'add'); assert.deepEqual([f.qtySource, f.fee, f.funding], ['entered', { state: 'estimated', amount: '0.12' }, { state: 'entered', amount: '-0.03' }]);
   // 경고: 방향 반대쪽 손절, 청산가가 손절보다 먼저(고레버리지)
-  say(x, `/fill ${SID} 10 10 100 102`); assert.match(lastSent(x).text, /⚠ 손절가가 방향과 반대쪽/);
-  say(x, `/fill ${SID} 10 50 100 90`); assert.match(lastSent(x).text, /청산가\(근사\)가 손절보다 먼저/);
+  say(x, `/fill ${SID} 10 10 100 102 force=1`); assert.match(lastSent(x).text, /⚠ 손절가가 방향과 반대쪽/);
+  say(x, `/fill ${SID} 10 50 100 90 force=1`); assert.match(lastSent(x).text, /청산가\(근사\)가 손절보다 먼저/);
   const drafts = [...x.kv.map.keys()].filter(k => k.startsWith('d:')).length;
   // 거절 사례 — 초안도 기록도 없다
   const before = rows(x, 'fill').length;
@@ -287,5 +287,5 @@ test('중복 입력 방지: 같은 체결을 두 번 확인하면 두 번째는 
   assert.equal(storeIntegrityCheck(x.mem.env).ok, true);
   const y = setup(); enter(y); assert.deepEqual([tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-1' }).ok, tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-2' }).ok], [true, false]);
   const f = tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-3' }); assert.deepEqual([f.ok, f.error], [false, 'invalid']); assert.match(f.message, /중복 저장 방지/); assert.equal(tgSubmitFillForm(y.env, { kind: 'exit', sid: SID, price: '103', qty: '1', formId: 'again-3', force: true }).kind, 'reduce');          // 계열이 같으면(부분 청산 반복 포함) 막고, force로 허용
-  say(y, `/fill ${SID} 30 10 100 98`); assert.match(lastSent(y).text, /^추가진입 LONG/);
+  say(y, `/fill ${SID} 30 10 100 98 force=1`); assert.match(lastSent(y).text, /^추가진입 LONG/);
 });
