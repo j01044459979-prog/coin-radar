@@ -21,6 +21,7 @@ import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, st
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
 import { r9ParseSignal, r9StripLine } from './r9.mjs';
+import { splanBuild, splanCheckAdd, splanStatus, splanLines, splanStatusLines, splanReasonText, splanQty } from './scaleplan.mjs';
 
 export const TG_MAX_ATTEMPTS = 3;
 export const TG_MAX_WAIT_MS = 10000;                 // 이보다 긴 retry_after는 기다리지 않고 재시도 가능 오류로 반환(다음 트리거에서 재처리)
@@ -181,6 +182,36 @@ const tgFillsOf = (se, sid) => storeList(se, 'fill').map(r => r.data).filter(f =
 function tgRiskEquityMicro(env) {                      // 경고용: 오늘 시작 평가액(장부 계산 실패 시 null)
   try { const l = storeBuildLedger(env.storeEnv(), { throughDay: kstDayOf(env.now()) }); const r = l.rows[l.rows.length - 1]; return r ? r.startMicro : null; } catch { return null; }
 }
+// ── 분할 진입·익절 계획(계산·경고 전용, 주문 없음) ──
+// 저장: 첫 진입 체결 때 입력(평가액·1차 진입가·손절·배율·단계 수)을 'plan'(불변)에 한 번 남긴다. 계획은 이 입력에서 결정적으로 다시 만든다.
+// 규칙 위반(무계획 추가 진입 등)은 기본 차단, 명령 끝 force=1 이면 기록하되 요약에 경고를 남긴다.
+const tgEquityNow = env => { const m = tgRiskEquityMicro(env); return m === null || m === undefined ? null : (Number(m) / 1e6).toFixed(2); };
+function tgPlanBuild(se, sid, sg, inp) {
+  return splanBuild({ symbol: sg.symbolId, dir: sg.dir, entry: Number(inp.entry), stop: Number(inp.stop), equity: Number(inp.equity), ...(inp.lev ? { lev: inp.lev } : {}), ...(inp.stages ? { params: { maxStages: inp.stages } } : {}) });
+}
+function tgPlanOf(se, sid) {
+  const r = storeGet(se, 'plan', sid), sg = storeGet(se, 'signal', sid); if (!r || r.void || !sg || sg.void) return null;
+  const plan = tgPlanBuild(se, sid, sg.data, r.data); return plan.status === 'ok' ? plan : null;
+}
+const tgPlanFills = fills => fills.map(f => ({ kind: f.kind, price: Number(f.price), qty: Number(f.qty), at: f.at }));
+const tgPlanCtx = (env, sg) => ({ barsSinceSignal: Math.max(0, Math.floor((env.now() - sg.signalAt) / 900000)) });
+function tgPlanPreview(env, sid, equityArg) {                // 진입 전: 신호 값과 평가액으로 보여 주기만 한다(저장 없음)
+  const se = env.storeEnv(), sg = storeGet(se, 'signal', sid); if (!sg || sg.void) return null;
+  const eq = equityArg ?? tgEquityNow(env); if (eq === null) return { plan: null, equity: null };
+  return { plan: tgPlanBuild(se, sid, sg.data, { entry: sg.data.entry, stop: sg.data.stop, equity: eq }), equity: eq };
+}
+function tgPlanCheckAdd(env, p, fills, entry, qty) {          // 추가 진입 검사: 통과 못 하면 사유 목록
+  const se = env.storeEnv(), sg = storeGet(se, 'signal', p.sid), plan = tgPlanOf(se, p.sid);
+  if (!plan) return ['no-plan'];
+  return splanCheckAdd(plan, tgPlanFills(fills), { price: Number(entry), qty: Number(qty) }, tgPlanCtx(env, sg.data)).reasons;
+}
+function tgPlanEntryWarnings(env, p, qty) {                   // 첫 진입 수량이 계획 1차보다 크거나 계획상 거래 제외인 경우 경고
+  try {
+    const pv = tgPlanPreview(env, p.sid); if (!pv || !pv.plan) return [];
+    if (pv.plan.status !== 'ok') return [`계획상 거래 제외: ${splanReasonText(pv.plan.reason)}`];
+    const q1 = pv.plan.stages[0].qty; return Number(qty) > q1 + pv.plan.spec.step / 2 ? [`1차 계획 수량 ${splanQty(q1, pv.plan.spec)} 보다 큽니다(1차는 전체의 ${Math.round(pv.plan.stages[0].weight * 100)}%, 나머지는 사전 가격에서만)`] : [];
+  } catch { return []; }
+}
 export function tgBuildEntry(env, p) {                 // p: { sid, margin, leverage, entry, stop, qty?, fee?, funding? } (문자열)
   const se = env.storeEnv(), sg = storeGet(se, 'signal', p.sid);
   if (!sg || sg.void) throw tgUserErr(`알 수 없는 신호: ${String(p.sid).slice(0, 40)}`);
@@ -196,7 +227,13 @@ export function tgBuildEntry(env, p) {                 // p: { sid, margin, leve
   const dir = sg.data.dir, risk = riskTrade({ dir, entry, stop: stop ?? entry, qty, margin, leverage, equityMicro: stop === undefined ? null : tgRiskEquityMicro(env) });
   const atMs = tgAtMs(env, p), note = tgNote(p.note);
   const fill = { origin: 'real', sid: p.sid, kind, dir, price: entry, qty, margin, leverage, ...(stop === undefined ? {} : { plannedStop: stop }), qtySource, fee: tgAmount(p.fee, '수수료'), funding: tgAmount(p.funding, '펀딩'), ...(note ? { note } : {}) };
-  return { type: 'fill', fill, risk, summary: tgEntrySummary(fill, stop === undefined ? { ...risk, noStop: true } : risk, atMs), params: { ...p }, force: p.force === true };
+  const extra = [];
+  if (kind === 'add') {
+    const why = tgPlanCheckAdd(env, p, fills, entry, qty);
+    if (why.length && p.force !== true) throw tgUserErr(`계획 밖 추가 진입은 기록하지 않습니다(손실 만회용 물타기 금지): ${why.map(splanReasonText).join(' / ').slice(0, 220)}. 그래도 실제로 체결했다면 명령 끝에 force=1 을 붙여 기록하세요`);
+    if (why.length) extra.push(`⚠ 계획 밖 추가 진입(force): ${why.map(splanReasonText).join(' / ').slice(0, 200)}`);
+  } else for (const w of tgPlanEntryWarnings(env, p, qty)) extra.push(`⚠ ${w}`);
+  return { type: 'fill', fill, risk, summary: [tgEntrySummary(fill, stop === undefined ? { ...risk, noStop: true } : risk, atMs), ...extra].join('\n'), params: { ...p }, force: p.force === true };
 }
 export function tgBuildExit(env, p) {                  // p: { sid, price, qty?('all'), fee?, funding? }
   const se = env.storeEnv(), fills = tgFillsOf(se, p.sid), trade = fills.length ? tgTradeOrUserError(fills) : null;
@@ -236,8 +273,18 @@ const tgTradeOrUserError = fills => { try { return pnlComputeTrade(fills); } cat
 const tgNextAt = (env, fills) => Math.max(env.now(), fills.reduce((m, f) => Math.max(m, f.at), 0) + 1);
 const tgNum = v => { const t = String(v); return t.includes('.') ? t.replace(/0+$/, '').replace(/\.$/, '') : t; };
 function tgRebuild(env, d) {                            // 확인 시점의 *현재 상태*로 다시 계산해 초안과 같은지 확인(그 사이 상태가 바뀐 초안이 잘못 저장되는 것을 막는다)
-  const b = d.type === 'fill' ? tgBuildEntry(env, d.params) : tgBuildExit(env, d.params);
+  let b;
+  try { b = d.type === 'fill' ? tgBuildEntry(env, d.params) : tgBuildExit(env, d.params); }
+  catch (e) { if (d.type === 'fill' && d.fill.kind === 'entry' && e instanceof StoreError && e.code === 'USER' && tgFillsOf(env.storeEnv(), d.fill.sid).length) throw tgUserErr('그 사이 포지션 상태가 바뀌어 이 초안은 맞지 않습니다. 다시 입력해 주세요'); throw e; }
   if (b.fill.kind !== d.fill.kind || b.fill.qty !== d.fill.qty) throw tgUserErr('그 사이 포지션 상태가 바뀌어 이 초안은 맞지 않습니다. 다시 입력해 주세요');
+}
+function tgStorePlan(env, f, actor) {                       // 계획은 참고용: 저장·계산에 실패해도 체결 기록은 영향받지 않는다
+  try {
+    const se = env.storeEnv(), sg = storeGet(se, 'signal', f.sid); if (!sg || sg.void || storeGet(se, 'plan', f.sid)) return;
+    const eq = tgEquityNow(env); if (eq === null) return;
+    const inp = { entry: f.price, stop: f.plannedStop ?? sg.data.stop, equity: eq }, plan = tgPlanBuild(se, f.sid, sg.data, inp); if (plan.status !== 'ok') return;
+    storeCreate(se, 'plan', { sid: f.sid, ...inp, lev: plan.lev, stages: plan.stagesCount, at: f.at }, { actor });
+  } catch { /* 계획 저장 실패는 무시 */ }
 }
 function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후에만 호출. fillId는 초안/폼 id로 고정 → 중복 확인·재처리에도 1건.
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
@@ -254,6 +301,7 @@ function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후�
   }
   const r = storeCreate(se, 'fill', f, { actor });
   if (r.status === 'conflict') throw tgUserErr('같은 체결 id에 다른 내용이 이미 있습니다');
+  if (f.kind === 'entry') tgStorePlan(env, f, actor);
   return { ...r, kind: f.kind };
 }
 
@@ -280,7 +328,7 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 }
 
 // ── 명령 ──
-const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]', '/exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
+const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]', '/exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/plan 신호ID [평가액]  (분할 진입·익절 계획과 현재 상태 — 계산 참고용, 주문 아님)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
 export function tgConfirmDraft(env, ev, built) {
   const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, equity: built.equity, params: built.params, force: built.force === true, sid: built.fill ? built.fill.sid : undefined, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
@@ -289,6 +337,20 @@ export function tgConfirmDraft(env, ev, built) {
 function tgDefaultEquityDay(env) {                      // 평가액이 없는 가장 최근 *마감된* 날, 없으면 오늘(KST)
   try { const m = closeStatus(env, { now: env.now(), days: 14 }).find(d => d.closed && d.equity === null); if (m) return m.day; } catch { /* 챌린지 없음 등 */ }
   return kstDayOf(env.now());
+}
+function tgPlanText(env, sid, equityArg) {
+  const se = env.storeEnv(), sg = storeGet(se, 'signal', sid); if (!sg || sg.void) throw tgUserErr(`알 수 없는 신호: ${String(sid).slice(0, 40)}`);
+  const stored = equityArg === undefined ? tgPlanOf(se, sid) : null;
+  if (stored) {
+    const fills = tgFillsOf(se, sid), st = splanStatus(stored, tgPlanFills(fills), tgPlanCtx(env, sg.data));
+    return [...splanLines(stored), '', ...splanStatusLines(stored, st), '15분봉 종가 기준 구조 유지·미체결 주문 취소 여부는 거래소 차트에서 직접 확인하세요'].join('\n');
+  }
+  const pv = tgPlanPreview(env, sid, equityArg);
+  if (!pv.plan) return '계획을 만들 평가액이 없습니다. /plan 신호ID 평가액 으로 평가액을 직접 넣어 보세요';
+  return [...splanLines(pv.plan, { assumed: equityArg !== undefined }), '', equityArg === undefined ? '※ 오늘 시작 평가액 기준 미리보기. 첫 진입을 기록하면 이 계획이 고정됩니다' : '※ 입력한 평가액 기준 미리보기(저장되지 않음)'].join('\n');
+}
+function tgPlanCard(env, sid) {                          // [진입했어] 직후 안내: 실패해도 기록·안내에는 영향 없음
+  try { return `\n\n${tgPlanText(env, sid)}`; } catch { return ''; }
 }
 function tgOnMessage(env, ev) {
   const c = tgParseCommand(ev.text); if (!c) return { status: 'ignored', action: 'not-command' };
@@ -314,6 +376,11 @@ function tgOnMessage(env, ev) {
       const sid = c.pos[0]; if (!sid || !TG_SID_RE.test(sid)) return { status: 'handled', action: 'usage', ...reply('사용법: /review 신호ID') };
       if (!tgFillsOf(env.storeEnv(), sid).length) return { status: 'handled', action: 'review-none', ...reply('이 신호의 체결 기록이 없습니다') };
       const s = tgSendReviewPrompt(env, ev.chatId, sid); return { status: 'handled', action: 'review-prompt', replyFailed: !s.ok };
+    }
+    if (c.cmd === 'plan') {
+      const sid = c.pos[0]; if (!sid || !TG_SID_RE.test(sid)) return { status: 'handled', action: 'usage', ...reply('사용법: /plan 신호ID [평가액]') };
+      const eqArg = c.pos[1] === undefined ? undefined : schemaDecString(c.pos[1], '평가액', { positive: true });
+      return { status: 'handled', action: 'plan', ...reply(tgPlanText(env, sid, eqArg)) };
     }
     if (c.cmd === 'status') {
       const open = [...pnlComputeAll(storeList(env.storeEnv(), 'fill').map(r => r.data), {}).values()].filter(t => t.status === 'open');
@@ -352,7 +419,7 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   const a = answer(`기록: ${RESPONSE_CHOICES[choice]}`), e = tgEdit(env, cb, `${shown}\n→ ${RESPONSE_CHOICES[choice]}`);
   let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
   if (choice === 'entered' && r.status === 'added') {
-    const link = tgFillLink(env.uiUrl, sg.data), s = tgSend(env, ev.chatId, `진입 기록: /fill ${sid} 증거금 레버리지 ${sg.data.entry} ${sg.data.stop}${link ? '\n(숫자 입력은 아래 화면이 더 편합니다)' : ''}`, link ? { inline_keyboard: [[{ text: '입력 화면 열기', url: link }]] } : undefined);
+    const link = tgFillLink(env.uiUrl, sg.data), s = tgSend(env, ev.chatId, `진입 기록: /fill ${sid} 증거금 레버리지 ${sg.data.entry} ${sg.data.stop}${link ? '\n(숫자 입력은 아래 화면이 더 편합니다)' : ''}${tgPlanCard(env, sid)}`, link ? { inline_keyboard: [[{ text: '입력 화면 열기', url: link }]] } : undefined);
     replyFailed = replyFailed || !s.ok;
   }
   return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed };

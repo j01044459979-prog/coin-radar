@@ -72,6 +72,10 @@ export const ENTITIES = {
   closenotice: { sheet: 'CloseNotices', keyOf: d => d.day, headers: ['day', 'status', 'attempts'],
     normalize: d => { const n = d.attempts; if (!Number.isInteger(n) || n < 0 || n > 9) bad('attempts는 0~9 정수'); return strip({ day: needDay(d.day, 'day'), status: needEnum(d.status, ['pending', 'sent', 'failed', 'off', 'unknown'], 'status'), attempts: n, at: needMs(d.at, 'at'), error: d.error === undefined || d.error === null ? undefined : needStr(String(d.error), 'error', 40) }); },
     display: d => [d.day, d.status, String(d.attempts)] },
+  // 분할 진입·익절 계획의 *입력*(불변): 첫 진입 기록 때 한 번 저장한다. 계획 자체는 이 값과 결정적 계산(scaleplan.mjs)으로 언제든 같은 결과로 다시 만든다.
+  plan: { sheet: 'Plans', immutable: true, keyOf: d => d.sid, headers: ['sid', 'equity', 'entry', 'stop', 'lev', 'stages'],
+    normalize: d => { if (![2, 3].includes(d.lev)) bad('lev는 2 또는 3'); if (![1, 2, 3].includes(d.stages)) bad('stages는 1~3'); return { sid: needStr(d.sid, 'sid', 80), equity: schemaDecString(d.equity, 'equity', { positive: true }), entry: schemaDecString(d.entry, 'entry', { positive: true }), stop: schemaDecString(d.stop, 'stop', { positive: true }), lev: d.lev, stages: d.stages, at: needMs(d.at, 'at') }; },
+    display: d => [d.sid, d.equity, d.entry, d.stop, String(d.lev), String(d.stages)] },
   tgupdate: { sheet: 'TgUpdates', immutable: true, keyOf: d => `${d.kind}:${d.id}`, headers: ['kind', 'id'],
     normalize: d => ({ kind: needEnum(d.kind, ['u', 'cb'], 'kind'), id: needStr(String(d.id), 'id', 80), at: needMs(d.at, 'at') }), display: d => [d.kind, d.id] },
 };
