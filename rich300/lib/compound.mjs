@@ -8,7 +8,7 @@ import { dayToIndex, indexToDay } from './time.mjs';
 export function rateFraction(rate) {
   const m = /^(\d+)(?:\.(\d+))?$/.exec(String(rate).trim());
   if (!m) throw new Error(`목표율 형식 오류: ${rate}`);
-  const frac = m[2] ?? '', den = 10n ** BigInt(frac.length), num = BigInt(m[1] + frac);
+  const frac = (m[2] != null ? m[2] : ''), den = BigInt(10) ** BigInt(frac.length), num = BigInt(m[1] + frac);
   if (num > den) throw new Error('목표율은 0~100%');            // 0 이상 1 이하(100%)
   return { num, den };
 }
@@ -29,7 +29,7 @@ export function compoundIdealSeries({ startMicro, startDay, schedule, throughDay
   const s = dayToIndex(startDay), e = dayToIndex(throughDay);
   if (e < s) return [{ day: indexToDay(s - 1), n: 0, idealMicro: startMicro }];
   const rows = [{ day: indexToDay(s - 1), n: 0, idealMicro: startMicro }];
-  let numer = startMicro, denom = 1n;
+  let numer = startMicro, denom = BigInt(1);
   for (let i = s; i <= e; i++) {
     const { num, den } = rateFraction(compoundRateOn(indexToDay(i), schedule));
     numer *= den + num; denom *= den;

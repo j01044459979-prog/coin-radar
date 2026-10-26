@@ -9,7 +9,7 @@ import { StoreError } from './schema.mjs';
 export const INGEST_UNAUTHORIZED = Object.freeze({ ok: false, error: 'unauthorized' });
 export function ingestHandle(env, raw) {
   let auth;
-  try { auth = authVerify(env, raw); } catch { return { ...INGEST_UNAUTHORIZED }; }
+  try { auth = authVerify(env, raw); } catch (e_) { return { ...INGEST_UNAUTHORIZED }; }
   if (!auth.ok) return { ...INGEST_UNAUTHORIZED };
   const body = auth.body;
   try {

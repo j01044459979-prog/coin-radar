@@ -4,19 +4,20 @@
 //  · 순손익(net) = 총손익 − 수수료 + 펀딩. 기본값(netEntered)은 *실제 입력된 값만* 반영하고, 추정치를 더한 값은 netWithEstimates로 따로 낸다.
 import { dec, decAdd, decSub, decSign, decToMicro, decFormat, microToDec, decRoundDiv } from './decimal.mjs';
 import { kstDayOf } from './time.mjs';
+import { nullishOr } from './nullish.mjs';
 
 export const PNL_ENTRY_KINDS = ['opening', 'entry', 'add'];
 export const PNL_EXIT_KINDS = ['reduce', 'close'];
 const PNL_STATES = ['entered', 'estimated', 'missing'];
-const PNL_E24_TO_MICRO = 10n ** 18n;                    // 10^-24 단위 → 마이크로(10^-6) 변환 나눗수
+const PNL_E24_TO_MICRO = BigInt(10) ** BigInt(18);                    // 10^-24 단위 → 마이크로(10^-6) 변환 나눗수
 
 function pnlNormalizeAmount(a, name, nonNegative) {
-  const state = a?.state ?? 'missing';
+  const state = ((a == null ? undefined : a.state) != null ? (a == null ? undefined : a.state) : 'missing');
   if (!PNL_STATES.includes(state)) throw new Error(`${name} 상태 오류: ${state}`);
-  if (state === 'missing') return { state, micro: 0n };
+  if (state === 'missing') return { state, micro: BigInt(0) };
   if (a.amount === undefined || a.amount === null || a.amount === '') throw new Error(`${name} 금액 필요(상태 ${state})`);
   const micro = decToMicro(dec(a.amount));
-  if (nonNegative && micro < 0n) throw new Error(`${name}은 0 이상이어야 함`);
+  if (nonNegative && micro < BigInt(0)) throw new Error(`${name}은 0 이상이어야 함`);
   return { state, micro };
 }
 export function pnlNormalizeFill(f) {
@@ -37,8 +38,8 @@ export function pnlNormalizeFill(f) {
 export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
   const fills = fillsIn.map(pnlNormalizeFill).filter(f => f.at < cutoffMs).map((f, i) => ({ f, i })).sort((a, b) => a.f.at - b.f.at || a.i - b.i).map(x => x.f);
   if (!fills.length) return null;
-  const sid = fills[0].sid, dir = fills[0].dir, sign = dir === 'LONG' ? 1n : -1n;
-  let qty = 0n, cost = 0n, marginMicro = 0n, marginAll = true, first = true;
+  const sid = fills[0].sid, dir = fills[0].dir, sign = dir === 'LONG' ? BigInt(1) : -BigInt(1);
+  let qty = BigInt(0), cost = BigInt(0), marginMicro = BigInt(0), marginAll = true, first = true;
   const events = [], flags = new Set(), seen = new Set();
   for (const f of fills) {
     if (f.sid !== sid) throw new Error('한 번에 하나의 sid만 계산');
@@ -48,7 +49,7 @@ export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
     if (!first && f.kind === 'entry') throw new Error('추가 진입은 kind=add');
     if (!first && f.kind === 'opening') throw new Error('opening은 첫 체결만');
     first = false;
-    let grossMicro = 0n;
+    let grossMicro = BigInt(0);
     if (PNL_ENTRY_KINDS.includes(f.kind)) {
       qty = decAdd(qty, f.qty); cost += f.price * f.qty;                                     // 원가: 반올림 없는 10^-24 단위
       if (f.kind !== 'opening') { if (f.margin === null) marginAll = false; else marginMicro += decToMicro(f.margin); }
@@ -56,12 +57,12 @@ export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
       if (f.qty > qty) throw new Error(`청산 수량(${decFormat(f.qty, 8)})이 보유 수량(${decFormat(qty, 8)})보다 큼: ${f.fillId}`);
       if (f.kind === 'close' && f.qty !== qty) throw new Error(`close는 잔량 전체여야 함: ${f.fillId}`);
       const removed = f.qty === qty ? cost : decRoundDiv(cost * f.qty, qty), proceeds = f.price * f.qty;   // 비례 원가(10^-24 단위, 오차 < 1e-24)
-      grossMicro = decRoundDiv(sign === 1n ? proceeds - removed : removed - proceeds, PNL_E24_TO_MICRO);
+      grossMicro = decRoundDiv(sign === BigInt(1) ? proceeds - removed : removed - proceeds, PNL_E24_TO_MICRO);
       qty = decSub(qty, f.qty); cost = decSub(cost, removed);
     }
     events.push({ fillId: f.fillId, at: f.at, day: kstDayOf(f.at), kind: f.kind, grossMicro, feeMicro: f.fee.micro, feeState: f.fee.state, fundingMicro: f.funding.micro, fundingState: f.funding.state, qtyAfter: qty });
   }
-  const t = { grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, feeMissingCount: 0, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n, fundingMissingCount: 0 };
+  const t = { grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), feeMissingCount: 0, fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0), fundingMissingCount: 0 };
   for (const e of events) {
     t.grossMicro += e.grossMicro;
     if (e.feeState === 'entered') t.feeEnteredMicro += e.feeMicro; else if (e.feeState === 'estimated') t.feeEstimatedMicro += e.feeMicro; else t.feeMissingCount++;
@@ -72,10 +73,10 @@ export function pnlComputeTrade(fillsIn, { cutoffMs = Infinity } = {}) {
   if (t.feeMissingCount) flags.add('fee-missing'); if (t.fundingMissingCount) flags.add('funding-missing');
   if (t.feeEstimatedMicro || events.some(e => e.feeState === 'estimated')) flags.add('fee-estimated');
   if (events.some(e => e.fundingState === 'estimated')) flags.add('funding-estimated');
-  const status = qty === 0n ? 'closed' : 'open';
-  const margin = marginAll && marginMicro > 0n ? marginMicro : null;
-  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > 0n ? decFormat(decRoundDiv(cost, qty), 10) : null, costE24: cost, marginMicro: margin,
-    roePpm: margin && status === 'closed' ? decRoundDiv(t.netEnteredMicro * 1000000n, margin) : null, totals: t, events, flags: [...flags] };
+  const status = qty === BigInt(0) ? 'closed' : 'open';
+  const margin = marginAll && marginMicro > BigInt(0) ? marginMicro : null;
+  return { sid, dir, status, openQty: decFormat(qty, 12), openQtyDec: qty, avgEntry: qty > BigInt(0) ? decFormat(decRoundDiv(cost, qty), 10) : null, costE24: cost, marginMicro: margin,
+    roePpm: margin && status === 'closed' ? decRoundDiv(t.netEnteredMicro * BigInt(1000000), margin) : null, totals: t, events, flags: [...flags] };
 }
 // 여러 sid의 체결 → 포지션 맵
 export function pnlComputeAll(fills, opts) {
@@ -86,7 +87,7 @@ export function pnlComputeAll(fills, opts) {
 export function pnlDailyFlows(trades) {
   const days = new Map();
   for (const t of trades.values()) for (const e of t.events) {
-    const d = days.get(e.day) ?? { grossMicro: 0n, feeEnteredMicro: 0n, feeEstimatedMicro: 0n, fundingEnteredMicro: 0n, fundingEstimatedMicro: 0n, netEnteredMicro: 0n };
+    const d = nullishOr(days.get(e.day), { grossMicro: BigInt(0), feeEnteredMicro: BigInt(0), feeEstimatedMicro: BigInt(0), fundingEnteredMicro: BigInt(0), fundingEstimatedMicro: BigInt(0), netEnteredMicro: BigInt(0) });
     d.grossMicro += e.grossMicro;
     if (e.feeState === 'entered') d.feeEnteredMicro += e.feeMicro; else if (e.feeState === 'estimated') d.feeEstimatedMicro += e.feeMicro;
     if (e.fundingState === 'entered') d.fundingEnteredMicro += e.fundingMicro; else if (e.fundingState === 'estimated') d.fundingEstimatedMicro += e.fundingMicro;

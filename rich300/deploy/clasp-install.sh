@@ -76,6 +76,8 @@ mkdir -p "$WORK/push"; for f in Code.gs Fill.html appsscript.json; do
   [[ -n "$want" && "$want" == "$got" ]] || fail "$f 가 MANIFEST 와 다릅니다(잘렸거나 손상)"; cp "$SRC/$f" "$WORK/push/$f"; done
 node -e "process.exit(require('fs').readFileSync('$WORK/push/Code.gs','utf8').endsWith('\n}\n')?0:1)" || fail "Code.gs 끝부분이 완결되지 않았습니다"
 node -e "new (require('vm').Script)(require('fs').readFileSync('$WORK/push/Code.gs','utf8'))" 2>/dev/null || fail "Code.gs 문법 검사 실패"
+[[ -f "$SRC/../deploy/gas-compat.mjs" ]] || fail "Apps Script 호환 검사 도구(rich300/deploy/gas-compat.mjs)가 이 커밋에 없습니다"
+COMPAT_OUT="$(node "$SRC/../deploy/gas-compat.mjs" "$WORK/push/Code.gs" 2>&1)" || fail "Code.gs 에 Apps Script 가 거부할 수 있는 최신 문법이 있습니다(push 하면 'Syntax error: ParseError' 로 실패): $(printf '%s' "$COMPAT_OUT" | head -n 5 | tr '\n' ' ')"
 node -e "const m=JSON.parse(require('fs').readFileSync('$WORK/push/appsscript.json','utf8'));const w=m.webapp||{};if(w.access!=='MYSELF'||w.executeAs!=='USER_ACCESSING'||m.runtimeVersion!=='V8')process.exit(1)" || fail "매니페스트가 '나만 접근·접속한 사용자로 실행·V8' 이 아닙니다"
 say "[PASS] 설치 파일 3개(커밋 ${COMMIT:0:12}): SHA-256·문법·매니페스트 확인"
 # ② 로그인(이미 되어 있으면 건너뜀)

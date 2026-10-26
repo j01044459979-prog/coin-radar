@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 // 한 줄에 하나씩 둔다: 독립 PR(R4·R6 등)이 서로 다른 위치에 모듈을 추가해도 병합 충돌이 나지 않게 하기 위함.
 export const ENGINE_MODULES = [
+  'nullish',
   'decimal',
   'time',
   'compound',

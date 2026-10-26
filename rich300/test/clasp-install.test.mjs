@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const SCRIPT = fileURLToPath(new URL('../deploy/clasp-install.sh', import.meta.url)), DIST = fileURLToPath(new URL('../apps-script', import.meta.url));
+const COMPAT = fileURLToPath(new URL('../deploy/gas-compat.mjs', import.meta.url)), SCRIPT = fileURLToPath(new URL('../deploy/clasp-install.sh', import.meta.url)), DIST = fileURLToPath(new URL('../apps-script', import.meta.url));
 const ID = 'abcDEF123_ghiJKL456-mnoPQR789stuVWX', LAST6 = ID.slice(-6), FAKE_COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const sha = b => createHash('sha256').update(b).digest('hex');
 const FAKE = `#!/usr/bin/env bash
@@ -35,7 +35,7 @@ esac`;
 const BOOT = "function rich300Bootstrap() {}\nfunction rich300BootstrapCheck() {}\n";
 function setup({ remote = { 'Code.gs': BOOT, 'appsscript.json': '{"timeZone":"Asia/Seoul"}', 'Fill.html': '<html></html>' }, mutate } = {}) {
   const root = mkdtempSync(`${tmpdir()}/r300-`), src = `${root}/src`, bin = `${root}/fakeclasp`, rem = `${root}/remote`, state = `${root}/state`;
-  mkdirSync(`${src}/rich300`, { recursive: true }); cpSync(DIST, `${src}/rich300/apps-script`, { recursive: true }); if (mutate) mutate(`${src}/rich300/apps-script`);
+  mkdirSync(`${src}/rich300`, { recursive: true }); cpSync(DIST, `${src}/rich300/apps-script`, { recursive: true }); mkdirSync(`${src}/rich300/deploy`); cpSync(COMPAT, `${src}/rich300/deploy/gas-compat.mjs`); if (mutate) mutate(`${src}/rich300/apps-script`);
   mkdirSync(rem); mkdirSync(state); mkdirSync(`${root}/home`); for (const [n, c] of Object.entries(remote)) writeFileSync(`${rem}/${n}`, c);
   writeFileSync(bin, FAKE, { mode: 0o755 }); return { root, src, bin, rem, state, home: `${root}/home`, log: `${root}/clasp.log` };
 }
@@ -63,7 +63,7 @@ test('기본값 없음: 프로젝트 ID·커밋 인자가 없거나 형식이 �
 });
 test('설치 파일도 지정한 커밋 그대로: git 에서 그 커밋만 받아 검증하고, 다른 커밋이면 중단한다', () => {
   const root = mkdtempSync(`${tmpdir()}/r300g-`), repo = `${root}/repo`, g = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
-  mkdirSync(`${repo}/rich300`, { recursive: true }); cpSync(DIST, `${repo}/rich300/apps-script`, { recursive: true }); spawnSync('git', ['init', '-q', repo]); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'uploadpack.allowAnySHA1InWant', 'true'); g('add', '-A'); g('commit', '-qm', 'one');
+  mkdirSync(`${repo}/rich300`, { recursive: true }); cpSync(DIST, `${repo}/rich300/apps-script`, { recursive: true }); mkdirSync(`${repo}/rich300/deploy`); cpSync(COMPAT, `${repo}/rich300/deploy/gas-compat.mjs`); spawnSync('git', ['init', '-q', repo]); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'uploadpack.allowAnySHA1InWant', 'true'); g('add', '-A'); g('commit', '-qm', 'one');
   const c1 = g('rev-parse', 'HEAD').stdout.trim(); writeFileSync(`${repo}/rich300/apps-script/Fill.html`, '<html>변조</html>'); g('commit', '-qam', 'two'); const c2 = g('rev-parse', 'HEAD').stdout.trim();
   const w = setup(); const env = { RICH300_SRC_DIR: '', RICH300_REPO: `file://${repo}` };
   let x = run(w, { args: [ID, c1], env }); assert.equal(x.r.status, 0, x.out); assert.match(x.out, new RegExp(`커밋 ${c1.slice(0, 12)}`));                                    // 검증된 커밋: 정상
@@ -185,4 +185,8 @@ test('clasp 선택: PATH 의 clasp 3.x 를 우선 쓰고, 없으면 3.4.1 로 �
   chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':') }, /\(clasp: npx -y @google\/clasp@3\.4\.1\)/);
   chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':'), RICH300_CLASP_VERSION: '3.4.0' }, /clasp@3\.4\.0/);
   assert.ok(!/clasp@3\.3\.0/.test(readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, '')));
+});
+test('Apps Script 호환 검사: 설치 파일에 최신 문법(10n 등)이 있으면 로그인 전에 중단 — push 하면 Syntax error: ParseError 로 실패할 파일을 미리 막는다', () => {
+  const w = setup({ mutate: d => { const c = readFileSync(`${d}/Code.gs`, 'utf8'); writeFileSync(`${d}/Code.gs`, `var legacyScale_ = 10n ** 12n;\n${c}`); fixManifest(d); } }), x = run(w);
+  assert.notEqual(x.r.status, 0); assert.match(x.out, /거부할 수 있는 최신 문법/); assert.match(x.out, /Code\.gs:1: 10n/); assert.equal(x.log.length, 0);
 });

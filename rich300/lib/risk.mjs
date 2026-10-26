@@ -10,12 +10,12 @@ export function riskTrade({ dir, entry, stop, qty, margin, leverage, equityMicro
   if (decSign(dist) <= 0) flags.push('stop-on-wrong-side');
   const notional = decMul(e, q), lossMicro = decToMicro(decMul(decAbs(decSub(e, s)), q));
   const impliedLev = m && decSign(m) > 0 ? decDiv(notional, m) : null;
-  if (impliedLev !== null && decAbs(decSub(impliedLev, lev)) * 20n > lev) flags.push('leverage-mismatch');           // 증거금·수량으로 계산한 레버리지가 입력과 5% 넘게 다름
+  if (impliedLev !== null && decAbs(decSub(impliedLev, lev)) * BigInt(20) > lev) flags.push('leverage-mismatch');           // 증거금·수량으로 계산한 레버리지가 입력과 5% 넘게 다름
   const liq = dir === 'LONG' ? decMul(e, decAdd(decSub(one, decDiv(one, lev)), r)) : decMul(e, decSub(decAdd(one, decDiv(one, lev)), r));   // 격리 마진 근사
   const liqBeforeStop = dir === 'LONG' ? liq >= s : liq <= s;
   if (liqBeforeStop && decSign(dist) > 0) flags.push('liquidation-before-stop');
   let riskPpm = null;
-  if (equityMicro !== undefined && equityMicro !== null && equityMicro > 0n) { riskPpm = decRoundDiv(lossMicro * 1000000n, equityMicro); if (riskPpm > 20000n) flags.push('risk-over-2pct'); }
+  if (equityMicro !== undefined && equityMicro !== null && equityMicro > BigInt(0)) { riskPpm = decRoundDiv(lossMicro * BigInt(1000000), equityMicro); if (riskPpm > BigInt(20000)) flags.push('risk-over-2pct'); }
   return { notionalMicro: decToMicro(notional), impliedLeverage: impliedLev === null ? null : decFormat(impliedLev, 4), stopLossMicro: lossMicro, riskPpmOfEquity: riskPpm,
     liquidationApprox: decFormat(liq, 8), liquidationIsApproximate: true, liquidationBeforeStop: liqBeforeStop && decSign(dist) > 0, flags };
 }

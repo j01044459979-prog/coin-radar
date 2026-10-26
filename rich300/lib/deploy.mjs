@@ -23,7 +23,7 @@ export function deployCheckEnv(se, expected) { const actual = deployReadEnv(se);
 export function deploySelfTest(info) {
   const items = [], add = (id, ok, level, text) => items.push({ id, ok, level: ok ? 'ok' : level, text });
   add('env', DEPLOY_ENVS.includes(info.env), 'fail', `환경 이름 RICH300_ENV 는 test 또는 prod 여야 합니다(현재: ${DEPLOY_ENVS.includes(info.env) ? info.env : '미설정'})`);
-  add('timezone', info.tz === 'Asia/Seoul', 'fail', `프로젝트 시간대는 Asia/Seoul 이어야 합니다(현재: ${info.tz ?? '알 수 없음'})`);
+  add('timezone', info.tz === 'Asia/Seoul', 'fail', `프로젝트 시간대는 Asia/Seoul 이어야 합니다(현재: ${(info.tz != null ? info.tz : '알 수 없음')})`);
   add('v8', info.v8 === true, 'fail', 'V8 런타임(BigInt 지원)이 필요합니다');
   add('sheet', info.has.sheetId, 'fail', '스프레드시트 ID(RICH300_SHEET_ID)가 설정되어야 합니다');
   add('owner', info.has.ownerEmail, 'fail', '소유자 이메일(RICH300_OWNER_EMAIL)이 없으면 화면 접근이 모두 차단됩니다');
@@ -35,9 +35,9 @@ export function deploySelfTest(info) {
   }
   if (info.env === 'prod') add('prod-gate', true, 'warn', info.flags.prodApproved ? '운영 승인 플래그가 켜져 있어 Telegram 호출이 허용됩니다' : '운영 승인 전: Telegram 호출이 차단되어 있습니다(정상)');
   add('integrity', info.integrity ? info.integrity.ok : false, 'fail', info.integrity ? `저장소 무결성 문제: ${info.integrity.issues.join(', ')}` : '저장소를 열 수 없습니다');
-  add('env-marker', info.envMarker ? info.envMarker.ok : false, 'fail', info.envMarker ? `시트의 환경 표식(${info.envMarker.actual ?? '없음'})이 이 프로젝트(${info.env})와 다릅니다` : '시트 환경 표식을 확인할 수 없습니다');
+  add('env-marker', info.envMarker ? info.envMarker.ok : false, 'fail', info.envMarker ? `시트의 환경 표식(${(info.envMarker.actual != null ? info.envMarker.actual : '없음')})이 이 프로젝트(${info.env})와 다릅니다` : '시트 환경 표식을 확인할 수 없습니다');
   add('owner-visible', info.owner.activeEmailVisible === true, 'warn', '실행 중 사용자 이메일을 읽을 수 없습니다 — "접속한 사용자로 실행" 배포가 아니면 UI 소유자 확인이 항상 거부됩니다(S0 ④ 확인 필요)');
-  const need = info.expectTriggers ?? ['rich300CloseTick', 'rich300TgPoll', 'rich300BackupRun'], have = new Set(info.triggers);
+  const need = (info.expectTriggers != null ? info.expectTriggers : ['rich300CloseTick', 'rich300TgPoll', 'rich300BackupRun']), have = new Set(info.triggers);
   for (const t of need) add(`trigger-${t}`, have.has(t), 'warn', `트리거 ${t} 가 설치되어 있지 않습니다`);
   add('backup', info.backupCount > 0, info.env === 'prod' ? 'warn' : 'warn', '아직 백업이 없습니다');
   return { items, fail: items.filter(i => i.level === 'fail').length, warn: items.filter(i => i.level === 'warn').length };
