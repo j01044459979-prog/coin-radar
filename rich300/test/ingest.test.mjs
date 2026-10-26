@@ -91,12 +91,13 @@ function loadApi({ keys = { RICH300_INGEST_KEY: KEY }, now = T, email = '', extr
   const sheets = fakeSheetsServices(), cache = fakeCache({ t: 0 }), props = fakeProps({ RICH300_SHEET_ID: 'sheet', ...keys }), spy = { sheetOpens: 0, logs: [] };
   const origOpen = sheets.ctx.SpreadsheetApp.openById; sheets.ctx.SpreadsheetApp.openById = id => { spy.sheetOpens++; return origOpen(id); };
   const ContentService = { MimeType: { JSON: 'json', TEXT: 'text' }, createTextOutput: t => ({ text: t, setMimeType() { return this; } }) };
-  const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Date: class extends Date { static now() { return now; } }, ...sheets.ctx, ContentService, CacheService: cache.service, PropertiesService: props.service, Session: { getActiveUser: () => ({ getEmail: () => email }) } }; vm.createContext(ctx);
+  const HtmlService = { createHtmlOutput: h => ({ html: h, setTitle(t) { this.title = t; return this; }, addMetaTag() { return this; } }) };
+  const ctx = { console: { log: (...a) => spy.logs.push(a.join(' ')) }, Date: class extends Date { static now() { return now; } }, ...sheets.ctx, ContentService, HtmlService, CacheService: cache.service, PropertiesService: props.service, Session: { getActiveUser: () => ({ getEmail: () => email }) } }; vm.createContext(ctx);
   vm.runInContext(buildEngine() + '\n' + readFileSync(new URL('../gas/Adapters.gs', import.meta.url), 'utf8') + '\n' + readFileSync(new URL('../gas/Api.gs', import.meta.url), 'utf8') + '\n' + extra, ctx);
   return { ctx, cache, props, sheets, spy, post: raw => JSON.parse(ctx.doPost({ postData: { contents: raw, type: 'application/json' } }).text) };
 }
-test('Api.gs(가짜 Apps Script): 서명된 신호 저장·재전송 duplicate·위조는 동일 응답(시트 미접근)·키 회전·키 미설정 시 닫힘·GET 빈 응답·로그 없음', () => {
-  const a = loadApi(); assert.equal(a.ctx.doGet().text, '');
+test('Api.gs(가짜 Apps Script): 서명된 신호 저장·재전송 duplicate·위조는 동일 응답(시트 미접근)·키 회전·키 미설정 시 닫힘·GET 은 접근 안내만(데이터 없음)·로그 없음', () => {
+  const a = loadApi(); const g = a.ctx.doGet(); assert.equal(g.text, undefined); assert.match(g.html, /접근 제한/); assert.ok(!/RICH ?300|signal|sheet/i.test(g.html.replace(/<style>[\s\S]*?<\/style>/g, '')));
   const bad = a.post(req({ type: 'signal', signal: SIG }, { key: 'Z'.repeat(40) })); assert.deepEqual(bad, INGEST_UNAUTHORIZED); assert.equal(a.spy.sheetOpens, 0);          // 위조: 시트를 열지 않음
   assert.deepEqual(a.post('{bad'), INGEST_UNAUTHORIZED); assert.deepEqual(a.post(''), INGEST_UNAUTHORIZED);
   assert.deepEqual(a.post(req({ type: 'ping' })), { ok: true, pong: true }); assert.equal(a.spy.sheetOpens, 0);
@@ -113,13 +114,13 @@ test('Api.gs(가짜 Apps Script): 서명된 신호 저장·재전송 duplicate·
 
 // ── GET 라우터: 익명·타인 거부(fail-closed), 소유자만 페이지 함수 호출 ──
 const PAGE = `function rich300PageFill_(e) { return ContentService.createTextOutput('FILL-PAGE'); } function rich300PageDash_(e) { return ContentService.createTextOutput('DASH-PAGE'); }`;
-test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명·타인이면 빈 응답, 소유자만 페이지, 정의되지 않은 페이지·프로토타입 이름은 빈 응답', () => {
-  const get = (a, p) => a.ctx.doGet({ parameter: { p } }).text;
+test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명·타인이면 접근 안내(빈 화면 아님·데이터 없음), 소유자만 페이지, 모르는 페이지·프로토타입 이름은 메인(dash)으로', () => {
+  const get = (a, p) => { const o = a.ctx.doGet({ parameter: { p } }); return o.text !== undefined ? o.text : o.html; }, DENIED = /접근 제한/;
   const owner = loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'Me@Example.com' }, email: 'me@example.com', extra: PAGE });
   assert.equal(get(owner, 'fill'), 'FILL-PAGE'); assert.equal(get(owner, 'dash'), 'DASH-PAGE');
-  assert.equal(get(owner, 'nope'), ''); assert.equal(get(owner, 'constructor'), ''); assert.equal(get(owner, '__proto__'), ''); assert.equal(owner.ctx.doGet().text, ''); assert.equal(owner.ctx.doGet({}).text, '');
-  for (const email of ['', 'other@example.com', 'me@example.com.evil.io']) assert.equal(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email, extra: PAGE }), 'dash'), '', email || '(익명)');
-  assert.equal(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY }, email: 'me@example.com', extra: PAGE }), 'dash'), '');                     // 소유자 이메일 미설정 → 닫힘
-  assert.equal(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email: 'me@example.com' }), 'dash'), ''); // 페이지 함수 없음 → 빈 응답
+  for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'DASH-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'DASH-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'DASH-PAGE');         // 빈 화면 대신 메인
+  for (const email of ['', 'other@example.com', 'me@example.com.evil.io']) assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email, extra: PAGE }), 'dash'), DENIED, email || '(익명)');
+  assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY }, email: 'me@example.com', extra: PAGE }), 'dash'), DENIED);                     // 소유자 이메일 미설정 → 닫힘(접근 안내)
+  assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email: 'me@example.com' }), 'dash'), /오류 코드|다시 시도/); // 페이지 함수 없음 → 빈 응답이 아니라 오류 화면(재시도 버튼)
   assert.equal(owner.spy.sheetOpens, 0);
 });

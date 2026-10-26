@@ -46,22 +46,23 @@ export const JOURNAL_SEARCH_LIMIT = 200;
 export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null, q = null } = {}) {
   const se = env.storeEnv(); let inputs;
   try { inputs = storeLoadLedgerInputs(se); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { empty: true, reason: 'no-challenge', generatedAt: now }; throw e; }
-  const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay }), hist = journalHistories(se);
+  const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay });
+  let histMemo = null; const hist = { get: k => { if (!histMemo) histMemo = journalHistories(se); return histMemo.get(k); } };      // 수정 이력은 수정된 항목(rev>1)이 화면에 있을 때만 Audit 를 읽는다(보통은 읽지 않음)
   const data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = data('response'), reviews = data('review');
-  const sig = new Map(signals.map(s => [s.sid, s])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
+  const revRev = new Map(storeList(se, 'review').map(r => [r.key, r.rev])), sig = new Map(signals.map(s => [s.sid, s])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
   const allFills = storeList(se, 'fill', { includeVoid: true }), voided = allFills.filter(r => r.void).map(r => r.key);
   const bySid = new Map();
   for (const r of allFills) { const sid = r.data.sid; if (!bySid.has(sid)) bySid.set(sid, []); bySid.get(sid).push(r); }
-  const edits = (entity, key) => (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create');
+  const edits = (entity, key, rev) => (rev > 1 ? (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create') : []);      // rev 1(수정 없음)이면 이력을 찾지 않는다
   const trades = [...led.trades.values()].map(t => {
     const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (nullishOr(bySid.get(t.sid), [])).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
     return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
       netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > BigInt(0), loss: t.status === 'closed' && net < BigInt(0), flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
-      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key) })),
-      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
+      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key, r.rev) })),
+      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key, r.rev) })),
+      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
   const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
@@ -75,7 +76,7 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
   if (feeM) warnings.push({ type: 'fee-missing', text: `수수료 미입력 거래 ${feeM}건(손익에서 제외됨)` }); if (fundM) warnings.push({ type: 'funding-missing', text: `펀딩 미입력 거래 ${fundM}건(손익에서 제외됨)` });
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
-  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId) }));
+  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').sort((a, b) => b.data.at - a.data.at).slice(0, 10).map(cr => { const c = cr.data; return { cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId, cr.rev) }; });
   return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
 }

@@ -46,7 +46,7 @@ test('?p=check: 소유자만, 설치 점검·자동 검증(진행 중 표시)·�
   g.pm.set('tg:stats', JSON.stringify({ since: 1, lastAt: 2, runs: 30, totalMs: 15000, maxMs: 1800, slow: 0, busy: 0, gaps90: 0, maxGap: 70000 }));
   const out = g.ctx.doGet({ parameter: { p: 'check' } }); assert.equal(out.title, 'RICH300 점검');
   for (const w of ['전체 판정', '설치 점검', 'A1', '엔진 느림', 'G1', '대기 중', '폴링 30회', '평균 500ms', 'rich300TgPoll', '복사용 요약']) assert.ok(out.html.includes(w), w);
-  assert.ok(!out.html.includes(FAKE_TOKEN)); for (const e of ['', 'other@example.com']) assert.equal(load({ email: e }).ctx.doGet({ parameter: { p: 'check' } }).text, '');
+  assert.ok(!out.html.includes(FAKE_TOKEN)); for (const e of ['', 'other@example.com']) assert.match(load({ email: e }).ctx.doGet({ parameter: { p: 'check' } }).html, /접근 제한/);
 });
 test('?p=check: 검증을 시작하지 않았으면 안내, 폴링 전이면 WAIT, 전부 통과하면 통과', () => {
   const g = load({ props: { 'verify:startedAt': '' } }); g.pm.delete('verify:startedAt'); const items = g.ctx.rich300VerifyItems_(); assert.equal(items[0].status, 'WAIT'); assert.match(items[0].text, /시작되지 않았습니다/);

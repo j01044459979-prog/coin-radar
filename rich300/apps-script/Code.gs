@@ -795,6 +795,48 @@ ${dashFooter(m)}
 </main></body></html>`;
 }
 
+// ── shell.mjs ──
+// 웹앱 공통 화면(서버 측, 순수 함수): 접근 거부·오류(재시도 버튼)·상태 점검. 시트를 읽지 않으므로 저장소가 느리거나 고장 나도 *항상 즉시* 열린다 — 무한 로딩 대신 원인과 다시 시도 버튼을 보여 준다.
+//  · 비밀값·이메일·시트 ID·금액은 어디에도 넣지 않는다. 오류는 짧은 코드(StoreError 코드·오류 이름)와 안내 문장만 보여 준다.
+
+const shellUrl = (appUrl, p) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}p=${p}` : null);
+// 오류 → 화면에 보여도 안전한 짧은 코드(메시지 본문은 쓰지 않는다: 시트 값·ID가 섞일 수 있음)
+function shellErrorCode(err) {
+  if (!err) return 'ERROR';
+  if (typeof err.code === 'string' && /^[A-Z_]{2,20}$/.test(err.code)) return err.code;
+  const n = String(err.name || 'Error').replace(/[^A-Za-z]/g, '').slice(0, 24).toUpperCase(); return n || 'ERROR';
+}
+const SHELL_HINTS = {
+  LOCK: '다른 작업이 저장 중입니다. 몇 초 뒤 다시 시도하면 됩니다.',
+  SCHEMA: '시트 구조 버전이 코드와 다릅니다. 상태 점검 화면에서 확인하세요.',
+  INTEGRITY: '시트 내용에 이상이 감지되었습니다. 상태 점검 화면에서 확인하세요(데이터는 지우지 않았습니다).',
+  NO_SHEET: '스크립트 속성에 시트 설정이 없습니다. Apps Script 편집기에서 rich300Install 을 한 번 실행하세요.',
+  EXCEPTION: 'Google 서버가 일시적으로 응답하지 않았을 수 있습니다. 잠시 후 다시 시도하세요.',
+};
+const SHELL_JS = `<script>(function(){var b=document.getElementById('retry');if(b)b.addEventListener('click',function(e){if(!b.getAttribute('href')){e.preventDefault();location.reload()}})})()</script>`;
+const shellPage = (title, body) => `${dashHead(title)}<body><main>${body}</main>${SHELL_JS}</body></html>`;
+
+function shellRenderError({ title = '화면', code = 'ERROR', appUrl = '', page = 'dash' } = {}) {
+  const retry = shellUrl(appUrl, page), health = shellUrl(appUrl, 'health'), hint = SHELL_HINTS[code] || '잠시 후 다시 시도하세요. 계속되면 상태 점검 화면에서 원인을 확인할 수 있습니다.';
+  return shellPage(`RICH300 ${title}`, `<header><h1>RICH 300 · ${dashEsc(title)}</h1></header>${dashNav(page === 'health' ? '' : page, appUrl)}<section class="card" role="alert"><p><strong>화면을 불러오지 못했습니다.</strong></p><p>${dashEsc(hint)}</p><p class="sub">오류 코드: ${dashEsc(code)} · 기록된 데이터는 변경되지 않았습니다.</p>
+<a id="retry" class="cta" target="_top"${retry ? ` href="${dashEsc(retry)}"` : ''}>다시 시도</a>${health ? ` <a class="cta" target="_top" href="${dashEsc(health)}">상태 점검</a>` : ''}</section>`);
+}
+function shellRenderDenied({ appUrl = '' } = {}) {
+  void appUrl;
+  return shellPage('접근 제한', `<header><h1>접근 제한</h1></header><section class="card" role="alert"><p><strong>이 페이지는 소유자 Google 계정으로 로그인한 브라우저에서만 열립니다.</strong></p><p>계정을 확인한 뒤 다시 열어 주세요. 텔레그램·메신저 안에서 열린 링크는 로그인 정보가 전달되지 않아 계속 로딩되거나 빈 화면이 될 수 있습니다. Chrome·Safari 에서 같은 주소를 열어 보세요.</p><a id="retry" class="cta" target="_top">다시 시도</a></section>`);
+}
+// 상태 점검: steps = [{ id, status: 'PASS'|'FAIL'|'WAIT', text, ms }], perf = { recent: [{p, ms, cold, at}], summary: [...] }
+function shellRenderHealth({ steps = [], build = 'dev', appUrl = '', totalMs = 0, perf = null } = {}) {
+  const fail = steps.filter(s => s.status === 'FAIL').length, wait = steps.filter(s => s.status === 'WAIT').length, verdict = fail ? `문제 ${fail}건 — 아래 FAIL 항목을 먼저 확인하세요` : wait ? `정상 · 확인할 일 ${wait}건` : '정상';
+  const li = s => `<li><span class="badge${s.status === 'PASS' ? ' ok' : ''}">${dashEsc(s.status)}</span> ${dashEsc(s.text)}${s.ms != null ? ` <span class="sub">${dashEsc(String(s.ms))}ms</span>` : ''}</li>`;
+  const perfRows = perf && perf.recent && perf.recent.length ? `<table><tr><th>화면</th><th>구분</th><th>서버 처리</th></tr>${perf.recent.map(r => `<tr><td>${dashEsc(r.p)}</td><td>${r.cold ? '첫 실행' : '재실행'}</td><td>${dashEsc(String(r.ms))}ms</td></tr>`).join('')}</table>` : '<div class="sub">아직 기록이 없습니다. 화면을 몇 번 연 뒤 다시 확인하세요.</div>';
+  const links = ['dash', 'journal', 'signals', 'stats', 'assets', 'fill', 'check'].map(p => [p, shellUrl(appUrl, p)]).filter(x => x[1]);
+  return shellPage('RICH300 상태 점검', `<header><h1>RICH 300 · 상태 점검</h1></header>${dashNav('', appUrl)}<section class="card"><div class="k">결과</div><div class="v">${dashEsc(verdict)}</div><div class="sub">빌드 ${dashEsc(build)} · 점검 ${dashEsc(String(totalMs))}ms · 이 화면은 읽기 전용입니다</div></section>
+<section class="card"><h2>점검 항목</h2><ul class="warn" style="list-style:none;padding:0">${steps.map(li).join('')}</ul></section>
+<section class="card"><h2>최근 응답시간(서버 처리 기준)</h2>${perfRows}<div class="sub">목표: 첫 화면 3초 · 기록 조회·저장 2초 이내. '첫 실행'은 최근 10분간 실행이 없던 뒤의 첫 요청입니다.</div></section>
+<section class="card"><h2>바로가기</h2>${links.map(([p, u]) => `<a class="cta" target="_top" href="${dashEsc(u)}">${dashEsc(p)}</a>`).join(' ')}</section>`);
+}
+
 // ── schema.mjs ──
 // RICH 300 저장소 스키마: 엔티티 정의·검증·정규화. 순수 함수(저장소·시간 의존 없음).
 //  · 모든 금액·가격·수량은 *정규 십진 문자열*로 저장한다("100.0"·100·"100" → "100"), 부동소수·BigInt 미사용 → 같은 값은 항상 같은 기록(중복 판정 일관).
@@ -882,33 +924,46 @@ const META_HEADERS = ['key', 'value', 'recordedAt'];
 // ── store.mjs ──
 // RICH 300 저장소(Google Sheets 위의 추가 전용 기록). 시트 접근은 env 포트로 주입받으므로 같은 코드를 Node 테스트(메모리 시트)와 Apps Script(SpreadsheetApp)가 쓴다.
 //  env = { now(): ms, sha256(str): hex, lock: { tryLock(ms): boolean, release() }, sheets: { ensure(name, headers), rows(name): string[][] (헤더 제외), append(name, rows[][]) } }
+//  선택 포트(성능, 없으면 전체 읽기로 대체): sheets.tail(name, n) 마지막 n행만 · sheets.version(name) 시트가 바뀔 때마다 커지는 수(파싱 결과 캐시 기준) · sheets.flush() · initCache{get,put} 초기화 확인 표시(스키마 버전별).
 //  · 추가 전용: 엔티티 시트는 *모든 리비전*을 행으로 쌓는다(삭제·덮어쓰기 없음). 현재 값은 키별 최대 rev. 취소는 void 리비전.
 //  · 선기록(WAL): 쓰기 = ① Audit 행 추가(해시 체인, 변경 후 전체 내용 포함) → ② 엔티티 시트 행 추가. ②에서 중단돼도 다음 쓰기·읽기가 Audit의 끝부분에서 복구한다. 먼저 ①이 실패하면 아무것도 바뀌지 않는다.
 //  · 모든 쓰기는 스크립트 락 안에서 직렬화한다. 락을 못 얻으면 LOCK 오류(호출자가 재시도, 같은 키는 멱등).
 //  · 데이터 JSON은 정규 십진 문자열 + 키 정렬 JSON → 같은 내용은 같은 문자열(중복·변조 판정이 결정적).
 
-const STORE_ZERO_HASH = '0'.repeat(64), STORE_TAIL = 5;
+const STORE_ZERO_HASH = '0'.repeat(64), STORE_TAIL = 5, STORE_VIEW_TAIL = 50, STORE_RECOVER = 2;
 const storeEntity = n => (ENTITIES[n] != null ? ENTITIES[n] : (() => { throw new StoreError('VALIDATION', `알 수 없는 엔티티: ${n}`); })());
 const storeCell = v => { if (v instanceof Date) throw new StoreError('INTEGRITY', 'Date로 변환된 셀 — 시트 열을 텍스트 서식으로 지정해야 함'); return v === null || v === undefined ? '' : String(v); };
 const storeParse = (s, where) => { try { return JSON.parse(s); } catch (e_) { throw new StoreError('INTEGRITY', `JSON 손상: ${where}`); } };
 const storeInt = (v, where) => { const n = Number(storeCell(v)); if (!Number.isInteger(n)) throw new StoreError('INTEGRITY', `정수 아님: ${where}`); return n; };
 
-function storeInit(env) {
+function storeInit(env, { force = false } = {}) {
+  const ck = `store-init:v${SCHEMA_VERSION}`;                // 이미 확인한 시트는 매 요청마다 14개 시트의 머리글을 다시 읽지 않는다(health 화면은 force 로 다시 확인)
+  if (!force && env.initCache && env.initCache.get(ck) === '1') return;
   for (const n of ENTITY_NAMES) env.sheets.ensure(storeEntity(n).sheet, VIEW_HEADERS(n));
   env.sheets.ensure(AUDIT_SHEET, AUDIT_HEADERS); env.sheets.ensure(META_SHEET, META_HEADERS);
   const ver = env.sheets.rows(META_SHEET).filter(r => storeCell(r[0]) === 'schemaVersion').map(r => storeCell(r[1])).pop();
   if (ver === undefined) env.sheets.append(META_SHEET, [['schemaVersion', String(SCHEMA_VERSION), String(env.now())]]);
   else if (Number(ver) !== SCHEMA_VERSION) throw new StoreError('SCHEMA', `스키마 버전 불일치: ${ver} (기대 ${SCHEMA_VERSION})`);
+  if (env.sheets.flush) env.sheets.flush();
+  if (env.initCache) env.initCache.put(ck, '1', 3600);
 }
 
 // ── 읽기 ──
-function storeReadAudit(env) {
-  return env.sheets.rows(AUDIT_SHEET).map((r, i) => ({ seq: storeInt(r[0], `audit[${i}].seq`), recordedAt: storeInt(r[1], `audit[${i}].at`), entity: storeCell(r[2]), key: storeCell(r[3]), rev: storeInt(r[4], `audit[${i}].rev`), op: storeCell(r[5]),
-    actor: storeCell(r[6]), reason: storeCell(r[7]), before: storeCell(r[8]), after: storeCell(r[9]), prevHash: storeCell(r[10]), hash: storeCell(r[11]) }));
-}
+const storeAuditRowOf = (r, i) => ({ seq: storeInt(r[0], `audit[${i}].seq`), recordedAt: storeInt(r[1], `audit[${i}].at`), entity: storeCell(r[2]), key: storeCell(r[3]), rev: storeInt(r[4], `audit[${i}].rev`), op: storeCell(r[5]),
+  actor: storeCell(r[6]), reason: storeCell(r[7]), before: storeCell(r[8]), after: storeCell(r[9]), prevHash: storeCell(r[10]), hash: storeCell(r[11]) });
+function storeReadAudit(env) { return env.sheets.rows(AUDIT_SHEET).map(storeAuditRowOf); }
+const storeTailRows = (env, sheet, n) => (env.sheets.tail ? env.sheets.tail(sheet, n) : env.sheets.rows(sheet).slice(-n));      // 끝부분만 필요할 때 시트 전체를 읽지 않는다
+const storeReadAuditTail = (env, n = STORE_TAIL) => storeTailRows(env, AUDIT_SHEET, n).map(storeAuditRowOf);
+const storeViewRowOf = (entityName, r, i) => ({ key: storeCell(r[0]), rev: storeInt(r[1], `${entityName}[${i}].rev`), void: storeCell(r[2]) === '1', recordedAt: storeInt(r[3], `${entityName}[${i}].at`), raw: storeCell(r[4]), data: storeParse(storeCell(r[4]), `${entityName}[${i}]`) });
+const storeViewMemo = new WeakMap();                       // env → 엔티티별 {ver, out}: 시트가 바뀌지 않았으면(version 같음) 같은 요청 안에서 JSON 파싱을 반복하지 않는다. 읽기 전용 배열이므로 호출자는 수정하지 않는다
 function storeReadView(env, entityName) {
-  return env.sheets.rows(storeEntity(entityName).sheet).map((r, i) => ({ key: storeCell(r[0]), rev: storeInt(r[1], `${entityName}[${i}].rev`), void: storeCell(r[2]) === '1', recordedAt: storeInt(r[3], `${entityName}[${i}].at`), raw: storeCell(r[4]), data: storeParse(storeCell(r[4]), `${entityName}[${i}]`) }));
+  const sheet = storeEntity(entityName).sheet, ver = env.sheets.version ? env.sheets.version(sheet) : null;
+  if (ver !== null) { const hit = storeViewMemo.get(env) && storeViewMemo.get(env).get(sheet); if (hit && hit.ver === ver) return hit.out; }
+  const out = env.sheets.rows(sheet).map((r, i) => storeViewRowOf(entityName, r, i));
+  if (ver !== null) { if (!storeViewMemo.has(env)) storeViewMemo.set(env, new Map()); storeViewMemo.get(env).set(sheet, { ver: env.sheets.version(sheet), out }); }
+  return out;
 }
+const storeReadViewTail = (env, entityName, n) => storeTailRows(env, storeEntity(entityName).sheet, n).map((r, i) => storeViewRowOf(entityName, r, i));
 function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아직 반영되지 않은 Audit 끝부분(복구 대기)을 합쳐 키별 최신 리비전
   const m = new Map(), put = r => { const p = m.get(r.key); if (!p || r.rev > p.rev) m.set(r.key, r); };
   const have = new Set();
@@ -916,13 +971,13 @@ function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아
   for (const e of audit.slice(-STORE_TAIL)) if (e.entity === entityName && !have.has(`${e.key}|${e.rev}`)) put({ key: e.key, rev: e.rev, void: e.op === 'void', recordedAt: e.recordedAt, raw: e.after, data: storeParse(e.after, `audit#${e.seq}`), pending: true });
   return m;
 }
-const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAudit(env)).get(key), null);
+const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key), null);
 function storeList(env, entityName, { includeVoid = false } = {}) {
-  const out = [...storeLatestMap(env, entityName, storeReadAudit(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const out = [...storeLatestMap(env, entityName, storeReadAuditTail(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return includeVoid ? out : out.filter(r => !r.void);
 }
 function storeHistory(env, entityName, key) {
-  const audit = storeReadAudit(env), seen = new Map();
+  const audit = storeReadAuditTail(env), seen = new Map();
   for (const r of storeReadView(env, entityName)) if (r.key === key) seen.set(r.rev, r);
   for (const e of audit.slice(-STORE_TAIL)) if (e.entity === entityName && e.key === key && !seen.has(e.rev)) seen.set(e.rev, { key, rev: e.rev, void: e.op === 'void', recordedAt: e.recordedAt, raw: e.after, data: storeParse(e.after, `audit#${e.seq}`), pending: true });
   return [...seen.values()].sort((a, b) => a.rev - b.rev);
@@ -935,19 +990,21 @@ const storeViewRow = (e, data) => [e.key, String(e.rev), e.op === 'void' ? '1' :
 function storeApplyView(env, e) { env.sheets.append(storeEntity(e.entity).sheet, [storeViewRow(e, storeParse(e.after, `audit#${e.seq}`))]); }
 function storeRecoverTail(env) {                       // 이전 쓰기가 ②에서 중단됐다면 Audit 끝부분에서 엔티티 행을 복원한다(멱등)
   const fixed = [];
-  for (const e of storeReadAudit(env).slice(-STORE_TAIL)) {
-    const has = storeReadView(env, e.entity).some(r => r.key === e.key && r.rev === e.rev);
+  for (const e of storeReadAuditTail(env, STORE_RECOVER)) {      // 쓰기는 항상 Audit→엔티티 순이고 다음 쓰기가 락 안에서 먼저 복구하므로, 끝나지 않은 쓰기는 마지막 항목뿐이다(여유로 2개 확인)
+    const has = storeReadViewTail(env, e.entity, STORE_VIEW_TAIL).some(r => r.key === e.key && r.rev === e.rev);      // 최근 쓰기의 엔티티 행은 해당 시트 끝에 있다(Audit 순서 = 시트 추가 순서)
     if (!has) { storeApplyView(env, e); fixed.push(`${e.entity}|${e.key}|${e.rev}`); }
   }
   return fixed;
 }
 function storeWithLock(env, fn) {
+  if (env.__lockDepth > 0) return fn([]);                // 같은 요청 안에서 이미 락을 쥐고 있으면(여러 기록을 한 번에 저장하는 묶음) 다시 잡지 않는다 — 락·flush 는 바깥에서 한 번
   if (!env.lock.tryLock((env.lockTimeoutMs != null ? env.lockTimeoutMs : 10000))) throw new StoreError('LOCK', '다른 작업이 저장 중입니다(잠시 후 재시도)');
-  try { const recovered = storeRecoverTail(env); return fn(recovered); } finally { env.lock.release(); }
+  env.__lockDepth = 1;
+  try { const recovered = storeRecoverTail(env); return fn(recovered); } finally { env.__lockDepth = 0; env.lock.release(); }
 }
 function storeCommit(env, { entity, key, rev, op, actor, reason, before, after }) {
   if (typeof actor !== 'string' || !actor) throw new StoreError('VALIDATION', 'actor 필요');
-  const audit = storeReadAudit(env), last = audit[audit.length - 1];
+  const last = storeReadAuditTail(env, 1)[0];
   const e = { seq: last ? last.seq + 1 : 1, recordedAt: env.now(), entity, key, rev, op, actor, reason: (reason != null ? reason : ''), before: before ? dedupeCanonical(before) : '', after: dedupeCanonical(after), prevHash: last ? last.hash : STORE_ZERO_HASH };
   e.hash = storeHash(env, e);
   env.sheets.append(AUDIT_SHEET, [storeAuditRow(e)]);   // ① 선기록(여기서 실패하면 변경 없음)
@@ -957,7 +1014,7 @@ function storeCommit(env, { entity, key, rev, op, actor, reason, before, after }
 function storeCreate(env, entityName, raw, { actor }) {
   const E = storeEntity(entityName), data = E.normalize(raw), key = E.keyOf(data);
   return storeWithLock(env, () => {
-    const cur = storeLatestMap(env, entityName, storeReadAudit(env)).get(key);
+    const cur = storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key);
     if (cur && !cur.void) return { status: dedupeCanonical(cur.data) === dedupeCanonical(data) ? 'duplicate' : 'conflict', key, rev: cur.rev };
     if (cur && cur.void && E.immutable) return { status: 'conflict', key, rev: cur.rev };
     const rev = cur ? cur.rev + 1 : 1;
@@ -969,7 +1026,7 @@ function storeRevise(env, entityName, key, patch, { actor, reason }) {
   const E = storeEntity(entityName); if (E.immutable) throw new StoreError('IMMUTABLE', `${entityName}은 수정할 수 없음(시작 설정·신호·수신 기록은 보존)`);
   if (!reason || typeof reason !== 'string') throw new StoreError('VALIDATION', '수정 사유 필요');
   return storeWithLock(env, () => {
-    const cur = storeLatestMap(env, entityName, storeReadAudit(env)).get(key);
+    const cur = storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key);
     if (!cur) throw new StoreError('NOT_FOUND', `수정 대상 없음: ${entityName}/${key}`);
     if (cur.void) throw new StoreError('VOID', `취소된 기록은 수정할 수 없음: ${key}`);
     const merged = { ...cur.data }; for (const [k, v] of Object.entries(patch)) { if (v === null) delete merged[k]; else merged[k] = v; }
@@ -984,7 +1041,7 @@ function storeVoid(env, entityName, key, { actor, reason }) {
   const E = storeEntity(entityName); if (E.immutable) throw new StoreError('IMMUTABLE', `${entityName}은 취소할 수 없음`);
   if (!reason || typeof reason !== 'string') throw new StoreError('VALIDATION', '취소 사유 필요');
   return storeWithLock(env, () => {
-    const cur = storeLatestMap(env, entityName, storeReadAudit(env)).get(key);
+    const cur = storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key);
     if (!cur) throw new StoreError('NOT_FOUND', `취소 대상 없음: ${entityName}/${key}`);
     if (cur.void) return { status: 'unchanged', key, rev: cur.rev };
     storeCommit(env, { entity: entityName, key, rev: cur.rev + 1, op: 'void', actor, reason, before: cur.data, after: cur.data });
@@ -1550,21 +1607,25 @@ function tgStorePlan(env, f, actor) {                       // 계획은 참고�
 }
 function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후에만 호출. fillId는 초안/폼 id로 고정 → 중복 확인·재처리에도 1건.
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
-  if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };
+  if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };      // 빠른 경로(락 없이)
   if (draft.params) tgRebuild(env, draft);
-  const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
-  if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
-  const f = { ...draft.fill, at: (customAt != null ? customAt : tgNextAt(env, same)), fillId: draft.fillId };
-  if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
-    throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
-  if (draft.type === 'fill') {
-    const cur = storeGet(se, 'response', f.sid);
-    if (!cur || cur.void) storeCreate(se, 'response', { sid: f.sid, choice: 'entered', at: f.at }, { actor });
-  }
-  const r = storeCreate(se, 'fill', f, { actor });
-  if (r.status === 'conflict') throw tgUserErr('같은 체결 id에 다른 내용이 이미 있습니다');
-  if (f.kind === 'entry') tgStorePlan(env, f, actor);
-  return { ...r, kind: f.kind };
+  return storeWithLock(se, () => {                       // 중복 판정·응답·체결·계획 저장을 락 한 번 안에서(동시에 들어온 두 요청이 서로의 직전 기록을 보고 판정한다)
+    const dupe = storeGet(se, 'fill', draft.fillId);
+    if (dupe && !dupe.void) return { status: 'duplicate', key: draft.fillId, rev: dupe.rev, kind: dupe.data.kind };
+    const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
+    if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
+    const f = { ...draft.fill, at: (customAt != null ? customAt : tgNextAt(env, same)), fillId: draft.fillId };
+    if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
+      throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
+    if (draft.type === 'fill') {
+      const cur = storeGet(se, 'response', f.sid);
+      if (!cur || cur.void) storeCreate(se, 'response', { sid: f.sid, choice: 'entered', at: f.at }, { actor });
+    }
+    const r = storeCreate(se, 'fill', f, { actor });
+    if (r.status === 'conflict') throw tgUserErr('같은 체결 id에 다른 내용이 이미 있습니다');
+    if (f.kind === 'entry') tgStorePlan(env, f, actor);
+    return { ...r, kind: f.kind };
+  });
 }
 
 // ── 입력 화면(모바일 폼) 제출: 폼의 제출 버튼이 곧 확인이다 ──
@@ -2054,22 +2115,23 @@ const JOURNAL_SEARCH_LIMIT = 200;
 function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null, q = null } = {}) {
   const se = env.storeEnv(); let inputs;
   try { inputs = storeLoadLedgerInputs(se); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { empty: true, reason: 'no-challenge', generatedAt: now }; throw e; }
-  const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay }), hist = journalHistories(se);
+  const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay });
+  let histMemo = null; const hist = { get: k => { if (!histMemo) histMemo = journalHistories(se); return histMemo.get(k); } };      // 수정 이력은 수정된 항목(rev>1)이 화면에 있을 때만 Audit 를 읽는다(보통은 읽지 않음)
   const data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = data('response'), reviews = data('review');
-  const sig = new Map(signals.map(s => [s.sid, s])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
+  const revRev = new Map(storeList(se, 'review').map(r => [r.key, r.rev])), sig = new Map(signals.map(s => [s.sid, s])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
   const allFills = storeList(se, 'fill', { includeVoid: true }), voided = allFills.filter(r => r.void).map(r => r.key);
   const bySid = new Map();
   for (const r of allFills) { const sid = r.data.sid; if (!bySid.has(sid)) bySid.set(sid, []); bySid.get(sid).push(r); }
-  const edits = (entity, key) => (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create');
+  const edits = (entity, key, rev) => (rev > 1 ? (nullishOr(hist.get(`${entity}|${key}`), [])).filter(h => h.rev > 1 || h.op !== 'create') : []);      // rev 1(수정 없음)이면 이력을 찾지 않는다
   const trades = [...led.trades.values()].map(t => {
     const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (nullishOr(bySid.get(t.sid), [])).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
     return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
       netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > BigInt(0), loss: t.status === 'closed' && net < BigInt(0), flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
-      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key) })),
-      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid) } : null };
+      fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key, r.rev) })),
+      voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key, r.rev) })),
+      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
   const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
@@ -2083,7 +2145,7 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   if (feeM) warnings.push({ type: 'fee-missing', text: `수수료 미입력 거래 ${feeM}건(손익에서 제외됨)` }); if (fundM) warnings.push({ type: 'funding-missing', text: `펀딩 미입력 거래 ${fundM}건(손익에서 제외됨)` });
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
-  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').map(r => r.data).sort((a, b) => b.at - a.at).slice(0, 10).map(c => ({ cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId) }));
+  const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').sort((a, b) => b.data.at - a.data.at).slice(0, 10).map(cr => { const c = cr.data; return { cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId, cr.rev) }; });
   return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
 }
@@ -2146,7 +2208,7 @@ details.trade{border-top:1px solid var(--line);padding:8px 0}details.trade:first
 details.edit{margin-top:6px}details.edit>summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-size:13px;color:var(--s1)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
 ul.plain{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}ul.plain li{margin:3px 0}footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
 `;
-const jvHead = t => `<!DOCTYPE html><html lang="ko"><jvHead><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${jvE(t)}</title><style>${JV_CSS}</style></jvHead>`;
+const jvHead = t => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${jvE(t)}</title><style>${JV_CSS}</style></head>`;
 const journalRenderError = () => `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>일지를 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
 
 const jvStat = (name, s) => `<div class="card stat"><h3>${jvE(name)} ${s.lowSample ? '<span class="badge warn">표본 부족</span>' : ''}</h3><dl><dt>청산 거래</dt><dd>${s.n}건 (승 ${s.wins} · 패 ${s.losses}${s.flat ? ` · 무 ${s.flat}` : ''})</dd><dt>승률</dt><dd>${jvE(s.winRate)} <span class="sub">(95% 구간 ${jvE(s.winRateRange)})</span></dd><dt>평균 이익 / 손실</dt><dd>${jvE(s.avgWin)} / ${jvE(s.avgLoss)}</dd><dt>손익비</dt><dd>${jvE(s.payoff)}</dd><dt>Profit factor</dt><dd>${jvE(s.profitFactor)}</dd><dt>기대값(건당)</dt><dd class="${JV_TONE(s.expectancyPositive, s.expectancyNegative)}">${JV_ARROW(s.expectancyPositive, s.expectancyNegative)} ${jvE(s.expectancy)} USDT${s.rCoverage ? ` <span class="sub">(${jvE(s.expectancyR)}, ${s.rCoverage}건 기준)</span>` : ''}</dd><dt>최대 낙폭(거래 기준)</dt><dd>${jvE(s.maxDd)} USDT <span class="sub">(${jvE(s.maxDdOfStart)})</span></dd><dt>순손익</dt><dd class="${JV_TONE(s.netPositive, s.netNegative)}">${JV_ARROW(s.netPositive, s.netNegative)} ${jvE(s.net)} USDT</dd></dl></div>`;
@@ -2182,7 +2244,7 @@ function journalRenderHtml(m, { appUrl, tab = 'all', query = null } = {}) {
     rv: `<section aria-labelledby="h-rv"><h2 id="h-rv">10초 복기 분석 <span class="sub">복기율 ${jvE(rv.reviewRate)} (${rv.reviewed}/${rv.total})</span></h2>${rv.byPlan.length ? `<div class="sub">계획 준수</div>${rv.byPlan.map(jvGrp).join('')}` : '<div class="card sub">저장된 복기가 없습니다.</div>'}${rv.byMind.length ? `<div class="sub">심리 상태</div>${rv.byMind.map(jvGrp).join('')}` : ''}${rv.insights.length ? `<div class="card"><strong>참고</strong><ul class="plain">${rv.insights.map(i => `<li>${jvE(i.text)}</li>`).join('')}</ul></div>` : ''}</section>`,
     cf: `<section aria-labelledby="h-cf"><h2 id="h-cf">입출금 기록</h2><div class="card"><form id="cfForm"><div class="sub">거래소와 지갑 사이 입금(+)·출금(−)을 기록합니다. 손익과 분리되어 목표 계산에 영향을 주지 않습니다.</div><label for="cfAmt">금액 (USDT, 입금 +, 출금 −)</label><input id="cfAmt" inputmode="decimal" autocomplete="off"><label for="cfNote">메모 (선택)</label><input id="cfNote" autocomplete="off"><button class="act" type="submit">저장</button><div class="out" id="cfOut" role="status"></div></form></div>
 ${m.cashflows.length ? `<div class="card">${m.cashflows.map(c => `<div class="day"><div class="row"><span>${jvE(c.atLabel)} · <strong>${jvE(c.amount)}</strong> ${jvE(c.note)}</span></div><form class="cfVoid" data-cf="${jvE(c.cfId)}"><div class="row" style="gap:6px"><input name="reason" placeholder="취소 사유" autocomplete="off" aria-label="취소 사유"><button class="act alt" type="submit" style="margin:0;white-space:nowrap">취소</button></div><div class="out" role="status"></div></form></div>`).join('')}</div>` : ''}</section>`,
-    jr: `<section aria-labelledby="h-j"><h2 id="h-j">매매일지 <span class="sub">${m.tradesTotal}건${m.tradesOpen ? ` · 보유 ${m.tradesOpen}` : ''}${m.voidedCount ? ` · 취소된 체결 ${m.voidedCount}` : ''}</span></h2><div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">아직 기록이 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시</div>` : ''}</section>`,
+    jr: `<section aria-labelledby="h-j"><h2 id="h-j">매매일지 <span class="sub">${m.tradesTotal}건${m.tradesOpen ? ` · 보유 ${m.tradesOpen}` : ''}${m.voidedCount ? ` · 취소된 체결 ${m.voidedCount}` : ''}</span></h2><div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">아직 기록이 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시 (전체 ${m.tradesTotal}건)</div>${m.trades.length < 200 && !(query && (query.day || query.q)) && typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `<a class="cta" target="_top" href="${jvE(appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal&n=' + Math.min(m.trades.length + 40, 200))}">더 보기 (+40건)</a>` : ''}` : ''}</section>`,
     warn: `${m.warnings.length ? `<section aria-labelledby="h-w"><h2 id="h-w">데이터 확인</h2><div class="card"><ul class="plain">${m.warnings.map(w => `<li>${jvE(w.text)}</li>`).join('')}</ul></div></section>` : ''}`,
     search: `<form class="card" method="get" action="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl : '')}" target="_top"><input type="hidden" name="p" value="journal"><div class="grid2"><div><label for="qDay">날짜 (진입·청산·체결일)</label><input id="qDay" name="day" type="date" value="${jvE(query && query.day ? query.day : '')}"></div><div><label for="qSym">코인</label><input id="qSym" name="q" autocomplete="off" placeholder="BTC" value="${jvE(query && query.q ? query.q : '')}"></div></div><div class="row"><button class="act" type="submit">검색</button>${query && (query.day || query.q) ? `<a target="_top" href="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal' : '')}">전체 보기</a>` : ''}</div>${query && (query.day || query.q) ? `<div class="sub">검색 결과 ${m.tradesTotal}건${m.tradesTotal > m.trades.length ? ` 중 ${m.trades.length}건 표시` : ''}</div>` : ''}</form>`,
   };
@@ -2494,47 +2556,82 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
  * RICH 300 — Apps Script 어댑터: store.mjs 가 요구하는 env 포트(now/sha256/lock/sheets)를 SpreadsheetApp·LockService·Utilities 로 구현한다.
  * 엔진 번들(rich300/build.mjs 산출물)과 같은 프로젝트에 붙여 넣어 쓴다. 이 파일에는 비밀값이 없다(스프레드시트 ID는 호출자가 Script Properties 등에서 읽어 넘긴다).
  *  · 모든 시트 열은 *텍스트 서식('@')*으로 만든다: 그렇지 않으면 Sheets가 "2026-10-24"를 날짜로, "123"을 숫자로 바꿔 키·값이 손상된다.
- *  · 쓰기는 getRange().setValues() 일괄 쓰기 후 flush() — 호출 하나가 한 번의 쓰기 단위다(store의 선기록 순서를 지키기 위함).
+ *  · 쓰기는 getRange().setValues() 일괄 쓰기 — 호출 하나가 한 번의 쓰기 단위다(store의 선기록 순서를 지키기 위함). flush 는 락을 풀기 직전에 한 번만 한다.
  */
 function rich300Hex_(bytes) { return bytes.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join(''); }
 
 function rich300GasEnv_(spreadsheetId, opts) {
   var ss = SpreadsheetApp.openById(spreadsheetId), lock = LockService.getScriptLock();
+  /*
+   * 요청 안에서만 쓰는 읽기 캐시(다음 요청으로 넘어가지 않는다 — 실제 잔고·포지션·체결 상태에 오래된 값을 쓰지 않기 위함).
+   *  · 같은 시트를 한 요청에서 여러 번 읽어도 Sheets 호출은 1번(rows). 같은 요청의 append 는 캐시에 바로 반영한다.
+   *  · 스크립트 락을 새로 잡는 순간 모두 버린다: 락을 기다리는 사이 다른 실행이 쓴 행을 놓치면 안 된다.
+   *  · ver[name] 은 시트가 바뀔 때마다 커진다(엔진이 파싱 결과 캐시를 무효화하는 기준).
+   */
+  var handles = {}, rowsMemo = {}, tailMemo = {}, lastRowMemo = {}, widthMemo = {}, ver = {}, bump = function (n) { ver[n] = (ver[n] || 0) + 1; };
+  function sheet(name) { if (ver[name] === undefined) ver[name] = 0; if (!handles[name]) handles[name] = ss.getSheetByName(name); if (!handles[name]) throw new Error('시트 없음: ' + name); return handles[name]; }
+  function lastRow(name) { if (lastRowMemo[name] === undefined) lastRowMemo[name] = sheet(name).getLastRow(); return lastRowMemo[name]; }
+  function width(name) { if (!widthMemo[name]) widthMemo[name] = sheet(name).getLastColumn(); return widthMemo[name]; }
+  function dropMemo() { rowsMemo = {}; tailMemo = {}; lastRowMemo = {}; Object.keys(ver).forEach(bump); }
+  // 락을 잡은 직후: 모든 쓰기는 Audit 에 먼저 추가되므로 Audit 의 마지막 행 번호가 그대로면 아무도 쓰지 않은 것 → 읽어 둔 시트를 계속 쓴다. 달라졌거나 모르면 전부 버리고 다시 읽는다.
+  function refreshAfterLock() {
+    var known = lastRowMemo['Audit'];
+    if (known !== undefined) { delete lastRowMemo['Audit']; if (lastRow('Audit') === known) return; }
+    dropMemo();
+  }
+  var initCache = null;
+  try { var sc = CacheService.getScriptCache(); initCache = { get: function (k) { return sc.get('i:' + spreadsheetId + ':' + k); }, put: function (k, v, ttl) { sc.put('i:' + spreadsheetId + ':' + k, v, ttl); }, remove: function (k) { sc.remove('i:' + spreadsheetId + ':' + k); } }; } catch (err) { initCache = null; }
   return {
     now: function () { return Date.now(); },
     lockTimeoutMs: (opts && opts.lockTimeoutMs) || 10000,
     sha256: function (s) { return rich300Hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)); },
-    lock: { tryLock: function (ms) { return lock.tryLock(ms); }, release: function () { lock.releaseLock(); } },
+    lock: { tryLock: function (ms) { var ok = lock.tryLock(ms); if (ok) refreshAfterLock(); return ok; }, release: function () { try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); } } },   // 다음 실행이 방금 쓴 행을 보도록 락을 풀기 전 한 번만 반영(append 마다 flush 하지 않는다)
+    initCache: initCache,
     sheets: {
+      version: function (name) { return ver[name] || 0; },
+      flush: function () { SpreadsheetApp.flush(); },
       ensure: function (name, headers) {
         var sh = ss.getSheetByName(name);
         if (!sh) {
           sh = ss.insertSheet(name);
           sh.getRange(1, 1, 1, headers.length).setNumberFormat('@').setValues([headers]);
           sh.setFrozenRows(1);
+          handles[name] = sh; delete rowsMemo[name]; delete lastRowMemo[name]; bump(name);
           return;
         }
+        handles[name] = sh;
         var cur = sh.getLastRow() >= 1 ? sh.getRange(1, 1, 1, headers.length).getValues()[0].map(String) : [];
         if (JSON.stringify(cur) !== JSON.stringify(headers)) throw new Error('헤더 불일치: ' + name);
       },
       rows: function (name) {
-        var sh = ss.getSheetByName(name), n = sh.getLastRow();
-        if (n <= 1) return [];
-        return sh.getRange(2, 1, n - 1, sh.getLastColumn()).getValues();
+        if (!rowsMemo[name]) {      // getDataRange 한 번으로 머리글 포함 전체를 읽는다(행·열 수를 따로 묻는 호출을 줄임)
+          var all = sheet(name).getDataRange().getValues();
+          rowsMemo[name] = all.slice(1); lastRowMemo[name] = all.length; delete tailMemo[name];
+        }
+        return rowsMemo[name].slice();
+      },
+      tail: function (name, count) {        // 마지막 count 행만 읽는다(전체를 읽지 않음). 이미 읽어 둔 내용이 있으면 호출 없이 잘라 준다
+        if (rowsMemo[name]) return rowsMemo[name].slice(-count);
+        var m = tailMemo[name]; if (m && (m.count >= count || m.complete)) return m.rows.slice(-count);
+        var n = lastRow(name), k = Math.min(Math.max(count, 5), Math.max(n - 1, 0)), got = n <= 1 ? [] : sheet(name).getRange(n - k + 1, 1, k, width(name)).getValues();
+        tailMemo[name] = { count: Math.max(count, 5), rows: got, complete: k >= n - 1 }; return got.slice(-count);
       },
       append: function (name, rows) {
         if (!rows.length) return;
-        var sh = ss.getSheetByName(name), start = sh.getLastRow() + 1, width = rows[0].length;
+        var sh = sheet(name), start = lastRow(name) + 1, w = rows[0].length;
         if (start + rows.length - 1 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), Math.max(rows.length, 100));
-        sh.getRange(start, 1, rows.length, width).setNumberFormat('@').setValues(rows);
-        SpreadsheetApp.flush();
+        sh.getRange(start, 1, rows.length, w).setNumberFormat('@').setValues(rows);
+        lastRowMemo[name] = start + rows.length - 1;
+        if (rowsMemo[name]) rows.forEach(function (r) { rowsMemo[name].push(r.map(String)); });
+        if (tailMemo[name]) rows.forEach(function (r) { tailMemo[name].rows.push(r.map(String)); });
+        bump(name);
       }
     }
   };
@@ -2546,14 +2643,15 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  · 인증: 본문 HMAC(rich300/lib/auth.mjs). 키는 Script Properties(RICH300_INGEST_KEY, 선택 RICH300_INGEST_KEY_PREV)에서만 읽는다. 코드·로그·응답에 키를 쓰지 않는다.
  *  · 스프레드시트 ID(RICH300_SHEET_ID)도 Script Properties. 시트는 인증이 통과한 뒤에만 연다.
  *  · nonce: CacheService(최선 노력, 만료·퇴출될 수 있음 — 재전송 신호는 sid 유일키로 어차피 중복 기록되지 않는다).
- *  · 이 파일은 로그를 출력하지 않는다(Logger/console 없음). GET 요청에는 빈 응답.
+ *  · 이 파일은 로그를 출력하지 않는다(Logger/console 없음). GET 요청에는 접근 안내만.
  */
 /**
- * GET 라우터: 기본은 빈 응답(익명 GET에 아무 정보도 주지 않는다 — S0 실측: 익명 GET도 도달 가능).
+ * GET 라우터: 소유자가 아니면 *접근 안내만*(데이터 없음. 예전의 빈 응답은 모바일에서 '계속 로딩'처럼 보였다 — 익명 GET에 정보를 주지 않는 원칙은 유지).
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_' };
+var RICH300_BUILD = '956cb101573d';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -2569,14 +2667,26 @@ function rich300Ping_() {                              // 배포·본인 인증 
   var lines = ['RICH300 ping', 'reachable: yes', 'visitor-email: ' + (who === 'anon' ? 'hidden' : 'visible'), 'owner-setting: ' + (owner.length > 3 ? 'set' : 'unset'), 'owner-match: ' + (who === 'owner' ? 'yes' : who === 'other' ? 'no' : 'unknown'), 'verdict: ' + (who === 'owner' ? 'OK(소유자 확인됨)' : who === 'other' ? 'DENY(다른 계정)' : 'BLOCKED(이메일을 읽지 못함: 실행 계정·배포 설정 확인)')];
   return ContentService.createTextOutput(lines.join('\n')).setMimeType(ContentService.MimeType.TEXT);
 }
+function rich300Html_(html, title) { return HtmlService.createHtmlOutput(html).setTitle(title).addMetaTag('viewport', 'width=device-width, initial-scale=1'); }
+/**
+ * 무한 로딩·빈 화면 방지: 어떤 경우에도 *화면*을 돌려준다.
+ *  · 소유자가 아니거나 이메일을 알 수 없으면 빈 응답 대신 접근 안내(데이터 없음). 소유자가 p 없이/모르는 p 로 열면 메인(dash).
+ *  · 페이지 함수가 예외를 던지면 오류 코드와 '다시 시도' 버튼이 있는 화면. 처리 시간은 최근 기록(?p=health)에 남긴다.
+ */
 function doGet(e) {
-  if (e && e.parameter && e.parameter.p === 'ping') return rich300Ping_();
-  var name = e && e.parameter && e.parameter.p, fn = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? RICH300_PAGES_[name] : null;
-  if (fn && typeof globalThis[fn] === 'function') {
-    var who = rich300UiWho_();
-    if (who === 'owner') return globalThis[fn](e);
+  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'dash', out;
+  if (name === 'ping') return rich300Ping_();
+  try {
+    if (rich300UiWho_() !== 'owner') return rich300Html_(RICH300_ENGINE.shellRenderDenied({ appUrl: rich300AppUrl_() }), '접근 제한');
+    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'dash';
+    var fn = globalThis[RICH300_PAGES_[page]];
+    if (typeof fn !== 'function') throw new Error('page-missing');
+    out = fn(e);
+  } catch (err) {
+    out = rich300Html_(RICH300_ENGINE.shellRenderError({ title: '화면', code: RICH300_ENGINE.shellErrorCode(err), appUrl: rich300AppUrl_(), page: page }), 'RICH300');
   }
-  return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT);
+  if (typeof rich300PerfRecord_ === 'function') rich300PerfRecord_(page, Date.now() - t0);
+  return out;
 }
 
 function doPost(e) {
@@ -2695,7 +2805,7 @@ function rich300PageDash_(e) {
     var se = rich300GasEnv_(PropertiesService.getScriptProperties().getProperty('RICH300_SHEET_ID'));
     RICH300_ENGINE.storeInit(se);
     html = RICH300_ENGINE.dashRenderHtml(RICH300_ENGINE.dashBuildFromStore(se, { now: Date.now() }), { appUrl: rich300AppUrl_() });
-  } catch (err) { html = RICH300_ENGINE.dashRenderError(rich300AppUrl_()); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '홈', code: RICH300_ENGINE.shellErrorCode(err), appUrl: rich300AppUrl_(), page: 'dash' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -2741,10 +2851,11 @@ function rich300PageJournal_(e, tab) {
   var html, appUrl = rich300AppUrl_();
   try {
     var env = rich300JournalEnv_(), prm = (e && e.parameter) || {}, day = /^\d{4}-\d{2}-\d{2}$/.test(String(prm.day || '')) ? String(prm.day) : null, q = prm.q ? String(prm.q).slice(0, 20) : null;
-    var model = RICH300_ENGINE.journalBuild(env, { now: Date.now(), day: tab === 'journal' || !tab ? day : null, q: tab === 'journal' || !tab ? q : null });
+    var nParam = parseInt(prm.n, 10), limit = tab === 'stats' || tab === 'assets' ? 0 : (nParam > 0 ? Math.min(Math.max(nParam, 40), 200) : 40);      // 기록 목록은 최근 40건부터, '더 보기'로 40건씩(최대 200). 통계·자산 화면은 목록이 필요 없다
+    var model = RICH300_ENGINE.journalBuild(env, { now: Date.now(), limit: limit, day: tab === 'journal' || !tab ? day : null, q: tab === 'journal' || !tab ? q : null });
     if (day && tab !== 'journal' && tab) model.presetDay = day;
     html = RICH300_ENGINE.journalRenderHtml(model, { appUrl: appUrl, tab: tab || 'all', query: { day: day, q: q } });
-  } catch (err) { html = RICH300_ENGINE.journalRenderError(); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '일지', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: tab === 'stats' ? 'stats' : tab === 'assets' ? 'assets' : 'journal' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 일지').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 function rich300PageJournalTab_(e) { return rich300PageJournal_(e, 'journal'); }
@@ -2755,7 +2866,7 @@ function rich300PageSignals_(e) {
   try {
     var env = rich300JournalEnv_(), r = e && e.parameter && e.parameter.r;
     html = RICH300_ENGINE.siglogRenderHtml(RICH300_ENGINE.siglogBuild(env, { now: Date.now(), filter: r }), { appUrl: appUrl });
-  } catch (err) { html = RICH300_ENGINE.siglogRenderError(appUrl); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '추천 기록', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'signals' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 추천 기록').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -2985,8 +3096,61 @@ function rich300PageCheck_(e) {
       { title: '트리거', items: [{ id: 'T1', status: 'PASS', text: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).sort().join(', ') || '없음' }] }];
     var notes = []; if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') notes.push('운영 승인 전: Telegram 호출이 모두 차단되어 있습니다(정상). 승인 후 rich300Install 을 다시 실행하세요.');
     html = RICH300_ENGINE.checkRenderHtml({ sections: sections, generatedAt: Date.now(), notes: notes }, { appUrl: appUrl });
-  } catch (err) { html = RICH300_ENGINE.checkRenderError(appUrl); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '설치 점검', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'check' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 점검').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// ── gas/Health.gs ──
+/**
+ * RICH 300 — 상태 점검(?p=health)과 응답시간 기록. 소유자만(라우터가 확인). 읽기 전용: 시트에는 아무것도 쓰지 않는다(없는 시트 확인만).
+ *  · 무한 로딩·빈 화면의 원인을 한 화면에서 가른다: 속성/시트 설정 → 스프레드시트 열기 → 시트 구조 → 챌린지 → 최근 기록 → 트리거 → 웹앱 주소 → 첫 화면·일지 처리 시간(실측).
+ *  · 각 단계는 독립적으로 try/catch 한다(한 단계가 실패해도 나머지를 계속 점검하고, 이 화면 자체는 항상 열린다). 오류는 짧은 코드만 보인다(값·ID·이메일 없음).
+ *  · 응답시간: doGet 이 화면별 처리 시간을 CacheService 에 최근 12건 남긴다. '첫 실행' = 직전 기록이 없거나 10분 넘게 지난 뒤의 첫 요청(서버 시작·캐시 비어 있음 포함), '재실행' = 그 이후.
+ */
+function rich300PerfRecord_(page, ms) {
+  try {      // 캐시 호출 2번(읽기+쓰기). '첫 실행' = 직전 기록이 없거나 10분 넘게 지난 뒤의 첫 요청
+    var c = CacheService.getScriptCache(), now = Date.now(), log = [];
+    try { log = JSON.parse(c.get('perf:log') || '[]'); } catch (e1) { log = []; }
+    var last = log.length ? log[log.length - 1] : null;
+    log.push({ p: page, ms: ms, cold: !last || now - last.at > 600000, at: now });
+    c.put('perf:log', JSON.stringify(log.slice(-12)), 21600);
+  } catch (err) { /* 기록 실패는 화면에 영향을 주지 않는다 */ }
+}
+function rich300PerfRecent_() {
+  try { return JSON.parse(CacheService.getScriptCache().get('perf:log') || '[]').reverse(); } catch (err) { return []; }
+}
+function rich300PageHealth_(e) {
+  var t0 = Date.now(), steps = [], props = PropertiesService.getScriptProperties(), E = RICH300_ENGINE, se = null;
+  function step(id, label, fn) {
+    var t = Date.now();
+    try { var r = fn() || {}; steps.push({ id: id, status: r.status || 'PASS', text: r.text || id, ms: Date.now() - t }); }
+    catch (err) { steps.push({ id: id, status: 'FAIL', text: label + ' 실패 (' + E.shellErrorCode(err) + ')', ms: Date.now() - t }); }
+  }
+  step('H1', '코드 빌드 확인', function () { return { text: '코드 빌드 ' + RICH300_BUILD + ' (배포된 웹앱이 이 빌드와 같아야 합니다)' }; });
+  step('H2', '스크립트 속성 확인', function () {
+    var sid = props.getProperty('RICH300_SHEET_ID'), owner = String(props.getProperty('RICH300_OWNER_EMAIL') || '').trim();
+    if (!sid) return { status: 'FAIL', text: '스크립트 속성 RICH300_SHEET_ID 없음 → 편집기에서 rich300Install 실행' };
+    return { status: owner.length > 3 ? 'PASS' : 'FAIL', text: '스크립트 속성: 시트 설정 있음 · 소유자 ' + (owner.length > 3 ? '설정됨' : '미설정 → rich300Install 실행') };
+  });
+  step('H3', '스프레드시트 열기', function () { se = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); return { text: '스프레드시트 열기' }; });
+  step('H4', '시트 구조·스키마 확인', function () { E.storeInit(se, { force: true }); return { text: '시트 구조·스키마 버전 확인(머리글 전체 재확인)' }; });
+  step('H5', '챌린지 확인', function () { var ch = E.storeGet(se, 'challenge', 'challenge'); return ch && !ch.void ? { text: '챌린지 설정 있음' } : { status: 'WAIT', text: '챌린지 설정 없음 → rich300Install 실행(첫 화면은 "설정 전" 안내만 보임)' }; });
+  step('H6', '최근 기록 확인', function () { var t = E.storeReadAuditTail(se, 1)[0]; return { text: '최근 기록: ' + (t ? '#' + t.seq : '없음') }; });
+  step('H7', '트리거 확인', function () {
+    var n = ScriptApp.getProjectTriggers().length; return n ? { text: '트리거 ' + n + '개 설치됨' } : { status: 'WAIT', text: '트리거 없음 → rich300Install 실행(일 마감·백업)' };
+  });
+  step('H8', '웹앱 주소 확인', function () { return rich300AppUrl_() ? { text: '웹앱 주소 확인됨(/exec). 주소는 배포를 새 버전으로 갱신해도 바뀌지 않습니다' } : { status: 'WAIT', text: '웹앱 주소를 알 수 없음 → 배포(웹 앱) 필요' }; });
+  step('H9', '첫 화면(홈) 생성', function () {   // 첫 화면 실측: 실제 대시보드 모델 생성 + 렌더 (새 env — 요청 캐시 없이)
+    var ms = Date.now(), env = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); E.storeInit(env);
+    E.dashRenderHtml(E.dashBuildFromStore(env, { now: Date.now() }), { appUrl: '' }); var t = Date.now() - ms;
+    return { status: t < 3000 ? 'PASS' : 'WAIT', text: '첫 화면(홈) 생성 ' + t + 'ms — 목표 3000ms' + (t < 3000 ? '' : ' 초과: 기록이 많아졌거나 Google 응답이 느린 상태') };
+  });
+  step('H10', '기록 조회 생성', function () {
+    var ms = Date.now(), jenv = rich300JournalEnv_(); E.journalBuild(jenv, { now: Date.now(), limit: 40 }); var t = Date.now() - ms;
+    return { status: t < 2000 ? 'PASS' : 'WAIT', text: '기록 조회(최근 40건) 생성 ' + t + 'ms — 목표 2000ms' };
+  });
+  var html = E.shellRenderHealth({ steps: steps, build: RICH300_BUILD, appUrl: rich300AppUrl_(), totalMs: Date.now() - t0, perf: { recent: rich300PerfRecent_() } });
+  return rich300Html_(html, 'RICH300 상태 점검');
 }
 
 // ── gas/Install.gs ──

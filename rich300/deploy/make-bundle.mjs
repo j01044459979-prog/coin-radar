@@ -10,12 +10,13 @@ import { buildEngine } from '../build.mjs';
 import { checkGasSyntax } from './gas-compat.mjs';
 
 const here = p => new URL(p, import.meta.url);
-export const BUNDLE_GAS_ORDER = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Install.gs'];
+export const BUNDLE_GAS_ORDER = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Install.gs'];
 const TEST_ONLY_GAS = [];   // (예약) 테스트 전용 파일 이름. 현재 없음. 있는 것만 포함, 나머지 *.gs 는 알파벳 순으로 뒤에
 export function makeBundle({ env = 'prod' } = {}) {
   if (env !== 'test' && env !== 'prod') throw new Error('env 는 test 또는 prod');
   const dir = here('../gas/'), present = readdirSync(dir).filter(f => env === 'test' || !TEST_ONLY_GAS.includes(f)), gs = [...BUNDLE_GAS_ORDER.filter(f => present.includes(f)), ...present.filter(f => f.endsWith('.gs') && !BUNDLE_GAS_ORDER.includes(f)).sort()];
-  const parts = [buildEngine(), ...gs.map(f => `// ── gas/${f} ──\n${readFileSync(new URL(f, dir), 'utf8')}`)], code = parts.join('\n');
+  const parts = [buildEngine(), ...gs.map(f => `// ── gas/${f} ──\n${readFileSync(new URL(f, dir), 'utf8')}`)], joined = parts.join('\n');
+  const build = createHash('sha256').update(joined).digest('hex').slice(0, 12), code = joined.replace("'__RICH300_BUILD__'", `'${build}'`);      // 빌드 ID = 치환 전 내용 해시(?p=health 에 표시, 설치 스크립트가 출력)
   const html = Object.fromEntries(present.filter(f => f.endsWith('.html')).map(f => [f, readFileSync(new URL(f, dir), 'utf8')]));
   const manifest = readFileSync(here('./appsscript.json'), 'utf8');
   new vm.Script(code);                                                                  // 문법 검사
@@ -23,7 +24,7 @@ export function makeBundle({ env = 'prod' } = {}) {
   if (/\bs0[A-Z]\w*\s*\(/.test(code)) throw new Error('S0 프로브 코드가 섞였습니다');
   const files = { 'Code.gs': code, ...html, 'appsscript.json': manifest };
   const lines = Object.entries(files).map(([n, c]) => `${createHash('sha256').update(c).digest('hex')}  ${String(Buffer.byteLength(c)).padStart(8)}  ${n}`);
-  files['MANIFEST.txt'] = `RICH300 Apps Script bundle\n${lines.join('\n')}\n`;
+  files['MANIFEST.txt'] = `RICH300 Apps Script bundle\n${lines.join('\n')}\nbuild ${build}\n`;
   return { files, gasFiles: gs };
 }
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

@@ -7,7 +7,7 @@ import { fakeSheetsServices, fakeCache } from './gasfakes.mjs';
 import { fakeTelegram, FAKE_TOKEN } from './faketg.mjs';
 
 export const readGas = f => readFileSync(new URL(`../../gas/${f}`, import.meta.url), 'utf8');
-const FILES = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Install.gs'];
+const FILES = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Install.gs'];
 export function loadProd({ props = {}, email = 'me@example.com', url = 'https://script.google.com/macros/s/X/exec' } = {}) {
   const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], triggers: [], pages: [], fetches: 0 };
   const pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_TG_TOKEN: FAKE_TOKEN, 'verify:startedAt': '1', ...props }));
@@ -18,5 +18,5 @@ export function loadProd({ props = {}, email = 'me@example.com', url = 'https://
     Utilities: { ...sheets.ctx.Utilities, getUuid: () => randomUUID(), sleep: () => {} }, ScriptApp: { WeekDay: { SUNDAY: 'SUN' }, getService: () => ({ getUrl: () => url }), getProjectTriggers: () => spy.triggers.filter(t => !t.deleted).map(t => ({ ...t, getHandlerFunction: () => t.fn })), deleteTrigger: t => { const r = spy.triggers.find(x => x === t || (x.fn === t.fn && !x.deleted)); if (r) r.deleted = true; }, newTrigger: fn => { const { t, b } = trig(); t.fn = fn; return b; } },
     UrlFetchApp: { fetch: (u, opt) => { spy.fetches++; const m = /\/bot[^/]+\/(\w+)$/.exec(u)[1]; const r = tele.http.call(m, JSON.parse(opt.payload)); return { getResponseCode: () => r.status, getContentText: () => JSON.stringify(r.body) }; } } };
   vm.createContext(ctx); vm.runInContext(FILES.map(readGas).reduce((a, b) => `${a}\n${b}`, buildEngine()), ctx);
-  return { ctx, tele, spy, pm, P, rows: n => JSON.parse(JSON.stringify(ctx.RICH300_ENGINE.storeList(ctx.rich300GasEnv_('sheet'), n).map(r => r.data))) };
+  return { ctx, tele, spy, pm, P, cache, rows: n => JSON.parse(JSON.stringify(ctx.RICH300_ENGINE.storeList(ctx.rich300GasEnv_('sheet'), n).map(r => r.data))) };
 }

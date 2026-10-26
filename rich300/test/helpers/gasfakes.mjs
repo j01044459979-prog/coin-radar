@@ -5,6 +5,7 @@ export function fakeSheetsServices() {
   const book = new Map(); let held = false;
   const mkSheet = name => ({ name, cells: [], fmt: [], frozen: 0, max: 1000,
     getLastRow() { return this.cells.length; }, getLastColumn() { return this.cells.reduce((m, r) => Math.max(m, r.length), 0); }, getMaxRows() { return this.max; }, insertRowsAfter(_, n) { this.max += n; }, setFrozenRows(n) { this.frozen = n; },
+    getDataRange() { return this.getRange(1, 1, Math.max(this.getLastRow(), 1), Math.max(this.getLastColumn(), 1)); },
     getRange(r, c, nr, nc) { const sh = this; return {
       setNumberFormat(f) { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) { (sh.fmt[r - 1 + i] ||= [])[c - 1 + j] = f; } return this; },
       setValues(vals) { vals.forEach((row, i) => row.forEach((v, j) => { const R = r - 1 + i, C = c - 1 + j, text = sh.fmt[R]?.[C] === '@'; (sh.cells[R] ||= [])[C] = text ? String(v) : (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(v) : v); })); return this; },
@@ -21,6 +22,7 @@ export function fakeCache(clock = { t: 0 }) {
   const m = new Map();
   return { clock, evictAll: () => m.clear(), size: () => m.size, service: { getScriptCache: () => ({
     get: k => { const e = m.get(k); if (!e) return null; if (clock.t >= e.exp) { m.delete(k); return null; } return e.v; },
-    put: (k, v, ttl) => { m.set(k, { v: String(v), exp: clock.t + ttl * 1000 }); } }) } };
+    put: (k, v, ttl) => { m.set(k, { v: String(v), exp: clock.t + ttl * 1000 }); },
+    remove: k => { m.delete(k); } }) } };
 }
 export const fakeProps = initial => { const m = new Map(Object.entries(initial)); return { map: m, service: { getScriptProperties: () => ({ getProperty: k => m.get(k) ?? null, setProperty: (k, v) => m.set(k, v) }) } }; };

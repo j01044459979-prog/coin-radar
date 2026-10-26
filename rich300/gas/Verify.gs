@@ -64,6 +64,6 @@ function rich300PageCheck_(e) {
       { title: '트리거', items: [{ id: 'T1', status: 'PASS', text: ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); }).sort().join(', ') || '없음' }] }];
     var notes = []; if (p.getProperty('RICH300_PROD_APPROVED') !== 'yes') notes.push('운영 승인 전: Telegram 호출이 모두 차단되어 있습니다(정상). 승인 후 rich300Install 을 다시 실행하세요.');
     html = RICH300_ENGINE.checkRenderHtml({ sections: sections, generatedAt: Date.now(), notes: notes }, { appUrl: appUrl });
-  } catch (err) { html = RICH300_ENGINE.checkRenderError(appUrl); }
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '설치 점검', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'check' }); }
   return HtmlService.createHtmlOutput(html).setTitle('RICH300 점검').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }

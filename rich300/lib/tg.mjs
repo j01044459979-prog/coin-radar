@@ -17,7 +17,7 @@ import { pnlComputeTrade, pnlComputeAll } from './pnl.mjs';
 import { riskTrade } from './risk.mjs';
 import { authTimingSafeEqual } from './auth.mjs';
 import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecString } from './schema.mjs';
-import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger } from './store.mjs';
+import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger, storeWithLock } from './store.mjs';
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
 import { r9ParseSignal, r9StripLine } from './r9.mjs';
@@ -289,21 +289,25 @@ function tgStorePlan(env, f, actor) {                       // 계획은 참고�
 }
 function tgCommitFill(env, draft, actor) {             // 확인(저장) 이후에만 호출. fillId는 초안/폼 id로 고정 → 중복 확인·재처리에도 1건.
   const se = env.storeEnv(), have = storeGet(se, 'fill', draft.fillId);
-  if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };
+  if (have && !have.void) return { status: 'duplicate', key: draft.fillId, rev: have.rev, kind: have.data.kind };      // 빠른 경로(락 없이)
   if (draft.params) tgRebuild(env, draft);
-  const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
-  if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
-  const f = { ...draft.fill, at: (customAt != null ? customAt : tgNextAt(env, same)), fillId: draft.fillId };
-  if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
-    throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
-  if (draft.type === 'fill') {
-    const cur = storeGet(se, 'response', f.sid);
-    if (!cur || cur.void) storeCreate(se, 'response', { sid: f.sid, choice: 'entered', at: f.at }, { actor });
-  }
-  const r = storeCreate(se, 'fill', f, { actor });
-  if (r.status === 'conflict') throw tgUserErr('같은 체결 id에 다른 내용이 이미 있습니다');
-  if (f.kind === 'entry') tgStorePlan(env, f, actor);
-  return { ...r, kind: f.kind };
+  return storeWithLock(se, () => {                       // 중복 판정·응답·체결·계획 저장을 락 한 번 안에서(동시에 들어온 두 요청이 서로의 직전 기록을 보고 판정한다)
+    const dupe = storeGet(se, 'fill', draft.fillId);
+    if (dupe && !dupe.void) return { status: 'duplicate', key: draft.fillId, rev: dupe.rev, kind: dupe.data.kind };
+    const same = tgFillsOf(se, draft.fill.sid), customAt = draft.params ? tgAtMs(env, draft.params) : undefined;
+    if (customAt !== undefined && same.some(x => x.at >= customAt)) throw tgUserErr('입력한 시각이 이전 체결보다 앞이거나 같습니다');
+    const f = { ...draft.fill, at: (customAt != null ? customAt : tgNextAt(env, same)), fillId: draft.fillId };
+    if (draft.force !== true && same.some(x => TG_FAMILY[x.kind] === TG_FAMILY[f.kind] && x.price === f.price && x.qty === f.qty && Math.abs(x.at - env.now()) < TG_DUP_WINDOW_MS))
+      throw tgUserErr('같은 계열(진입 또는 청산)·가격·수량의 체결이 방금 저장돼 있습니다(중복 저장 방지). 다른 체결이 맞으면 명령 끝에 force=1 을 붙여 다시 입력하세요');
+    if (draft.type === 'fill') {
+      const cur = storeGet(se, 'response', f.sid);
+      if (!cur || cur.void) storeCreate(se, 'response', { sid: f.sid, choice: 'entered', at: f.at }, { actor });
+    }
+    const r = storeCreate(se, 'fill', f, { actor });
+    if (r.status === 'conflict') throw tgUserErr('같은 체결 id에 다른 내용이 이미 있습니다');
+    if (f.kind === 'entry') tgStorePlan(env, f, actor);
+    return { ...r, kind: f.kind };
+  });
 }
 
 // ── 입력 화면(모바일 폼) 제출: 폼의 제출 버튼이 곧 확인이다 ──

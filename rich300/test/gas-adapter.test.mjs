@@ -28,8 +28,8 @@ test('GAS 경로: 헤더 불일치 시트는 거부, 락은 한 번에 하나만
   ctx.storeCreate(env, 'fill', { origin: 'real', fillId: 'f1', sid: 'S1', kind: 'entry', dir: 'LONG', at: t0 + 3600000, price: '100', qty: '1', fee: { state: 'entered', amount: '0' }, funding: { state: 'entered', amount: '0' } }, { actor: 'gas' });
   ctx.storeCreate(env, 'fill', { origin: 'real', fillId: 'f2', sid: 'S1', kind: 'close', dir: 'LONG', at: t0 + 7200000, price: '110', qty: '1', fee: { state: 'entered', amount: '0' }, funding: { state: 'entered', amount: '0' } }, { actor: 'gas' });
   const r = ctx.storeBuildLedger(env, { throughDay: day }); assert.equal(String(r.rows[0].closeMicro), '310000000'); assert.equal(String(r.rows[0].realizedGrossMicro), '10000000');
-  book.get('Fills').cells.pop();                                                                                         // 엔티티 행 유실
-  assert.equal(ctx.storeIntegrityCheck(env).repairable, 1); const rep = ctx.storeRepair(env); assert.equal(rep.after.ok, true); assert.equal(rep.appended.length, 1);
+  book.get('Fills').cells.pop();                                                                                         // 엔티티 행 유실(시트를 몰래 고친 것이므로 새 요청 = 새 env 로 읽는다: 읽기 캐시는 요청 안에서만 유효)
+  const env2 = raw.rich300GasEnv_('x'); assert.equal(ctx.storeIntegrityCheck(env2).repairable, 1); const rep = ctx.storeRepair(env2); assert.equal(rep.after.ok, true); assert.equal(rep.appended.length, 1);
 });
 test('GAS 경로: 같은 쓰기를 두 번 보내도(재전송) 한 번만 기록되고 감사 로그 해시 체인이 유지', () => {
   const { ctx, env } = load(); ctx.storeInit(env); const sig = { sid: 'A-1', strategy: 'A', symbolId: 'BTCUSDT', dir: 'LONG', signalAt: t0, entry: '100', stop: '98', tp1: '103' };

@@ -176,4 +176,6 @@ else
   say "다시 읽은 원격 상태: $(state_label "$(state_of "$WORK/pull")") — $(describe "$WORK/pull")"
   restore; exit 1
 fi
+BUILD_ID="$(awk '$1=="build" {print $2}' "$SRC/MANIFEST.txt" 2>/dev/null | head -n1)"
+say "웹앱 반영: push 는 코드(HEAD)만 바꿉니다. 운영 주소(/exec)는 '배포된 버전'을 실행하므로 편집기 → 배포 → 배포 관리 → 기존 웹 앱 배포의 연필(편집) → 버전 '새 버전' → 배포 로 갱신하세요(주소·Deployment ID 는 그대로 유지됩니다). 갱신 뒤 <웹앱 주소>?p=health 의 '코드 빌드'가 ${BUILD_ID:-(확인 불가)} 이면 같은 버전입니다."
 say "다음: Apps Script 편집기를 새로고침 → 함수 rich300Install 실행. (로그인 토큰은 이 셸에서 삭제합니다. 원하면 https://myaccount.google.com/permissions 에서 clasp 권한도 철회하세요.)"

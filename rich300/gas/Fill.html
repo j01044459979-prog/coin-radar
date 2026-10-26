@@ -10,7 +10,7 @@
   main { max-width:480px; margin:0 auto; } h1 { font-size:18px; margin:0 0 12px; } .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
   label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; } input, select { width:100%; padding:12px; font-size:16px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
   .seg { display:flex; gap:8px; } .seg button { flex:1; padding:10px; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:8px; font-size:15px; } .seg button[aria-pressed="true"] { border-color:var(--acc); color:var(--acc); font-weight:600; }
-  #go { width:100%; margin-top:16px; padding:14px; font-size:17px; border:0; border-radius:10px; background:var(--acc); color:#fff; } #go:disabled { opacity:.5; }
+  #go { width:100%; margin-top:16px; padding:14px; font-size:17px; border:0; border-radius:10px; background:var(--acc); color:#fff; touch-action:manipulation; min-height:48px; } #go:disabled { opacity:.6; }
   #msg { margin-top:12px; white-space:pre-wrap; font-size:14px; } .bad { color:var(--bad); } .ok { color:var(--ok); } .hint { font-size:12px; color:var(--mut); margin-top:8px; }
 </style>
 <title>RICH300 입력</title>
@@ -51,17 +51,29 @@
   [].forEach.call(document.querySelectorAll('[data-q]'), function (b) { b.onclick = function () { $('xqty').value = b.getAttribute('data-q'); }; });
   $('mEntry').onclick = function () { mode('entry'); }; $('mExit').onclick = function () { mode('exit'); };
   function say(t, cls) { var m = $('msg'); m.textContent = t; m.className = cls || ''; }
+  // 저장 중 상태: 즉시 '저장 중' 표시 + 경과 초. 응답이 없으면(20초) 같은 내용으로 다시 눌러도 되는 상태로 풀어 준다(formId 가 같아 중복 저장되지 않음).
+  var inflight = false, timer = null, watchdog = null, t0 = 0, SLOW_MS = 20000;
+  function busy(on) { var b = $('go'); b.disabled = on; b.textContent = on ? '저장 중…' : '저장'; b.setAttribute('aria-busy', String(on)); }
+  function settle() { inflight = false; if (timer) clearInterval(timer); if (watchdog) clearTimeout(watchdog); timer = watchdog = null; busy(false); }
+  function start() {
+    inflight = true; t0 = Date.now(); busy(true); say('저장 중… 0초');
+    timer = setInterval(function () { if (inflight) say('저장 중… ' + Math.floor((Date.now() - t0) / 1000) + '초'); }, 1000);
+    watchdog = setTimeout(function () { if (!inflight) return; settle(); say('응답이 늦습니다. 저장됐을 수도 있으니 [저장]을 다시 눌러 주세요 — 같은 내용은 중복 저장되지 않습니다.', 'bad'); }, SLOW_MS);
+  }
   $('go').onclick = function () {
-    var b = $('go'); b.disabled = true; say('저장 중…');
+    if (inflight) return;                                   // 더블탭·연타 방지(서버에서도 formId 로 한 번만 기록)
+    start();
     var f = { kind: kind, formId: formId, sid: $('sid').value.trim(), fee: $('fee').value.trim(), funding: $('funding').value.trim(), at: $('at').value.trim() };
     if (kind === 'entry') { f.margin = $('margin').value.trim(); f.leverage = $('leverage').value.trim(); f.entry = $('entry').value.trim(); f.stop = $('stop').value.trim(); f.qty = $('qty').value.trim(); }
     else { f.price = $('price').value.trim(); f.qty = $('xqty').value.trim(); f.note = $('note').value.trim(); }
+    var sent = Date.now();
     google.script.run.withSuccessHandler(function (r) {
-      b.disabled = false;
-      if (r && r.ok) say((r.status === 'duplicate' ? '이미 저장됨\n' : '저장됨 ✓\n') + (r.summary || ''), 'ok');
-      else if (r && r.error === 'busy') say('다른 작업 중입니다. 잠시 후 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad');
-      else say((r && r.message) || '저장하지 못했습니다.', 'bad');
-    }).withFailureHandler(function () { b.disabled = false; say('연결 오류. 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad'); }).rich300FillSubmit(f);
+      if (!inflight) { if (r && r.ok) say((r.status === 'duplicate' ? '이미 저장됨\n' : '저장됨 ✓\n') + (r.summary || ''), 'ok'); return; }   // 늦게 도착한 성공 응답도 보여 준다
+      settle(); var sec = ((Date.now() - sent) / 1000).toFixed(1);
+      if (r && r.ok) say((r.status === 'duplicate' ? '이미 저장됨' : '저장됨 ✓') + ' (' + sec + '초)\n' + (r.summary || ''), 'ok');
+      else if (r && r.error === 'busy') say('다른 작업 중입니다. 잠시 후 [저장]을 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad');
+      else say(((r && r.message) || '저장하지 못했습니다.') + '\n고친 뒤 [저장]을 다시 눌러 주세요.', 'bad');
+    }).withFailureHandler(function () { if (!inflight) return; settle(); say('연결 오류. [저장]을 다시 눌러 주세요(중복 저장되지 않습니다).', 'bad'); }).rich300FillSubmit(f);
   };
 })();
 </script>
