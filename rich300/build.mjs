@@ -26,6 +26,7 @@ export const ENGINE_MODULES = [
   'ingest',
   'r9',
   'tg',
+  'watch',
   'close',
   'analytics',
   'journal',

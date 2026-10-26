@@ -186,11 +186,11 @@ function tgRiskEquityMicro(env) {                      // 경고용: 오늘 시�
 // ── 분할 진입·익절 계획(계산·경고 전용, 주문 없음) ──
 // 저장: 첫 진입 체결 때 입력(평가액·1차 진입가·손절·배율·단계 수)을 'plan'(불변)에 한 번 남긴다. 계획은 이 입력에서 결정적으로 다시 만든다.
 // 규칙 위반(무계획 추가 진입 등)은 기본 차단, 명령 끝 force=1 이면 기록하되 요약에 경고를 남긴다.
-const tgEquityNow = env => { const m = tgRiskEquityMicro(env); return m === null || m === undefined ? null : (Number(m) / 1e6).toFixed(2); };
+export const tgEquityNow = env => { const m = tgRiskEquityMicro(env); return m === null || m === undefined ? null : (Number(m) / 1e6).toFixed(2); };
 function tgPlanBuild(se, sid, sg, inp) {
   return splanBuild({ symbol: sg.symbolId, dir: sg.dir, entry: Number(inp.entry), stop: Number(inp.stop), equity: Number(inp.equity), ...(inp.lev ? { lev: inp.lev } : {}), ...(inp.stages ? { params: { maxStages: inp.stages } } : {}) });
 }
-function tgPlanOf(se, sid) {
+export function tgPlanOf(se, sid) {
   const r = storeGet(se, 'plan', sid), sg = storeGet(se, 'signal', sid); if (!r || r.void || !sg || sg.void) return null;
   const plan = tgPlanBuild(se, sid, sg.data, r.data); return plan.status === 'ok' ? plan : null;
 }

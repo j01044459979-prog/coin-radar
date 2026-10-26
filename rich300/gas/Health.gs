@@ -46,6 +46,14 @@ function rich300PageHealth_(e) {
     var ms = Date.now(), jenv = rich300JournalEnv_(); E.journalBuild(jenv, { now: Date.now(), limit: 40 }); var t = Date.now() - ms;
     return { status: t < 2000 ? 'PASS' : 'WAIT', text: '기록 조회(최근 40건) 생성 ' + t + 'ms — 목표 2000ms' };
   });
+  step('H11', '보유 포지션 감시 상태', function () {      // 속성만 읽는다(시세·시트 호출 없음). 켜짐/꺼짐과 마지막 실행 결과
+    var mode = rich300WatchMode_(), raw = props.getProperty('watch:last'), last = null;
+    try { last = raw ? JSON.parse(raw) : null; } catch (e1) { last = null; }
+    var trig = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'rich300WatchTick'; }).length;
+    if (mode === 'off') return { status: 'WAIT', text: '보유 포지션 감시: 꺼짐(기본) · 트리거 ' + (trig ? '있음' : '없음') + ' — 승인 후 켭니다' };
+    var age = last ? Math.round((Date.now() - last.at) / 60000) : null;
+    return { status: trig && last && age <= 15 && last.status !== 'exception' ? 'PASS' : 'WAIT', text: '보유 포지션 감시: ' + (mode === 'on' ? '켜짐' : '미리보기') + ' · 트리거 ' + (trig ? '있음' : '없음') + (last ? ' · 마지막 ' + age + '분 전 ' + last.status + ' (포지션 ' + last.positions + ', 이벤트 ' + last.events + ', 전송 ' + last.sent + ', 실패 ' + last.failed + ', 시세실패 ' + last.marketFail + (last.mode !== last.requested ? ', 전송 가드로 미리보기' : '') + ')' : ' · 아직 실행 기록 없음') };
+  });
   var html = E.shellRenderHealth({ steps: steps, build: RICH300_BUILD, appUrl: rich300AppUrl_(), totalMs: Date.now() - t0, perf: { recent: rich300PerfRecent_() } });
   return rich300Html_(html, 'RICH300 상태 점검');
 }
