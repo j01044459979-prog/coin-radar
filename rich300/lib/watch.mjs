@@ -84,6 +84,34 @@ export function watchParseBybitTicker(json) {
   return Number.isFinite(price) && price > 0 && Number.isFinite(at) ? { price, priceAt: at } : null;
 }
 
+// ── 시세 요청 주소·판정(순수): GAS 어댑터와 실제 연결 점검(perf/market-check.mjs)이 같은 주소·같은 판정을 쓴다 ──
+export const WATCH_BAR_MS = Object.freeze({ '15m': 900000, '1h': 3600000, '4h': 14400000 });
+export function watchMarketUrls(src, symbolId) {
+  if (!/^[A-Z0-9]{2,20}USDT$/.test(symbolId)) return null;
+  if (src === 'OKX') { const i = watchOkxInst(symbolId), b = 'https://www.okx.com/api/v5/market'; return { ticker: `${b}/ticker?instId=${i}`, '15m': `${b}/candles?instId=${i}&bar=15m&limit=6`, '1h': `${b}/candles?instId=${i}&bar=1H&limit=100`, '4h': `${b}/candles?instId=${i}&bar=4H&limit=100` }; }
+  const b = 'https://api.bybit.com/v5/market', k = `${b}/kline?category=linear&symbol=${symbolId}`;
+  return { ticker: `${b}/tickers?category=linear&symbol=${symbolId}`, '15m': `${k}&interval=15&limit=6`, '1h': `${k}&interval=60&limit=100`, '4h': `${k}&interval=240&limit=100` };
+}
+// 응답(JSON 객체들)을 시세 묶음으로 해석. jsons = { ticker, '15m', '1h', '4h' } (없거나 잘못된 응답은 null)
+export function watchParseSource(src, jsons, now) {
+  const tk = src === 'OKX' ? watchParseOkxTicker(jsons.ticker) : watchParseBybitTicker(jsons.ticker), bars = {};
+  for (const k of ['15m', '1h', '4h']) bars[k] = src === 'OKX' ? watchParseOkxBars(jsons[k]) : watchParseBybitBars(jsons[k], WATCH_BAR_MS[k], now);
+  return { ticker: tk, bars };
+}
+// 감시에 쓸 수 있는 시세인가: 신선도(시세 10분·마지막 마감 봉 1시간/4시간 이내)·봉 개수·끊김 없음·티커와 봉 가격 일치. 사유 코드만 돌려준다.
+export function watchAssessMarket(m, now) {
+  if (!m || !(m.price > 0)) return { ok: false, why: 'no-price' };
+  if (now - m.priceAt > WATCH.staleMarketMs) return { ok: false, why: 'stale-price' };
+  for (const [k, minN, maxAge] of [['1h', WATCH.minBars, 2 * 3600000], ['4h', WATCH.minBars, 8 * 3600000]]) {
+    const b = m['bars' + k]; if (!Array.isArray(b) || b.length < minN) return { ok: false, why: `few-bars-${k}` };
+    if (now - b[b.length - 1].t > maxAge) return { ok: false, why: `stale-bars-${k}` };
+    const step = WATCH_BAR_MS[k]; for (let i = b.length - minN + 1; i < b.length; i++) if (b[i].t - b[i - 1].t !== step) return { ok: false, why: `gap-bars-${k}` };
+  }
+  if (!Array.isArray(m.bars15m) || !m.bars15m.length) return { ok: false, why: 'no-bars-15m' };
+  const last = m.bars1h[m.bars1h.length - 1].c; if (Math.abs(m.price - last) / last > 0.2) return { ok: false, why: 'price-mismatch' };
+  return { ok: true, why: null };
+}
+
 const wFmt = (x, ref) => { const d = Math.abs(ref) >= 100 ? 2 : Math.abs(ref) >= 10 ? 3 : Math.abs(ref) >= 1 ? 4 : 6; return Number(x).toFixed(d); };
 const wHhmm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
 
@@ -213,9 +241,9 @@ export function watchTick(env) {
   for (const k of skipped) out.skippedBy[k.reason] = (out.skippedBy[k.reason] || 0) + 1;
   for (const sym of new Set(positions.map(p => p.symbolId))) {
     let m; try { m = env.market(sym); } catch (e_) { m = { ok: false, why: 'exception' }; }
-    const good = !!(m && m.ok && now - m.priceAt <= WATCH.staleMarketMs && m.bars1h.length >= WATCH.minBars && m.bars4h.length >= WATCH.minBars);
+    const assess = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: null }, good = assess.ok;
     out.market.push({ symbol: sym, ok: good, source: (m && m.source) || null, ageSec: m && m.ok ? Math.round((now - m.priceAt) / 1000) : null, n15: m && m.bars15m ? m.bars15m.length : 0, n1h: m && m.bars1h ? m.bars1h.length : 0, n4h: m && m.bars4h ? m.bars4h.length : 0,
-      why: good ? null : (!m || !m.ok ? String((m && m.why) || 'fetch-failed').slice(0, 160) : now - m.priceAt > WATCH.staleMarketMs ? 'stale-price' : 'few-bars') });
+      why: good ? null : (!m || !m.ok ? String((m && m.why) || 'fetch-failed').slice(0, 160) : assess.why) });
     if (good) markets.set(sym, { ...m, fetchedAt: now }); else { out.marketFail++; if (m && m.ok) out.stale++; }
   }
   // 시세 장애: 연속 실패 N회 뒤 한 번만 알림, 복구되면 해제

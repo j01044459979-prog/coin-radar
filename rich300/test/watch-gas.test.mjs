@@ -37,7 +37,7 @@ test('기본 OFF: 속성이 없으면 시세 호출 0 · 텔레그램 0 · 트�
 test('미리보기(rich300WatchPreview): 설정과 무관하게 계산만 — 전송 0 · 감시 상태 저장 0 · 시세는 읽기 전용 GET', () => {
   const w = world(); const r = w.g.ctx.rich300WatchPreview(); assert.equal(r.status, 'ok'); assert.ok(r.events >= 1); assert.equal(w.sentWatch().length, 0);
   assert.equal(w.g.P.getKeys().filter(k => k.startsWith('w:')).length, 0); assert.ok(w.hits.length >= 4); assert.ok(w.hits.every(u => /^https:\/\/(www\.okx\.com|api\.bybit\.com)\//.test(u)));
-  assert.equal(JSON.parse(w.g.P.getProperty('watch:last')).requested, 'preview');
+  assert.equal(w.g.P.getProperty('watch:last'), null);                                                          // 미리보기는 어떤 속성도 쓰지 않는다
 });
 test('ON + 운영 승인 + 연결: TP1 알림이 정확히 1건, 다시 실행해도 추가 없음 · tg: 상태는 건드리지 않는다', () => {
   const w = world(); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); const before = tgKeys(w.g);
@@ -87,10 +87,10 @@ test('상태 진단: 속성 없음/off/preview/on/인식 불가 값을 구분해
   const g = world({ approved: false }); g.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); assert.match(strip(g.g.ctx.doGet({ parameter: { p: 'watch' } }).html), /계산만 하고 전송하지 않음/);          // ON 이어도 가드 때문에 전송 불가
 });
 test('?p=watch&run=1 미리보기: 포지션·이벤트·시세 결과를 보여 주고, ON+승인+연결 상태여도 텔레그램 0 · w: 상태 0 · 트리거 불변', () => {
-  const w = world(); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); const trig = w.g.spy.triggers.length;
+  const w = world(); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); const trig = w.g.spy.triggers.length, before = snapshot(w.g);
   const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch', run: '1' } }).html);
   assert.match(t, /감시 대상 포지션: 1건/); assert.match(t, /계산된 이벤트: \d+건 \(.*TP1 1/); assert.match(t, /ETHUSDT: 성공\(OKX, 시세 \d+초 전, 봉 15m 1\/1h 100\/4h 100\)/); assert.match(t, /시세 조회: 모두 성공/);
-  assert.equal(w.g.tele.sent.length, 0); assert.equal(w.g.P.getKeys().filter(k => k.startsWith('w:')).length, 0); assert.equal(w.g.spy.triggers.length, trig); assert.ok(w.hits.length >= 4);
+  assert.equal(w.g.tele.sent.length, 0); assert.equal(w.g.P.getKeys().filter(k => k.startsWith('w:')).length, 0); assert.equal(w.g.spy.triggers.length, trig); assert.ok(w.hits.length >= 4); assert.equal(snapshot(w.g), before);          // 속성 전체가 그대로(watch:last 포함)
 });
 test('시세 조회 실패는 성공으로 보고하지 않는다: 실패 종목과 시도 코드(HTTP 상태)를 표시', () => {
   const w = world(); w.g.spy.marketHandler = url => { w.hits.push(url); return { status: 503, body: 'down' }; };
@@ -104,4 +104,30 @@ test('보유 포지션이 없으면 미리보기는 시세를 호출하지 않�
 });
 test('?p=health 의 감시 줄도 같은 진단을 보여 준다(속성·실제 동작·트리거·가드)', () => {
   const w = world(); const t = strip(w.g.ctx.doGet({ parameter: { p: 'health' } }).html); assert.match(t, /보유 포지션 감시 — 속성 속성 없음 · 실제 동작: 아무것도 하지 않음\(꺼짐\) · 트리거 없음 · 전송 가드 통과\/연결 됨/);
+});
+
+// ── 시세 연결 점검(?p=watch&net=1) ──
+test('시세 연결 점검: 종목·출처·응답 시간·시세 나이·봉 나이·HTTP 상태를 보여 주고 속성/텔레그램/트리거를 건드리지 않는다', () => {
+  const w = world(); const before = snapshot(w.g), trig = w.g.spy.triggers.length; const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html);
+  assert.match(t, /시세 연결 점검/); assert.match(t, /모두 정상/); assert.match(t, /BTCUSDT OKX \d+ms/); assert.match(t, /ETHUSDT OKX \d+ms/); assert.match(t, /OKX: \d+ms · HTTP 200\/200\/200\/200 · 티커 ok · 봉 15m 1\/1h 100\/4h 100/);
+  assert.equal(snapshot(w.g), before); assert.equal(w.g.tele.sent.length, 0); assert.equal(w.g.spy.triggers.length, trig);
+  assert.ok(w.hits.every(u => /^https:\/\/(www\.okx\.com|api\.bybit\.com)\//.test(u)));
+});
+test('연결 점검은 캐시를 쓰지 않는다(두 번 호출하면 두 번 조회) · 오래된 시세/봉은 실패로 표시하고 사유 코드를 보여 준다', () => {
+  const w = world(); w.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }); const n1 = w.hits.length; w.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }); assert.equal(w.hits.length, n1 * 2);
+  const old = world(); old.g.spy.marketHandler = url => (/ticker/.test(url) ? { status: 200, body: { code: '0', data: [{ last: '2050', ts: String(NOW - 20 * 60000) }] } } : market(2050, old.hits)(url));
+  const t = strip(old.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html); assert.match(t, /실패 있음/); assert.match(t, /stale-price/); assert.ok(!/모두 정상/.test(t));
+  const bars = world(); bars.g.spy.marketHandler = url => { const r = market(2050, bars.hits)(url); if (/bar=1H/.test(url)) r.body.data = r.body.data.slice(0, 30); return r; }; assert.match(strip(bars.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html), /few-bars-1h/);
+  const gap = world(); gap.g.spy.marketHandler = url => { const r = market(2050, gap.hits)(url); if (/bar=4H/.test(url)) r.body.data.splice(10, 1); return r; }; assert.match(strip(gap.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html), /gap-bars-4h/);
+});
+test('연결 점검: OKX 실패 시 Bybit 대체, 둘 다 실패하면 실패로 보고(성공 표시 없음)', () => {
+  const w = world(); w.g.spy.marketHandler = url => {
+    w.hits.push(url); if (/okx\.com/.test(url)) return { status: 429, body: '' };
+    const iv = /interval=(\d+)/.exec(url), step = iv ? Number(iv[1]) * 60000 : 0;
+    if (/tickers/.test(url)) return { status: 200, body: { retCode: 0, time: NOW - 10000, result: { list: [{ lastPrice: '2050' }] } } };
+    const n = /limit=(\d+)/.exec(url)[1], list = Array.from({ length: Number(n) }, (_, i) => { const t = Math.floor(NOW / step) * step - (i + 1) * step, c = 1900 * (1 + 0.001 * (99 - i)); return [String(t), String(c), String(c * 1.002), String(c * 0.998), String(c), '100', '0']; });
+    return { status: 200, body: { retCode: 0, result: { list } } };
+  };
+  const t = strip(w.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html); assert.match(t, /Bybit: \d+ms · HTTP 200\/200\/200\/200 · 티커 ok/); assert.match(t, /OKX: \d+ms · HTTP 429/); assert.match(t, /BTCUSDT Bybit \d+ms/);
+  const dead = world(); dead.g.spy.marketHandler = () => ({ status: 503, body: '' }); const d = strip(dead.g.ctx.doGet({ parameter: { p: 'watch', net: '1' } }).html); assert.match(d, /실패 있음/); assert.ok(!/모두 정상/.test(d));
 });

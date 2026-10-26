@@ -40,21 +40,48 @@ export function shellRenderHealth({ steps = [], build = 'dev', appUrl = '', tota
 <section class="card"><h2>바로가기</h2>${links.map(([p, u]) => `<a class="cta" target="_top" href="${dashEsc(u)}">${dashEsc(p)}</a>`).join(' ')}</section>`);
 }
 // 감시 점검 화면(?p=watch): state = rich300WatchState_() 결과, result = 미리보기 실행 결과(개수·코드만). 값·ID·이메일·토큰 없음.
-export function shellRenderWatch({ state, result = null, ran = false, error = null, ms = 0, appUrl = '', build = 'dev' } = {}) {
+export function shellRenderWatch({ state, result = null, net = null, ran = false, error = null, ms = 0, appUrl = '', build = 'dev' } = {}) {
   const propText = { unset: '속성 없음(미설정)', off: 'off', preview: 'preview', on: 'on', invalid: `인식할 수 없는 값(길이 ${state.invalidLen}) — 꺼짐과 동일하게 동작` }[state.prop], eff = { nothing: '아무것도 하지 않음(꺼짐)', 'preview-only': '계산만 하고 전송하지 않음', sends: '전송 가능' }[state.effective];
   const runUrl = shellUrl(appUrl, 'watch&run=1'), li = t => `<li>${dashEsc(t)}</li>`;
   const rows = [`스크립트 속성 RICH300_WATCH_ALERTS: ${propText}`, `실제 동작(지금 트리거가 돌면): ${eff}`, `감시 트리거: ${state.triggers ? `${state.triggers}개 설치됨` : '없음(설치 안 됨)'}`, `텔레그램 전송 가드: ${state.gateBlocked ? '막힘(운영 승인 전)' : '통과'} · 연결: ${state.paired ? '됨' : '안 됨'}`,
     state.last ? `마지막 실행 기록: ${Math.round((Date.now() - state.last.at) / 60000)}분 전 · ${state.last.status} (요청 ${state.last.requested})` : '마지막 실행 기록: 없음'];
   let body = `<section class="card"><div class="k">감시 상태(읽기 전용 진단)</div><ul class="warn" style="list-style:none;padding:0">${rows.map(li).join('')}</ul></section>`;
-  if (ran) {
-    if (error || !result) body += `<section class="card" role="alert"><p><strong>미리보기를 실행하지 못했습니다.</strong></p><p class="sub">오류 코드: ${dashEsc(error || 'none')}</p></section>`;
-    else {
+  if (ran && net) {
+    const row = r => `<tr><td>${dashEsc(r.symbol)}</td><td>${dashEsc(r.source || '-')}</td><td>${r.totalMs}ms</td><td>${r.priceAgeSec === null ? '-' : r.priceAgeSec + '초'}</td><td>${r.bar1hAgeMin === null ? '-' : r.bar1hAgeMin + '분'}</td><td>${r.bar4hAgeMin === null ? '-' : r.bar4hAgeMin + '분'}</td><td>${r.ok ? '정상' : '<strong>실패</strong> ' + dashEsc(r.why)}</td></tr>`;
+    const att = net.flatMap(r => r.attempts.map(a => `${r.symbol} ${a.src}: ${a.ms}ms · HTTP ${a.http.join('/')} · 티커 ${a.ticker ? 'ok' : 'bad'} · 봉 15m ${a.n['15m'] === undefined ? '캐시' : a.n['15m']}/1h ${a.n['1h'] === undefined ? '캐시' : a.n['1h']}/4h ${a.n['4h'] === undefined ? '캐시' : a.n['4h']}`));
+    const allOk = net.length > 0 && net.every(r => r.ok);
+    body += `<section class="card"><div class="k">시세 연결 점검 (캐시 없이 새로 조회 · 읽기 전용 · ${dashEsc(String(ms))}ms)</div><div class="v">${allOk ? '모두 정상' : '실패 있음'}</div><table><tr><th>종목</th><th>출처</th><th>응답</th><th>시세 나이</th><th>1h 봉</th><th>4h 봉</th><th>판정</th></tr>${net.map(row).join('')}</table><ul class="warn" style="list-style:none;padding:0">${att.map(li).join('')}</ul><div class="sub">판정 기준: 시세 10분 이내 · 마지막 마감 1h 봉 2시간 이내 · 4h 봉 8시간 이내 · 봉 55개 이상·끊김 없음 · 티커와 봉 가격 일치. 하나라도 어긋나면 그 종목은 감시에서 제외됩니다.</div></section>`;
+  }
+  if (ran && error) body += `<section class="card" role="alert"><p><strong>점검을 실행하지 못했습니다.</strong></p><p class="sub">오류 코드: ${dashEsc(error)}</p></section>`;
+  if (result) {
+    {
       const mk = (result.market || []).map(m => `${m.symbol}: ${m.ok ? `성공(${m.source}, 시세 ${m.ageSec}초 전, 봉 15m ${m.n15}/1h ${m.n1h}/4h ${m.n4h})` : `**실패** — ${m.why}`}`);
       const bt = Object.entries(result.byType || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음', sb = Object.entries(result.skippedBy || {}).map(([k, v]) => `${k} ${v}`).join(', ') || '없음';
       const failed = result.marketFail > 0;
       body += `<section class="card"><div class="k">미리보기 결과 (전송 없음 · ${dashEsc(String(ms))}ms)</div><div class="v">${result.status === 'ok' ? (failed ? '시세 조회 실패 있음' : '정상') : result.status === 'idle' ? '보유 포지션 없음(시세 호출 없음)' : result.status === 'busy' ? '다른 감시 실행 중(잠시 후 다시)' : dashEsc(String(result.status))}</div><ul class="warn" style="list-style:none;padding:0">${[`감시 대상 포지션: ${result.positions || 0}건 (제외: ${sb})`, `계산된 이벤트: ${result.events || 0}건 (${bt})`, `시세 조회: ${failed ? `${result.marketFail}개 종목 실패` : (result.market && result.market.length ? '모두 성공' : '조회할 종목 없음')}`, ...mk.map(x => x.replace(/\*\*/g, ''))].map(li).join('')}</ul></section>`;
     }
   }
-  const links = runUrl ? `<a class="cta" target="_top" href="${dashEsc(runUrl)}">미리보기 실행(전송 없음)</a>` : '';
+  const netUrl = shellUrl(appUrl, 'watch&net=1'), links = (runUrl ? `<a class="cta" target="_top" href="${dashEsc(runUrl)}">미리보기 실행(전송 없음)</a> ` : '') + (netUrl ? `<a class="cta" target="_top" href="${dashEsc(netUrl)}">시세 연결 점검</a>` : '');
   return shellPage('RICH300 감시 점검', `<header><h1>RICH 300 · 감시 점검</h1></header>${dashNav('', appUrl)}${body}<section class="card"><div class="sub">빌드 ${dashEsc(build)} · 이 화면은 텔레그램을 보내지 않고 트리거를 만들지 않으며 감시 설정을 바꾸지 않습니다. 미리보기는 거래소 공개 시세를 읽기만 합니다.</div>${links}</section>`);
+}
+// RICH300 전용 Telegram 연결 진단(?p=tg): d = rich300TgDiagState_() 결과(존재 여부·코드만). 토큰·채팅 ID·봇 이름은 어디에도 표시하지 않는다.
+export function shellRenderTgDiag({ d, check = null, nonce = null, appUrl = '', build = 'dev' } = {}) {
+  const yn = v => (v ? '있음' : '없음'), li = t => `<li>${dashEsc(t)}</li>`, test = d.test || null;
+  const stateText = !test ? '아직 보낸 적 없음' : { pending: '전송 중이었는데 결과를 기록하지 못함(상태 불명)', sent: '전송 API 성공 — 수신 확인 대기', failed: `전송 실패(${test.code || 'error'})`, acked: '전송 API 성공 + 사용자가 수신 확인함', unacked: '전송했으나 사용자가 못 받았다고 표시' }[test.state];
+  const rows = [`환경: ${d.env || '미설정'}`, `봇 토큰 속성: ${yn(d.tokenSet)}`, `메시지 전송 가드: ${d.gateSend ? `막힘(${d.gateSend})` : '통과'}`, `읽기 점검 가드(getMe): ${d.gateRead ? `막힘(${d.gateRead})` : '통과'}`, `수신 계정 연결(페어링): ${d.paired ? '됨' : '안 됨'}`, `수신 폴링 트리거: ${d.pollTriggers ? d.pollTriggers + '개' : '없음'}`, d.lastPoll ? `마지막 폴링: ${d.lastPoll.ageMin}분 전 · ${d.lastPoll.status}` : '마지막 폴링: 기록 없음', `테스트 메시지: ${stateText}`];
+  let body = `<section class="card"><div class="k">Telegram 연결 상태 (읽기 전용 · 값 비노출)</div><ul class="warn" style="list-style:none;padding:0">${rows.map(li).join('')}</ul></section>`;
+  if (check) body += `<section class="card"><div class="k">Telegram 읽기 점검 (getMe·getWebhookInfo 두 호출만 · 메시지 없음)</div><ul class="warn" style="list-style:none;padding:0">${(check.items || []).map(li).join('')}</ul></section>`;
+  const checkUrl = shellUrl(appUrl, 'tg&check=1');
+  const canTest = !!nonce && !d.gateSend && d.paired && (!test || test.state === 'failed' || test.state === 'unacked');
+  let act = '';
+  if (canTest) act += `<p>[RICH300 TEST] 메시지를 <strong>딱 1건</strong> 보냅니다. 버튼은 한 번만 눌러 주세요(연타해도 서버가 한 번만 보냅니다).</p><button id="sendTest" class="cta" type="button">테스트 메시지 1건 보내기</button>`;
+  else if (test && (test.state === 'sent' || test.state === 'pending')) act += '<p>Telegram에서 <strong>[RICH300 TEST]</strong> 메시지를 확인하세요. 이 화면은 다시 보내지 않습니다.</p>';
+  else if (d.gateSend) act += '<p>운영 승인 전이라 전송할 수 없습니다(가드가 막음). 승인 후에 사용할 수 있습니다.</p>'; else if (!d.paired) act += '<p>수신 계정이 연결되지 않아 전송할 수 없습니다.</p>';
+  if (test && (test.state === 'sent' || test.state === 'pending')) act += '<div id="ackBox"><button id="ackYes" class="cta" type="button">받았음</button> <button id="ackNo" class="cta" type="button">못 받음</button></div>';
+  act += '<div id="testMsg" class="sub" role="status"></div>';
+  const script = (canTest || (test && (test.state === 'sent' || test.state === 'pending'))) ? `<script>(function(){var m=document.getElementById('testMsg');function say(t){m.textContent=t}var b=document.getElementById('sendTest');
+if(b)b.onclick=function(){b.disabled=true;say('전송 중…');google.script.run.withSuccessHandler(function(r){say(r&&r.ok?'전송 API 성공(Telegram이 메시지를 받았습니다). Telegram에서 [RICH300 TEST]를 확인하고 이 화면을 새로고침해 주세요.':'보내지 않았거나 실패: '+((r&&r.code)||'error'))}).withFailureHandler(function(){say('연결 오류 — 전송 여부가 불확실합니다. Telegram을 확인하고 새로고침하세요(자동 재전송 없음).')}).rich300TgTestSend(${JSON.stringify(String(nonce || '')).replace(/</g, '\\u003c')})};
+function ack(v){return function(){google.script.run.withSuccessHandler(function(){say(v?'수신 확인을 기록했습니다.':'미수신으로 기록했습니다. 새로고침하면 1회 더 시도할 수 있습니다.')}).withFailureHandler(function(){say('기록하지 못했습니다. 다시 눌러 주세요.')}).rich300TgTestAck(v)}}
+var y=document.getElementById('ackYes'),n=document.getElementById('ackNo');if(y)y.onclick=ack(true);if(n)n.onclick=ack(false)})()</script>` : '';
+  return `${dashHead('RICH300 텔레그램 점검')}<body><main><header><h1>RICH 300 · 텔레그램 점검</h1></header>${dashNav('', appUrl)}${body}<section class="card">${act}${checkUrl ? `<a class="cta" target="_top" href="${dashEsc(checkUrl)}">읽기 점검(getMe)</a>` : ''}<div class="sub">빌드 ${dashEsc(build)} · 토큰·채팅 ID·봇 이름은 표시하지 않습니다. 테스트 메시지는 추천·매매 알림이 아닙니다.</div></section></main>${script}</body></html>`;
 }

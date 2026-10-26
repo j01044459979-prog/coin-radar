@@ -12,34 +12,28 @@ function rich300WatchMode_() {
   return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
 }
 function rich300WatchJson_(res) { try { return res.getResponseCode() === 200 ? JSON.parse(res.getContentText()) : null; } catch (err) { return null; } }
-/** 공개 시세 수집: 15분·1시간·4시간 봉 + 현재가. 캐시는 아주 짧게(봉 60·150·600초) — 현재가는 캐시하지 않는다. */
-function rich300WatchMarket_(symbolId) {
-  var E = RICH300_ENGINE, cache = CacheService.getScriptCache(), now = Date.now(), inst = E.watchOkxInst(symbolId);
-  if (!inst) return { ok: false };
-  var bars = { '15m': { okx: '15m', byb: '15', ms: 900000, n: 6, ttl: 60 }, '1h': { okx: '1H', byb: '60', ms: 3600000, n: 100, ttl: 150 }, '4h': { okx: '4H', byb: '240', ms: 14400000, n: 100, ttl: 600 } };
-  function cached(k) { try { var c = cache.get('wc:' + symbolId + ':' + k); return c ? JSON.parse(c) : null; } catch (err) { return null; } }
-  function keep(k, v, ttl) { try { cache.put('wc:' + symbolId + ':' + k, JSON.stringify(v), ttl); } catch (err) { /* 캐시 실패는 무시 */ } }
-  var out = { ok: false, source: null, price: 0, priceAt: 0, why: '', bars15m: cached('15m'), bars1h: cached('1h'), bars4h: cached('4h') };
+/** 공개 시세 수집: 15분·1시간·4시간 봉 + 현재가(주소·해석·판정은 엔진의 watchMarketUrls/watchParseSource 와 같다). 봉 캐시는 60·150·600초뿐이고 현재가는 캐시하지 않는다. opts.noCache 면 캐시 없이 새로 읽는다(연결 점검용).
+ *  반환 attempts: 출처별 { src, ms(응답 시간), http:[상태 코드…], ticker:bool, n:{15m,1h,4h} } — 코드·시간·개수만(본문·값 없음). */
+function rich300WatchMarket_(symbolId, opts) {
+  var E = RICH300_ENGINE, cache = CacheService.getScriptCache(), now = Date.now(), noCache = !!(opts && opts.noCache), TTL = { '15m': 60, '1h': 150, '4h': 600 };
+  var out = { ok: false, source: null, price: 0, priceAt: 0, why: '', attempts: [], bars15m: null, bars1h: null, bars4h: null };
+  if (!E.watchMarketUrls('OKX', symbolId)) return out;
+  function cached(k) { if (noCache) return null; try { var c = cache.get('wc:' + symbolId + ':' + k); return c ? JSON.parse(c) : null; } catch (err) { return null; } }
+  function keep(k, v) { if (noCache) return; try { cache.put('wc:' + symbolId + ':' + k, JSON.stringify(v), TTL[k]); } catch (err) { /* 캐시 실패는 무시 */ } }
+  ['15m', '1h', '4h'].forEach(function (k) { out['bars' + k] = cached(k); });
   var sources = ['OKX', 'Bybit'];
   for (var si = 0; si < sources.length && !out.ok; si++) {
-    var src = sources[si], reqs = [], keys = [];
-    var add = function (url, key) { reqs.push({ url: url, method: 'get', muteHttpExceptions: true }); keys.push(key); };
-    if (src === 'OKX') { add('https://www.okx.com/api/v5/market/ticker?instId=' + inst, 'ticker'); } else { add('https://api.bybit.com/v5/market/tickers?category=linear&symbol=' + symbolId, 'ticker'); }
-    ['15m', '1h', '4h'].forEach(function (k) {
-      if (out['bars' + k]) return;
-      if (src === 'OKX') add('https://www.okx.com/api/v5/market/candles?instId=' + inst + '&bar=' + bars[k].okx + '&limit=' + bars[k].n, k);
-      else add('https://api.bybit.com/v5/market/kline?category=linear&symbol=' + symbolId + '&interval=' + bars[k].byb + '&limit=' + bars[k].n, k);
-    });
-    var res; try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { out.why += src + '[fetch-exception] '; continue; }
-    var tk = null, got = {};
-    for (var i = 0; i < keys.length; i++) {
-      var j = rich300WatchJson_(res[i]);
-      if (keys[i] === 'ticker') tk = src === 'OKX' ? E.watchParseOkxTicker(j) : E.watchParseBybitTicker(j);
-      else got[keys[i]] = src === 'OKX' ? E.watchParseOkxBars(j) : E.watchParseBybitBars(j, bars[keys[i]].ms, now);
-    }
-    out.why += src + '[http ' + res.map(function (r) { return r.getResponseCode(); }).join('/') + ' ticker ' + (tk ? 'ok' : 'bad') + '] ';      // 상태 코드만(본문·값 없음)
+    var src = sources[si], urls = E.watchMarketUrls(src, symbolId), keys = ['ticker'], reqs = [{ url: urls.ticker, method: 'get', muteHttpExceptions: true }];
+    ['15m', '1h', '4h'].forEach(function (k) { if (!out['bars' + k]) { keys.push(k); reqs.push({ url: urls[k], method: 'get', muteHttpExceptions: true }); } });
+    var t0 = Date.now(), res, att = { src: src, ms: 0, http: [], ticker: false, n: {} };
+    try { res = UrlFetchApp.fetchAll(reqs); } catch (err) { att.ms = Date.now() - t0; att.http = ['exception']; out.attempts.push(att); out.why += src + '[fetch-exception] '; continue; }
+    att.ms = Date.now() - t0;
+    var jsons = {}; for (var i = 0; i < keys.length; i++) { att.http.push(res[i].getResponseCode()); jsons[keys[i]] = rich300WatchJson_(res[i]); }
+    var parsed = E.watchParseSource(src, jsons, now), tk = parsed.ticker; att.ticker = !!tk;
+    ['15m', '1h', '4h'].forEach(function (k) { var got = parsed.bars[k]; att.n[k] = got ? got.length : 0; if (got && got.length) { out['bars' + k] = got; keep(k, got); } });
+    out.attempts.push(att);
+    out.why += src + '[http ' + att.http.join('/') + ' ticker ' + (tk ? 'ok' : 'bad') + '] ';      // 상태 코드만(본문·값 없음)
     if (!tk) continue;
-    ['15m', '1h', '4h'].forEach(function (k) { if (got[k] && got[k].length) { out['bars' + k] = got[k]; keep(k, got[k], bars[k].ttl); } });
     if (out.bars15m && out.bars1h && out.bars4h) { out.ok = true; out.source = src; out.price = tk.price; out.priceAt = tk.priceAt; }
   }
   return out;
@@ -74,7 +68,7 @@ function rich300WatchCanSend_() {
 }
 /** 시간 트리거 진입점(5분). 겹쳐 실행되지 않도록 사용자 락을 잡는다. 결과는 개수만 속성에 남긴다. */
 function rich300WatchTick() { return rich300WatchRun_(rich300WatchMode_()); }
-/** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관). */
+/** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관, 어떤 속성도 쓰지 않는다). */
 function rich300WatchPreview() { return rich300WatchRun_('preview'); }
 function rich300WatchRun_(want) {
   var props = PropertiesService.getScriptProperties(), t0 = Date.now(), out;
@@ -86,7 +80,7 @@ function rich300WatchRun_(want) {
     out = RICH300_ENGINE.watchTick(rich300WatchEnv_(mode)); out.requested = want;
   } catch (err) { out = { status: 'exception', code: String(err && err.code || err && err.name || 'error').slice(0, 24) }; }
   finally { if (lk) lk.releaseLock(); }
-  try { props.setProperty('watch:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || out.requested || want, requested: want, positions: out.positions || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, code: out.code || null })); } catch (err) { /* 기록 실패는 무시 */ }
+  if (want !== 'preview') try { props.setProperty('watch:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || out.requested || want, requested: want, positions: out.positions || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, code: out.code || null })); } catch (err) { /* 기록 실패는 무시 */ }
   return out;
 }
 /** 감시 트리거 설치/제거 — 같은 이름의 트리거만 교체한다. 다른 트리거(수신 폴링·일 마감·백업)는 건드리지 않는다. 승인 후 직접 실행. */
@@ -115,11 +109,20 @@ function rich300WatchState_() {
   return { prop: prop, invalidLen: prop === 'invalid' ? v.length : 0, mode: mode, gateBlocked: gateBlocked, paired: paired, triggers: triggers, last: last,
     effective: mode === 'off' ? 'nothing' : mode === 'preview' ? 'preview-only' : (canSend ? 'sends' : 'preview-only') };
 }
-/** ?p=watch — 소유자 전용. 기본 방문은 상태만 읽는다(시세 호출 없음). ?p=watch&run=1 은 *미리보기*를 실행한다: 전송·트리거·상태 저장 없음(마지막 실행 기록 속성만 갱신). */
+/** ?p=watch — 소유자 전용. 기본 방문은 상태만 읽는다(시세 호출 없음). &run=1 은 미리보기, &net=1 은 시세 연결 점검(캐시 없이 새로 읽어 출처·응답 시간·신선도·오류 코드 표시). 둘 다 전송·트리거·속성 쓰기가 없다. */
+/** 시세 연결 점검(읽기 전용): 보유 포지션 종목 + BTCUSDT 를 캐시 없이 새로 읽어 출처별 응답 시간·상태 코드·신선도를 돌려준다. 값(가격)은 돌려주지 않는다. */
+function rich300WatchNetCheck_() {
+  var E = RICH300_ENGINE, now = Date.now(), syms = ['BTCUSDT'];
+  try { E.watchOpenPositions(rich300WatchEnv_('preview').storeEnv(), { now: now }).positions.forEach(function (p) { if (syms.indexOf(p.symbolId) < 0) syms.push(p.symbolId); }); } catch (err) { /* 시트 오류여도 BTCUSDT 점검은 한다 */ }
+  return syms.slice(0, 6).map(function (sym) {
+    var t0 = Date.now(), m = rich300WatchMarket_(sym, { noCache: true }), a = m.ok ? E.watchAssessMarket(m, now) : { ok: false, why: 'fetch-failed' }, last = function (b) { return b && b.length ? Math.round((now - b[b.length - 1].t) / 60000) : null; };
+    return { symbol: sym, ok: !!(m.ok && a.ok), source: m.source, totalMs: Date.now() - t0, priceAgeSec: m.ok ? Math.round((now - m.priceAt) / 1000) : null, bar1hAgeMin: last(m.bars1h), bar4hAgeMin: last(m.bars4h), why: m.ok && a.ok ? null : (a.why || 'fetch-failed'), attempts: m.attempts };
+  });
+}
 function rich300PageWatch_(e) {
-  var t0 = Date.now(), run = !!(e && e.parameter && e.parameter.run === '1'), result = null, err = null;
-  try { if (run) result = rich300WatchRun_('preview'); } catch (x) { err = RICH300_ENGINE.shellErrorCode(x); }
+  var t0 = Date.now(), p = (e && e.parameter) || {}, run = p.run === '1', net = p.net === '1', result = null, netRes = null, err = null;
+  try { if (run) result = rich300WatchRun_('preview'); if (net) netRes = rich300WatchNetCheck_(); } catch (x) { err = RICH300_ENGINE.shellErrorCode(x); }
   var state = rich300WatchState_();
-  var html = RICH300_ENGINE.shellRenderWatch({ state: state, result: result, ran: run, error: err, ms: Date.now() - t0, appUrl: rich300AppUrl_(), build: RICH300_BUILD });
+  var html = RICH300_ENGINE.shellRenderWatch({ state: state, result: result, net: netRes, ran: run || net, error: err, ms: Date.now() - t0, appUrl: rich300AppUrl_(), build: RICH300_BUILD });
   return rich300Html_(html, 'RICH300 감시 점검');
 }
