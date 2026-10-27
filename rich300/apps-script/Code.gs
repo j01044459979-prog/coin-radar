@@ -723,7 +723,7 @@ const dashEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&
 const DASH_ARROW = (pos, neg) => (pos ? '▲' : neg ? '▼' : '■');
 const dashTone = (pos, neg) => (pos ? 'pos' : neg ? 'neg' : 'zero');
 
-const DASH_PAGES = Object.freeze([['dash', '홈'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
+const DASH_PAGES = Object.freeze([['dash', '홈'], ['pos', '포지션'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
 
 const DASH_CSS = `
 :root{color-scheme:light;--bg:#f6f7f9;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#3f3e3b;--mute:#5c5b57;--line:#dcdbd6;--accent:#2a78d6;--good:#17794f;--bad:#c62828;--warnbg:#fff4d6;--warnink:#6b4a00;--track:#e8e7e2}
@@ -977,6 +977,11 @@ const ENTITIES = {
   plan: { sheet: 'Plans', immutable: true, keyOf: d => d.sid, headers: ['sid', 'equity', 'entry', 'stop', 'lev', 'stages'],
     normalize: d => { if (![2, 3].includes(d.lev)) bad('lev는 2 또는 3'); if (![1, 2, 3].includes(d.stages)) bad('stages는 1~3'); return { sid: needStr(d.sid, 'sid', 80), equity: schemaDecString(d.equity, 'equity', { positive: true }), entry: schemaDecString(d.entry, 'entry', { positive: true }), stop: schemaDecString(d.stop, 'stop', { positive: true }), lev: d.lev, stages: d.stages, at: needMs(d.at, 'at') }; },
     display: d => [d.sid, d.equity, d.entry, d.stop, String(d.lev), String(d.stages)] },
+  // 사용자가 Binance 에서 직접 연 포지션의 *수동 등록*(추천 신호와 무관). 체결(fill)과 같은 sid 로 묶이며, 감시는 이 기록의 종목·손절·익절을 쓴다. 손절·익절은 수정(리비전)할 수 있고 이력이 남는다.
+  manualpos: { sheet: 'ManualPositions', keyOf: d => d.sid, headers: ['sid', 'symbol', 'dir', 'stop', 'tp1', 'tp2'],
+    normalize: d => { if (d.dir !== 'LONG' && d.dir !== 'SHORT') bad('dir 값 오류'); return strip({ sid: needStr(d.sid, 'sid', 54), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: d.dir,
+      stop: schemaDecString(d.stop, 'stop', { positive: true }), tp1: optDec(d.tp1, 'tp1', { positive: true }), tp2: optDec(d.tp2, 'tp2', { positive: true }), registeredAt: needMs(d.registeredAt, 'registeredAt'), symbolCheck: d.symbolCheck === undefined ? undefined : needEnum(d.symbolCheck, ['ok', 'unverified'], 'symbolCheck') }); },
+    display: d => [d.sid, d.symbolId, d.dir, d.stop, (d.tp1 != null ? d.tp1 : ''), (d.tp2 != null ? d.tp2 : '')] },
   tgupdate: { sheet: 'TgUpdates', immutable: true, keyOf: d => `${d.kind}:${d.id}`, headers: ['kind', 'id'],
     normalize: d => ({ kind: needEnum(d.kind, ['u', 'cb'], 'kind'), id: needStr(String(d.id), 'id', 80), at: needMs(d.at, 'at') }), display: d => [d.kind, d.id] },
 };
@@ -1002,7 +1007,7 @@ const storeParse = (s, where) => { try { return JSON.parse(s); } catch (e_) { th
 const storeInt = (v, where) => { const n = Number(storeCell(v)); if (!Number.isInteger(n)) throw new StoreError('INTEGRITY', `정수 아님: ${where}`); return n; };
 
 function storeInit(env, { force = false } = {}) {
-  const ck = `store-init:v${SCHEMA_VERSION}`;                // 이미 확인한 시트는 매 요청마다 14개 시트의 머리글을 다시 읽지 않는다(health 화면은 force 로 다시 확인)
+  const ck = `store-init:v${SCHEMA_VERSION}:${ENTITY_NAMES.length}`;                // 이미 확인한 시트는 매 요청마다 14개 시트의 머리글을 다시 읽지 않는다(health 화면은 force 로 다시 확인)
   if (!force && env.initCache && env.initCache.get(ck) === '1') return;
   for (const n of ENTITY_NAMES) env.sheets.ensure(storeEntity(n).sheet, VIEW_HEADERS(n));
   env.sheets.ensure(AUDIT_SHEET, AUDIT_HEADERS); env.sheets.ensure(META_SHEET, META_HEADERS);
@@ -1731,7 +1736,7 @@ function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
     const built = isExit ? tgBuildExit(env, { sid, price: String((form.price != null ? form.price : '')), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
       : tgBuildEntry(env, { sid, margin: String((form.margin != null ? form.margin : '')), leverage: String((form.leverage != null ? form.leverage : '')), entry: String((form.entry != null ? form.entry : '')), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
-    if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
+    if (built.fill.kind === 'close' && !sid.startsWith('M-')) { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
   } catch (e) { if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) return { ok: false, error: 'invalid', message: String(e.message).slice(0, 160) }; if (e instanceof StoreError && e.code === 'LOCK') return { ok: false, error: 'busy', retry: true }; return { ok: false, error: 'server' }; }
 }
@@ -1929,6 +1934,193 @@ function tgGc(env) {
   return { ran: true, removed };
 }
 
+// ── manual.mjs ──
+// RICH300 수동 포지션 등록: 사용자가 Binance 선물에서 *직접 연* 포지션을 종목·방향·실제 진입가·수량·레버리지·증거금·손절가·익절가로 기록한다.
+//  · 추천(COIN RADAR 신호)과 무관하다. 어떤 USDT 선물 종목이든 등록할 수 있고(시세 출처 OKX/Bybit 에서 확인), 주문·계정 API 는 쓰지 않는다 — 기록만 한다.
+//  · 저장은 체결(fill, origin=real) + 수동 등록 정보(manualpos: 종목·손절·익절)의 두 기록이며, 같은 sid 로 묶인다. 감시는 이 sid 의 *미청산 체결*이 있을 때만 대상으로 삼는다.
+//  · 같은 폼(formId)의 재제출은 한 번만 기록된다. 손절가는 포지션에 불리한 방향으로 넓힐 수 없다(좁히거나 유지만).
+//  · 규칙 위반(레버리지 3배 초과·위험 1.5% 초과 등)은 *차단하지 않고 경고*로 알린다 — 이미 체결된 실제 포지션을 기록하는 기능이기 때문이다.
+
+const MANUAL = Object.freeze({ maxOpen: 10, maxLeverage: 125, warnLeverage: 3, warnRiskPpm: 15000, warnMarginPct: 30 });
+const mErr = msg => new StoreError('USER', msg);
+const mTrim = v => decFormat(v, 12).replace(/0+$/, '').replace(/\.$/, '');
+
+// 입력 종목 → BTCUSDT 형식. 'btc', 'BTC/USDT', 'BTC-USDT-SWAP', 'BTCUSDT.P', 'BTCUSDT Perp' 모두 받는다. 형식이 맞지 않으면 사용자 오류.
+function manualSymbol(raw) {
+  let t = String((raw != null ? raw : '')).toUpperCase().trim().replace(/-SWAP$/, '').replace(/\s*(PERP|PERPETUAL)$/, '').replace(/\.P$/, '').replace(/[^A-Z0-9]/g, '');
+  if (!t) throw mErr('종목을 입력하세요(예: BTC, ETHUSDT)');
+  if (!t.endsWith('USDT')) t += 'USDT';
+  if (!/^[A-Z0-9]{2,20}USDT$/.test(t)) throw mErr('지원하지 않는 종목 형식입니다(USDT 무기한 선물만, 예: BTC, SOLUSDT)');
+  return t;
+}
+const mSide = dir => (dir === 'LONG' ? 1 : -1);
+function mCheckLevels(dir, entry, stop, tp1, tp2, { stopSide = true } = {}) {
+  const s = mSide(dir), e = Number(entry), w = dir === 'LONG' ? '아래' : '위', pf = dir === 'LONG' ? '위' : '아래';
+  if (stopSide && !((e - Number(stop)) * s > 0)) throw mErr(`${dir} 손절가는 진입가보다 ${w}여야 합니다`);
+  for (const [n, v] of [['1차 익절', tp1], ['2차 익절', tp2]]) if (v !== undefined && !((Number(v) - e) * s > 0)) throw mErr(`${dir} ${n}가는 진입가보다 ${pf}여야 합니다`);
+  if (tp1 !== undefined && tp2 !== undefined && !((Number(tp2) - Number(tp1)) * s > 0)) throw mErr('2차 익절가는 1차보다 더 멀어야 합니다');
+}
+const mOpt = (x, name) => (x === undefined || x === null || String(x).trim() === '' ? undefined : schemaDecString(String(x).trim(), name, { positive: true }));
+
+// 등록. form: { formId, symbol, dir, entry, qty?, leverage, margin?, stop, tp1?, tp2?, at?, fee?, funding?, note?, force? } (문자열)
+// env: { now(), storeEnv(), symbolCheck?(symbolId):'ok'|'unknown'|'unverified' }
+function manualRegister(env, form, { actor = 'ui:pos' } = {}) {
+  const f = form || {}, se = env.storeEnv(), now = env.now();
+  const symbolId = manualSymbol(f.symbol), dir = f.dir === 'LONG' || f.dir === 'SHORT' ? f.dir : (() => { throw mErr('LONG 또는 SHORT 를 선택하세요'); })();
+  const formId = String((f.formId != null ? f.formId : '')).replace(/[^A-Za-z0-9]/g, '').slice(0, 10) || env.randomId(8);
+  const sid = `M-${symbolId.replace(/USDT$/, '').slice(0, 16)}-${dir === 'LONG' ? 'L' : 'S'}-${formId}`;
+  const entry = schemaDecString(f.entry, '실제 진입가', { positive: true }), leverage = schemaDecString(f.leverage, '레버리지', { positive: true });
+  if (Number(leverage) > MANUAL.maxLeverage) throw mErr(`레버리지는 ${MANUAL.maxLeverage}배 이하`);
+  if (f.stop === undefined || String(f.stop).trim() === '') throw mErr('손절가를 입력하세요(감시에 필요합니다)');
+  const stop = schemaDecString(String(f.stop).trim(), '손절가', { positive: true }), tp1 = mOpt(f.tp1, '1차 익절가'), tp2 = mOpt(f.tp2, '2차 익절가');
+  if (tp2 !== undefined && tp1 === undefined) throw mErr('2차 익절가만 입력할 수 없습니다(1차부터)');
+  mCheckLevels(dir, entry, stop, tp1, tp2);
+  let qty = mOpt(f.qty, '수량'), margin = mOpt(f.margin, '증거금'), qtySource = 'entered';
+  if (qty === undefined && margin === undefined) throw mErr('수량 또는 증거금 중 하나는 입력하세요');
+  if (qty === undefined) { qty = schemaDecString(mTrim(decDiv(decMul(dec(margin), dec(leverage)), dec(entry))), '수량(계산)', { positive: true }); qtySource = 'derived'; }
+  if (margin === undefined) margin = schemaDecString(decFormat(decDiv(decMul(dec(entry), dec(qty)), dec(leverage)), 4), '증거금(계산)', { positive: true });
+  const prev = storeGet(se, 'manualpos', sid), prevFill = prev && !prev.void ? storeGet(se, 'fill', `${sid}:in`) : null;      // 같은 폼 재제출: 비싼 계산(평가액·종목 확인) 없이 빠르게 끝낸다
+  if (prev && !prev.void && prevFill && !prevFill.void) {
+    const a = prev.data, b = prevFill.data;
+    if (a.stop !== stop || a.tp1 !== tp1 || a.tp2 !== tp2 || b.price !== entry || b.qty !== qty || b.leverage !== leverage) throw mErr('같은 입력 id 에 다른 내용이 이미 있습니다. 화면을 새로 열어 다시 입력하세요');
+    return { ok: true, status: 'duplicate', sid, symbolId, dir, entry, qty, qtySource: b.qtySource, leverage, margin: b.margin, stop, tp1: tp1 === undefined ? null : tp1, tp2: tp2 === undefined ? null : tp2, warnings: [], flags: [], riskPpm: null, liquidationApprox: null };
+  }
+  const atMs = tgParseAt(f.at, now), fee = tgAmount(f.fee ? String(f.fee).trim() : undefined, '수수료'), funding = tgAmount(f.funding ? String(f.funding).trim() : undefined, '펀딩');
+  const note = f.note ? String(f.note).replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+  const eqMicro = (() => { try { const e = tgEquityNow(env); return e === null ? null : BigInt(Math.round(Number(e) * 1e6)); } catch (e_) { return null; } })();
+  const risk = riskTrade({ dir, entry, stop, qty, margin, leverage, equityMicro: eqMicro });
+  const warnings = [];
+  if (Number(leverage) > MANUAL.warnLeverage) warnings.push(`레버리지 ${leverage}배 — 운영 원칙(최대 ${MANUAL.warnLeverage}배)을 넘습니다`);
+  if (risk.riskPpmOfEquity !== null && Number(risk.riskPpmOfEquity) > MANUAL.warnRiskPpm) warnings.push(`손절 시 손실이 평가액의 ${(Number(risk.riskPpmOfEquity) / 10000).toFixed(2)}% — 1.5% 한도를 넘습니다`);
+  if (eqMicro !== null && eqMicro > BigInt(0) && Number(margin) * 1e6 * 100 > Number(eqMicro) * MANUAL.warnMarginPct) warnings.push(`증거금이 평가액의 ${MANUAL.warnMarginPct}%를 넘습니다`);
+  if (risk.flags.includes('liquidation-before-stop')) warnings.push('청산가(근사)가 손절가보다 먼저 옵니다');
+  if (risk.flags.includes('leverage-mismatch')) warnings.push('수량·증거금으로 계산한 레버리지가 입력과 다릅니다');
+  if (eqMicro === null) warnings.push('평가액 기준이 없어 손실 비율은 계산하지 못했습니다');
+  const verdict = typeof env.symbolCheck === 'function' ? env.symbolCheck(symbolId) : 'unverified';
+  if (verdict === 'unknown') throw mErr(`${symbolId} 는 OKX·Bybit 어디에서도 찾지 못했습니다. 종목 이름을 확인하세요`);
+  if (verdict !== 'ok') warnings.push('종목을 시세 출처에서 확인하지 못했습니다 — 감시 시세를 가져오지 못할 수 있습니다(감시 점검 화면에서 확인)');
+  return storeWithLock(se, () => {
+    const have = storeGet(se, 'manualpos', sid);
+    if (!have) {
+      const open = manualOpenList(se);
+      if (open.some(p => p.symbolId === symbolId) && f.force !== true) throw mErr(`${symbolId} 는 이미 보유 중으로 등록돼 있습니다. 먼저 청산 기록을 하거나 손절·익절을 수정하세요(같은 종목 이중 등록 방지)`);
+      if (open.length >= MANUAL.maxOpen) throw mErr(`동시에 등록할 수 있는 포지션은 ${MANUAL.maxOpen}개까지입니다`);
+    }
+    const registeredAt = have && !have.void ? have.data.registeredAt : (atMs != null ? atMs : now);
+    const mp = storeCreate(se, 'manualpos', { sid, symbolId, dir, stop, ...(tp1 === undefined ? {} : { tp1 }), ...(tp2 === undefined ? {} : { tp2 }), registeredAt, symbolCheck: verdict === 'ok' ? 'ok' : 'unverified' }, { actor });
+    if (mp.status === 'conflict') throw mErr('같은 입력 id 에 다른 내용이 이미 있습니다. 화면을 새로 열어 다시 입력하세요');
+    const fill = { origin: 'real', fillId: `${sid}:in`, sid, kind: 'entry', dir, at: registeredAt, price: entry, qty, margin, leverage, plannedStop: stop, qtySource, fee, funding, ...(note ? { note } : {}) };
+    const fr = storeCreate(se, 'fill', fill, { actor });
+    if (fr.status === 'conflict') throw mErr('같은 입력 id 에 다른 체결이 이미 있습니다. 화면을 새로 열어 다시 입력하세요');
+    const added = mp.status === 'added' || fr.status === 'added';
+    return { ok: true, status: added ? 'added' : 'duplicate', sid, symbolId, dir, entry, qty, qtySource, leverage, margin, stop, tp1: tp1 === undefined ? null : tp1, tp2: tp2 === undefined ? null : tp2, warnings, flags: risk.flags,
+      riskPpm: risk.riskPpmOfEquity === null ? null : String(risk.riskPpmOfEquity), liquidationApprox: risk.liquidationApprox };
+  });
+}
+// 미청산 수동 포지션 목록(등록 순). 체결이 없거나 이미 청산됐으면 제외.
+function manualOpenList(se) {
+  const mps = storeList(se, 'manualpos'); if (!mps.length) return [];
+  const by = new Map(); for (const r of storeList(se, 'fill')) { const f = r.data; if (!by.has(f.sid)) by.set(f.sid, []); by.get(f.sid).push(f); }
+  const out = [];
+  for (const r of mps) {
+    const list = by.get(r.key); if (!list) continue;
+    let t; try { t = pnlComputeTrade(list); } catch (e_) { continue; }
+    if (!t || t.status !== 'open') continue;
+    out.push({ ...r.data, avgEntry: Number(t.avgEntry), openQty: Number(t.openQty), reduces: list.filter(x => x.kind === 'reduce').length });
+  }
+  return out.sort((a, b) => a.registeredAt - b.registeredAt);
+}
+// 손절·익절 수정. 손절은 불리한 방향(넓힘)으로 못 바꾼다. patch: { stop?, tp1?, tp2? } — tp 를 비우면('') 해당 익절 삭제.
+function manualUpdate(env, sid, patch, { actor = 'ui:pos' } = {}) {
+  const se = env.storeEnv(), cur = storeGet(se, 'manualpos', String(sid));
+  if (!cur || cur.void) throw mErr('수동 등록 포지션이 아닙니다');
+  const pos = manualOpenList(se).find(p => p.sid === cur.key); if (!pos) throw mErr('이미 청산된 포지션입니다');
+  const p = patch || {}, next = {};
+  if (p.stop !== undefined && String(p.stop).trim() !== '') {
+    const s = schemaDecString(String(p.stop).trim(), '손절가', { positive: true });
+    if ((Number(s) - Number(cur.data.stop)) * mSide(cur.data.dir) < 0) throw mErr('손절가를 더 불리한 쪽으로 넓힐 수 없습니다(좁히거나 그대로만)');
+    next.stop = s;
+  }
+  for (const k of ['tp1', 'tp2']) if (p[k] !== undefined) next[k] = String(p[k]).trim() === '' ? null : schemaDecString(String(p[k]).trim(), k === 'tp1' ? '1차 익절가' : '2차 익절가', { positive: true });
+  if (!Object.keys(next).length) throw mErr('바꿀 값이 없습니다');
+  const merged = { ...cur.data, ...next }; for (const k of ['tp1', 'tp2']) if (merged[k] === null) delete merged[k];
+  if (merged.tp2 !== undefined && merged.tp1 === undefined) throw mErr('1차 익절가 없이 2차 익절가만 둘 수 없습니다');
+  mCheckLevels(cur.data.dir, String(pos.avgEntry), merged.stop, merged.tp1, merged.tp2, { stopSide: false });      // 수익 구간으로 옮긴 손절(본전·추적)은 진입가 반대편이어도 정상
+  const r = storeRevise(se, 'manualpos', cur.key, next, { actor, reason: '손절·익절 수정' });
+  return { ok: true, status: r.status, sid: cur.key, stop: merged.stop, tp1: merged.tp1 === undefined ? null : merged.tp1, tp2: merged.tp2 === undefined ? null : merged.tp2 };
+}
+// 화면용 모델: 보유 중인 *모든* 포지션(수동+추천 연동)과 입력 보조 종목 목록.
+const MANUAL_QUICK = Object.freeze(['BTC', 'ETH', 'SOL', 'XRP', 'DOGE', 'BNB', 'ADA', 'AVAX', 'LINK', 'SUI']);
+
+// ── manualview.mjs ──
+// 수동 포지션 등록 화면(?p=pos) HTML. 서버에서 완성된 HTML + 작은 인라인 스크립트(입력 보조 계산·제출). 모든 동적 값은 dashEsc.
+//  · 입력: 종목(자유 입력 + 자주 쓰는 종목 버튼), LONG/SHORT, 실제 진입가, 수량(또는 증거금), 레버리지, 손절가, 1·2차 익절가. 입력하면서 손절까지 거리·예상 손실·R 을 바로 보여 준다(계산만, 저장 아님).
+//  · 저장 버튼을 눌러야 기록된다. 같은 화면에서 다시 눌러도 한 번만 기록된다(formId). 결과·경고는 버튼 바로 아래에 표시한다.
+//  · 주문 기능 없음: Binance 에서 직접 체결한 뒤 그 값을 기록하는 화면이다.
+
+const mvUrl = (appUrl, q) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}${q}` : null);
+const mvNum = v => (v == null || v === '' ? '—' : dashEsc(String(v)));
+const mvCss = `<style>[hidden]{display:none!important}label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}input{width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:46px}
+.seg{display:flex;gap:8px}.seg button,.chips button{flex:1;padding:10px;min-height:44px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:15px}.seg button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:650}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.chips button{flex:0 0 auto;padding:6px 12px;min-height:38px;font-size:14px}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.go{width:100%;margin-top:16px;padding:14px;font-size:17px;border:0;border-radius:10px;background:var(--accent);color:#fff;min-height:48px;touch-action:manipulation}.go:disabled{opacity:.6}
+.msg{margin-top:12px;white-space:pre-wrap;font-size:14px}.msg.bad{color:var(--bad)}.msg.ok{color:var(--good)}.calc{margin-top:10px;font-size:13px;color:var(--ink2);background:var(--bg);border-radius:8px;padding:8px 10px}
+.pill{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:1px 9px;margin-right:6px}.row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}.pc{padding:10px 0;border-bottom:1px solid var(--line)}.pc:last-child{border:0}
+details>summary{cursor:pointer;font-size:13px;color:var(--ink2);margin-top:12px;min-height:40px}.mini{padding:8px 12px;min-height:40px;font-size:14px;border:1px solid var(--accent);border-radius:10px;background:transparent;color:var(--ink);text-decoration:none;display:inline-block;margin:6px 6px 0 0}</style>`;
+
+function manualRenderHtml({ open = [], appUrl = '', build = 'dev', now = Date.now() } = {}) {
+  const list = open.length ? open.map(p => {
+    const fillUrl = mvUrl(appUrl, `p=fill&mode=exit&sid=${encodeURIComponent(p.sid)}`), sid = dashEsc(p.sid);
+    return `<div class="pc" data-sid="${sid}"><div class="row"><div><span class="pill">${dashEsc(p.dir)}</span><strong>${dashEsc(p.symbolId.replace(/USDT$/, ''))}</strong></div><div class="sub">평균 ${mvNum(p.avgEntry)} · 수량 ${mvNum(p.openQty)}</div></div>`
+      + `<div class="sub">손절 ${mvNum(p.stop)} · 1차 익절 ${mvNum(p.tp1)} · 2차 익절 ${mvNum(p.tp2)}${p.symbolCheck === 'unverified' ? ' · 종목 미확인' : ''}</div>`
+      + `<div>${fillUrl ? `<a class="mini" target="_top" href="${dashEsc(fillUrl)}">청산 기록</a>` : ''}<button type="button" class="mini ed" data-sid="${sid}">손절·익절 수정</button></div>`
+      + `<div class="edbox" data-for="${sid}" hidden><div class="two"><div><label>손절가(좁히기만)</label><input class="e-stop" inputmode="decimal" value="${dashEsc(p.stop)}"></div><div><label>1차 익절가(비우면 삭제)</label><input class="e-tp1" inputmode="decimal" value="${dashEsc(p.tp1 != null ? p.tp1 : '')}"></div></div>`
+      + `<label>2차 익절가(비우면 삭제)</label><input class="e-tp2" inputmode="decimal" value="${dashEsc(p.tp2 != null ? p.tp2 : '')}"><button type="button" class="go e-save" data-sid="${sid}">수정 저장</button><div class="msg e-msg" role="status"></div></div></div>`;
+  }).join('') : '<p class="sub">등록된 보유 포지션이 없습니다. 아래에서 Binance 에서 체결한 포지션을 등록하세요. 등록한 보유 포지션만 감시 대상이 됩니다.</p>';
+  const chips = MANUAL_QUICK.map(s => `<button type="button" data-sym="${dashEsc(s)}">${dashEsc(s)}</button>`).join('');
+  const body = `<header><h1>RICH 300 · 포지션 등록</h1></header>${dashNav('pos', appUrl)}
+<section class="card"><div class="k">보유 중 (수동 등록)</div>${list}</section>
+<section class="card"><div class="k">Binance 포지션 등록</div><div class="sub">주문 기능이 없습니다. Binance 에서 직접 체결한 뒤 실제 체결 값을 기록하세요. 어떤 USDT 선물 종목이든 등록할 수 있습니다.</div>
+<label for="sym">종목 (예: BTC, ETHUSDT)</label><input id="sym" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="BTC"><div class="chips" role="group" aria-label="자주 쓰는 종목">${chips}</div>
+<label>방향</label><div class="seg" role="group" aria-label="방향"><button type="button" id="dL" aria-pressed="true">LONG</button><button type="button" id="dS" aria-pressed="false">SHORT</button></div>
+<div class="two"><div><label for="entry">실제 진입가</label><input id="entry" inputmode="decimal"></div><div><label for="lev">레버리지</label><input id="lev" inputmode="decimal" value="3"></div></div>
+<div class="two"><div><label for="qty">수량</label><input id="qty" inputmode="decimal"></div><div><label for="margin">증거금 (USDT)</label><input id="margin" inputmode="decimal"></div></div>
+<div class="sub">수량과 증거금 중 하나만 입력해도 됩니다(나머지는 자동 계산).</div>
+<div class="two"><div><label for="stop">손절가 (필수)</label><input id="stop" inputmode="decimal"></div><div><label for="tp1">1차 익절가</label><input id="tp1" inputmode="decimal"></div></div>
+<label for="tp2">2차 익절가</label><input id="tp2" inputmode="decimal">
+<div id="calc" class="calc" aria-live="polite">값을 입력하면 손절 거리와 예상 손실이 여기에 계산됩니다(저장 아님).</div>
+<details><summary>체결 시각·수수료·펀딩 (선택)</summary><label for="at">체결 시각 (예: 14:30 또는 10-24 14:30, 비우면 지금)</label><input id="at" inputmode="text" autocomplete="off"><div class="two"><div><label for="fee">수수료 (USDT)</label><input id="fee" inputmode="text"></div><div><label for="fund">펀딩 (USDT)</label><input id="fund" inputmode="text"></div></div></details>
+<button id="go" class="go" type="button">포지션 저장</button><div id="msg" class="msg" role="status" aria-live="polite"></div><a id="reload" class="cta" hidden target="_top"${mvUrl(appUrl, 'p=pos') ? ` href="${dashEsc(mvUrl(appUrl, 'p=pos'))}"` : ''}>새로고침</a>
+<div class="sub">저장 버튼을 눌러야 기록됩니다. 같은 화면에서 다시 눌러도 한 번만 기록됩니다. 규칙(레버리지 3배·손실 1.5% 등)을 넘으면 경고만 표시하고 막지 않습니다.</div></section>
+<section class="card"><div class="sub">감시 알림(손절 접근·이탈, 익절, 추적손절)은 운영 승인 후 켜집니다. 지금은 켜지 않았습니다. 빌드 ${dashEsc(build)} · 갱신 ${dashEsc(new Date(now + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' '))} KST</div></section>`;
+  const script = `<script>(function(){var $=function(i){return document.getElementById(i)},dir='LONG',busy=false,fid=(window.crypto&&crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9]/g,'').slice(0,10);
+var say=function(id,t,c){var e=typeof id==='string'?$(id):id;if(!e)return;e.textContent=t;e.classList.remove('bad');e.classList.remove('ok');if(c)e.classList.add(c);try{e.scrollIntoView({block:'nearest'})}catch(x){}};
+var num=function(id){var v=parseFloat(($(id).value||'').replace(/,/g,''));return isFinite(v)?v:null};
+var setDir=function(d){dir=d;$('dL').setAttribute('aria-pressed',String(d==='LONG'));$('dS').setAttribute('aria-pressed',String(d==='SHORT'));calc()};
+var calc=function(){var e=num('entry'),s=num('stop'),q=num('qty'),m=num('margin'),l=num('lev'),el=$('calc');if(e===null||s===null){el.textContent='값을 입력하면 손절 거리와 예상 손실이 여기에 계산됩니다(저장 아님).';return}
+var sg=dir==='LONG'?1:-1,d=(e-s)*sg,t=[];if(d<=0){el.textContent='⚠ '+dir+' 손절가는 진입가보다 '+(dir==='LONG'?'아래':'위')+'여야 합니다.';return}
+if(q===null&&m!==null&&l!==null&&e>0)q=m*l/e;if(m===null&&q!==null&&l){m=e*q/l}
+t.push('손절까지 '+(d/e*100).toFixed(2)+'%'+(l?' · 증거금 대비 '+(d/e*l*100).toFixed(0)+'%':''));if(q!==null){t.push('손절 시 손실 약 '+(d*q).toFixed(2)+' USDT');t.push('수량 '+Number(q.toPrecision(6))+(num('qty')===null?'(계산)':''))}
+if(m!==null&&num('margin')===null)t.push('증거금 '+m.toFixed(2)+'(계산)');
+var a=num('tp1');if(a!==null){var r=(a-e)*sg/d;t.push('1차 익절 '+(r>0?r.toFixed(2)+'R':'⚠ 방향 반대'))}var b=num('tp2');if(b!==null){var r2=(b-e)*sg/d;t.push('2차 익절 '+(r2>0?r2.toFixed(2)+'R':'⚠ 방향 반대'))}
+el.textContent=t.join(' · ')};
+var run=function(fn,args,ok,out,fail){if(!(window.google&&google.script&&google.script.run)){say(out,'서버 연결(google.script.run)을 쓸 수 없습니다. 앱 주소(/exec)를 브라우저에서 직접 열어 주세요.','bad');if(fail)fail();return}
+var t=setTimeout(function(){say(out,'응답이 늦습니다(30초). 저장됐을 수 있으니 새로고침해 확인하세요. 같은 화면에서 다시 눌러도 중복 저장되지 않습니다.','bad');if(fail)fail()},30000);
+var r=google.script.run.withSuccessHandler(function(x){clearTimeout(t);ok(x||{})}).withFailureHandler(function(e){clearTimeout(t);var m='';try{m=String(e&&e.message||e||'').slice(0,100)}catch(z){}say(out,'서버 호출 실패'+(m?': '+m:'')+' — 같은 화면에서 다시 눌러도 중복 저장되지 않습니다.','bad');if(fail)fail()});r[fn].apply(r,args)};
+$('dL').onclick=function(){setDir('LONG')};$('dS').onclick=function(){setDir('SHORT')};
+[].forEach.call(document.querySelectorAll('[data-sym]'),function(b){b.onclick=function(){$('sym').value=b.getAttribute('data-sym')}});
+['entry','qty','margin','lev','stop','tp1','tp2'].forEach(function(i){$(i).addEventListener('input',calc)});
+$('go').onclick=function(){if(busy)return;busy=true;$('go').disabled=true;$('go').textContent='저장 중…';say('msg','저장 중…');
+var f={formId:fid,symbol:$('sym').value.trim(),dir:dir,entry:$('entry').value.trim(),qty:$('qty').value.trim(),leverage:$('lev').value.trim(),margin:$('margin').value.trim(),stop:$('stop').value.trim(),tp1:$('tp1').value.trim(),tp2:$('tp2').value.trim(),at:$('at').value.trim(),fee:$('fee').value.trim(),funding:$('fund').value.trim()};
+var end=function(){busy=false;$('go').disabled=false;$('go').textContent='포지션 저장'};
+run('rich300ManualRegister',[f],function(r){end();if(r.ok){var w=(r.warnings||[]).map(function(x){return '⚠ '+x}).join('\\n');say('msg',(r.status==='duplicate'?'이미 저장됨':'저장됨 ✓')+' · '+r.symbolId+' '+r.dir+' · 진입 '+r.entry+' · 수량 '+r.qty+' · 손절 '+r.stop+(w?'\\n'+w:'')+'\\n목록은 새로고침하면 보입니다.','ok');$('reload').hidden=false}else say('msg',(r.message||(r.error==='busy'?'다른 작업 중입니다. 잠시 후 다시 눌러 주세요.':r.error==='forbidden'?'소유자 계정으로 열려 있지 않습니다.':'저장하지 못했습니다.'))+'\\n고친 뒤 다시 눌러 주세요.','bad')},'msg',end)};
+[].forEach.call(document.querySelectorAll('.ed'),function(b){b.onclick=function(){var s=b.getAttribute('data-sid'),bx=document.querySelector('.edbox[data-for="'+s+'"]');if(bx)bx.hidden=!bx.hidden}});
+[].forEach.call(document.querySelectorAll('.e-save'),function(b){b.onclick=function(){var s=b.getAttribute('data-sid'),bx=document.querySelector('.edbox[data-for="'+s+'"]'),m=bx.querySelector('.e-msg');b.disabled=true;
+run('rich300ManualUpdate',[s,{stop:bx.querySelector('.e-stop').value.trim(),tp1:bx.querySelector('.e-tp1').value.trim(),tp2:bx.querySelector('.e-tp2').value.trim()}],function(r){b.disabled=false;if(r.ok){say(m,(r.status==='unchanged'?'바뀐 값이 없습니다.':'수정 저장됨 ✓')+' 손절 '+r.stop+' · 1차 '+(r.tp1||'없음')+' · 2차 '+(r.tp2||'없음')+'\\n새로고침하면 목록에 반영됩니다.','ok');$('reload').hidden=false}else say(m,(r.message||'수정하지 못했습니다.'),'bad')},m,function(){b.disabled=false})}});
+})()</script>`;
+  return `${dashHead('RICH300 포지션 등록')}<body><main>${mvCss}${body}</main>${script}</body></html>`;
+}
+
 // ── watch.mjs ──
 // RICH300 보유 포지션 감시(순수 규칙 + 오케스트레이션). 사용자가 *실제 체결로 등록한* 포지션만 감시하고, 시세는 거래소 공개 데이터(읽기 전용)로만 쓴다. 주문·계정 API 없음.
 //  · 입력 구분: 체결(fills)=사용자 기록, 시세(market)=거래소 공개 시세(지연 가능). 메시지에서 두 출처를 따로 표시한다.
@@ -1946,7 +2138,7 @@ const WATCH = Object.freeze({
   staleMarketMs: 10 * 60000, barGraceMs: 10 * 60000, marketDownFails: 3,
   cooldownMs: Object.freeze({ STOP_TREND: 60 * 60000, SWING_HOLD: 24 * 3600000 }),
   retryDelaysMs: Object.freeze([2 * 60000, 5 * 60000, 10 * 60000, 20 * 60000]), expireMs: 30 * 60000,
-  capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40,
+  capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40, budgetMs: 240000, symbolFailAlertAfter: 3,
 });
 
 // ── 지표 ──
@@ -1975,17 +2167,18 @@ const wAgainst = (trend, dir) => (dir === 'LONG' ? trend.state === 'down' : tren
 function watchOpenPositions(se, { now }) {
   const fills = storeList(se, 'fill').map(r => r.data), by = new Map();
   for (const f of fills) { if (!by.has(f.sid)) by.set(f.sid, []); by.get(f.sid).push(f); }
-  const signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data])), today = kstDayOf(now), positions = [], skipped = []; let realizedTodayMicro = 0;
+  const manual = new Map(storeList(se, 'manualpos').map(r => [r.key, r.data])), signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data])), today = kstDayOf(now), positions = [], skipped = []; let realizedTodayMicro = 0;
   for (const [sid, list] of by) {
     let t; try { t = pnlComputeTrade(list); } catch (e_) { skipped.push({ sid, reason: 'invalid-fills' }); continue; }
     if (!t) continue;
     for (const e of t.events) if (e.day === today) realizedTodayMicro += Number(e.grossMicro) - (e.feeState === 'entered' ? Number(e.feeMicro) : 0) + (e.fundingState === 'entered' ? Number(e.fundingMicro) : 0);
     if (t.status !== 'open') continue;
-    const sg = signals.get(sid); if (!sg) { skipped.push({ sid, reason: 'no-symbol' }); continue; }      // 종목을 알 수 없으면 시세를 볼 수 없다(수동 종목 등록은 별도 기능)
+    const mp = manual.get(sid), sg = mp ? { symbolId: mp.symbolId, signalAt: mp.registeredAt } : signals.get(sid); if (!sg) { skipped.push({ sid, reason: 'no-symbol' }); continue; }      // 추천 신호 또는 수동 등록으로 종목을 알 수 있어야 시세를 본다
     const sorted = [...list].sort((a, b) => a.at - b.at), entry = sorted[0], hasOpening = sorted.some(f => f.kind === 'opening');
-    let plan = null; try { plan = hasOpening ? null : tgPlanOf(se, sid); } catch (e_) { plan = null; }
-    const stop0 = plan ? plan.stop : (entry.plannedStop != null ? Number(entry.plannedStop) : null);
+    let plan = null; try { plan = hasOpening || mp ? null : tgPlanOf(se, sid); } catch (e_) { plan = null; }
+    const stop0 = mp ? Number(mp.stop) : plan ? plan.stop : (entry.plannedStop != null ? Number(entry.plannedStop) : null);
     positions.push({ sid, symbolId: sg.symbolId, dir: t.dir, avgEntry: Number(t.avgEntry), openQty: Number(t.openQty), firstAt: sorted[0].at, signalAt: sg.signalAt, plan, stop0,
+      ...(mp ? { manual: true, r0Stop: entry.plannedStop != null ? Number(entry.plannedStop) : Number(mp.stop), tp: [mp.tp1, mp.tp2].map(x => (x != null ? Number(x) : null)) } : {}),
       fills: sorted.map(f => ({ kind: f.kind, price: Number(f.price), qty: Number(f.qty), at: f.at })) });
   }
   return { positions, skipped, realizedTodayMicro, today };
@@ -2046,7 +2239,7 @@ const wHhmm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
 function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
   const sg = splanSign(pos.dir), p = market.price, avg = pos.avgEntry, plan = pos.plan, events = [], st0 = state, ns = { ...st0, armed: { ...st0.armed }, last: { ...st0.last } };
   const t1 = watchTrend(market.bars1h), t4 = watchTrend(market.bars4h), v1 = watchVolRatio(market.bars1h), v4 = watchVolRatio(market.bars4h);
-  const R0 = plan ? plan.R : (pos.stop0 != null ? Math.abs(avg - pos.stop0) : null);
+  const R0 = plan ? plan.R : (pos.r0Stop != null ? Math.abs(avg - pos.r0Stop) : pos.stop0 != null ? Math.abs(avg - pos.stop0) : null);      // 수동 등록: 손절을 본전 쪽으로 옮겨도 1R 은 처음 손절 기준
   const closed15 = market.bars15m && market.bars15m.length ? market.bars15m[market.bars15m.length - 1] : null;
   const since = market.bars1h.filter(b => b.t + 3600000 > pos.firstAt);
   const ctx = { lastClose: closed15 ? closed15.c : undefined, lastHigh: since.length ? Math.max(...since.map(b => b.h)) : undefined, lastLow: since.length ? Math.min(...since.map(b => b.l)) : undefined,
@@ -2071,10 +2264,11 @@ function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
   }
   // 2) 익절 도달(TP1·TP2)
   if (R0 > 0) {
-    const legs = st ? st.legs : [0, 1].map(i => ({ n: i + 1, price: avg + sg * WATCH.tpR[i] * R0, qty: pos.openQty * (i === 0 ? 0.5 : 0.3), done: i === 0 ? pos.fills.some(f => f.kind === 'reduce') : false }));
+    const reds = pos.fills.filter(f => f.kind === 'reduce').length, custom = !st && pos.tp && pos.tp.some(x => x != null);
+    const legs = st ? st.legs : [0, 1].map(i => ({ n: i + 1, price: custom ? pos.tp[i] : avg + sg * WATCH.tpR[i] * R0, qty: pos.openQty * (i === 0 ? 0.5 : 0.3), done: reds > i, custom })).filter(l => l.price != null);
     for (const leg of legs) {
       if (leg.done || (p - leg.price) * sg < 0) continue;
-      push(`TP${leg.n}`, `TP${leg.n}:${pos.sid}`, 'info', [`목표 ${leg.n === 1 ? '+1.5R' : '+2R'} 가격 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})`], `Binance에서 ${leg.n === 1 ? '50%' : '30%'}${leg.qty > 0 ? `(약 ${Number(leg.qty)}개)` : ''} 부분 청산 후 웹앱에 청산을 등록하세요`, { leg: leg.n });
+      push(`TP${leg.n}`, `TP${leg.n}:${pos.sid}`, 'info', [leg.custom ? `${leg.n}차 익절가 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})` : `목표 ${leg.n === 1 ? '+1.5R' : '+2R'} 가격 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})`], `Binance에서 ${leg.n === 1 ? '50%' : '30%'}${leg.qty > 0 ? `(약 ${Number(leg.qty)}개)` : ''} 부분 청산 후 웹앱에 청산을 등록하세요`, { leg: leg.n });
     }
   }
   // 3) 추가 진입 조건 충족 / 취소(분할 계획이 있을 때만)
@@ -2098,6 +2292,19 @@ function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
     if (step > 0 && (step >= WATCH.trailStepR * R0 || ns.lastStop === undefined || ns.lastStop === plan.stop)) {
       ns.lastStop = st.stopPrice;
       push('TRAIL', `TRAIL:${pos.sid}:${wFmt(st.stopPrice, st.stopPrice)}`, 'info', [st.stopKind === 'breakeven' ? 'TP1 이후 손절을 평균 진입가(본전)로' : `TP2 이후 추적손절 (고점 기준 −${plan.params.trailR}R)`], `Binance 손절 주문을 ${wFmt(st.stopPrice, st.stopPrice)}로 ${pos.dir === 'LONG' ? '올리세요' : '내리세요'}(포지션에 유리한 방향만, 반대로 넓히지 마세요)`, { newStop: st.stopPrice });
+    }
+  }
+  // 4-2) 수동 등록 포지션의 추적손절 안내(분할 계획이 없을 때): 1차 청산 뒤 본전, 2차 청산 뒤 최고가(최저가)−1R. 유리한 방향으로만, 손절 주문을 직접 옮기라는 안내일 뿐이다.
+  if (!st && pos.manual && R0 > 0) {
+    const reds = pos.fills.filter(f => f.kind === 'reduce').length;
+    if (reds >= 1) {
+      let target = avg, kind = 'breakeven';
+      if (reds >= 2) { const ext = pos.dir === 'LONG' ? ctx.lastHigh : ctx.lastLow; if (Number.isFinite(ext)) { const trail = ext - sg * R0; if ((trail - avg) * sg > 0) { target = trail; kind = 'trailing'; } } }
+      const last = ns.lastStop !== undefined && (ns.lastStop - stopNow) * sg > 0 ? ns.lastStop : stopNow, step = (target - last) * sg;
+      if (stopNow != null && step > 0 && (step >= WATCH.trailStepR * R0 || ns.lastStop === undefined)) {
+        ns.lastStop = target;
+        push('TRAIL', `TRAIL:${pos.sid}:${wFmt(target, target)}`, 'info', [kind === 'breakeven' ? '1차 청산 이후 손절을 평균 진입가(본전)로' : `2차 청산 이후 추적손절 (고점 기준 −1R)`], `Binance 손절 주문을 ${wFmt(target, target)}로 ${pos.dir === 'LONG' ? '올리세요' : '내리세요'}(포지션에 유리한 방향만, 반대로 넓히지 마세요). 옮긴 뒤 웹앱 [포지션]에서 손절가도 수정하세요`, { newStop: target });
+      }
     }
   }
   // 5) 스윙 전환·유지·종료 후보(수익 포지션만)
@@ -2165,7 +2372,9 @@ function watchTick(env) {
   const out = { status: 'ok', mode, positions: positions.length, skipped: skipped.length, events: 0, sent: 0, failed: 0, capped: 0, stale: 0, marketFail: 0 };
   const markets = new Map(); out.market = []; out.skippedBy = {}; out.byType = {};
   for (const k of skipped) out.skippedBy[k.reason] = (out.skippedBy[k.reason] || 0) + 1;
+  const clock = typeof env.clock === 'function' ? env.clock : null, t0 = clock ? clock() : 0, budget = nullishOr(env.budgetMs, WATCH.budgetMs);
   for (const sym of new Set(positions.map(p => p.symbolId))) {
+    if (clock && clock() - t0 > budget) { out.market.push({ symbol: sym, ok: false, source: null, ageSec: null, n15: 0, n1h: 0, n4h: 0, why: 'time-budget' }); out.marketFail++; continue; }      // 실행 시간 한도(Apps Script 6분) 전에 멈춘다 — 못 본 종목은 다음 실행에서
     let m; try { m = env.market(sym); } catch (e_) { m = { ok: false, why: 'exception' }; }
     const assess = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: null }, good = assess.ok;
     out.market.push({ symbol: sym, ok: good, source: (m && m.source) || null, ageSec: m && m.ok ? Math.round((now - m.priceAt) / 1000) : null, n15: m && m.bars15m ? m.bars15m.length : 0, n1h: m && m.bars1h ? m.bars1h.length : 0, n4h: m && m.bars4h ? m.bars4h.length : 0,
@@ -2178,6 +2387,18 @@ function watchTick(env) {
     if (out.marketFail === new Set(positions.map(p => p.symbolId)).size) { mk.fails = (mk.fails || 0) + 1; if (mk.fails >= WATCH.marketDownFails && !mk.alerted) { const r = env.send('[RICH300] ⚠️ 시세 수집 장애\n보유 포지션 감시용 공개 시세를 가져오지 못하고 있습니다. 감시 알림이 지연됩니다.\n행동: 손절·익절 주문이 거래소에 걸려 있는지 직접 확인하세요.\n※ 자동 주문 아님'); if (r && r.ok) mk.alerted = true; } }
     else { mk.fails = 0; mk.alerted = false; }
     env.kv.put('market', JSON.stringify(mk));
+  }
+  // 일부 종목만 시세 실패가 이어질 때: 연속 N회 뒤 종목별로 한 번 알린다(복구되면 해제). 전체 장애는 위에서 따로 알린다.
+  if (mode === 'on') {
+    const mfRaw = env.kv.get('mfs') || ''; let mf = {}; try { mf = JSON.parse(mfRaw || '{}'); } catch (e_) { mf = {}; }
+    const bad = [], symsNow = new Set(out.market.map(x => x.symbol));
+    for (const x of out.market) { const r = mf[x.symbol] || { n: 0, a: false }; if (x.ok) { r.n = 0; r.a = false; } else { r.n++; if (r.n >= WATCH.symbolFailAlertAfter && !r.a) bad.push(x.symbol); } mf[x.symbol] = r; }
+    for (const k of Object.keys(mf)) if (!symsNow.has(k) || (mf[k].n === 0 && !mf[k].a)) delete mf[k];
+    if (bad.length && out.marketFail < new Set(positions.map(p => p.symbolId)).size) {
+      const r = env.send(`[RICH300] ⚠️ 시세 수집 실패 (${bad.map(x => x.replace(/USDT$/, '')).join(', ')})\n해당 종목 포지션의 감시 알림이 지연됩니다.\n행동: 손절·익절 주문이 거래소에 걸려 있는지 직접 확인하세요.\n※ 자동 주문 아님`);
+      if (r && r.ok) for (const x of bad) mf[x].a = true;
+    }
+    const mfOut = JSON.stringify(mf); if (mfOut !== mfRaw && !(mfRaw === '' && mfOut === '{}')) env.kv.put('mfs', mfOut);      // 바뀐 때만 쓴다(5분마다 불필요한 속성 쓰기 없음)
   }
   // 일일 손실 제한(-3%): 추가 진입 조건 알림을 막고 한 번 알린다
   let unreal = 0; for (const p of positions) { const m = markets.get(p.symbolId); if (m) unreal += (m.price - p.avgEntry) * splanSign(p.dir) * p.openQty; }
@@ -2203,6 +2424,13 @@ function watchTick(env) {
     if (d.key !== key) { const r = env.send(`[RICH300] 🚫 일일 손실 한도(−3%) 도달\n오늘 실현+평가 손익 ${dayPnl.toFixed(2)} USDT (오늘 시작 평가액 ${equity.toFixed(2)} 기준)\n행동: 신규 진입과 추가 진입을 중단하세요. 기존 포지션의 위험 축소·청산은 가능합니다.\n※ 자동 주문 아님`); if (r && r.ok) env.kv.put('day', JSON.stringify({ key })); }
   }
   return out;
+}
+
+// 종목 확인(순수): OKX·Bybit 티커 응답 JSON(응답 없으면 null)으로 판정. 'ok' | 'unknown'(두 곳 모두 응답했는데 티커 없음) | 'unverified'(어느 한쪽이라도 응답을 못 받음)
+function watchSymbolVerdict(okxJson, bybitJson) {
+  const okx = okxJson ? watchParseOkxTicker(okxJson) : null, byb = bybitJson ? watchParseBybitTicker(bybitJson) : null;
+  if (okx || byb) return 'ok';
+  return okxJson && bybitJson ? 'unknown' : 'unverified';
 }
 
 // ── close.mjs ──
@@ -2486,7 +2714,7 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   const throughDay = kstDayOf(now), led = ledgerBuildDaily({ ...inputs, throughDay });
   let histMemo = null; const hist = { get: k => { if (!histMemo) histMemo = journalHistories(se); return histMemo.get(k); } };      // 수정 이력은 수정된 항목(rev>1)이 화면에 있을 때만 Audit 를 읽는다(보통은 읽지 않음)
   const data = n => storeList(se, n).map(r => r.data), signals = data('signal'), responses = data('response'), reviews = data('review');
-  const revRev = new Map(storeList(se, 'review').map(r => [r.key, r.rev])), sig = new Map(signals.map(s => [s.sid, s])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
+  const revRev = new Map(storeList(se, 'review').map(r => [r.key, r.rev])), sig = new Map(signals.map(s => [s.sid, s])), man = new Map(data('manualpos').map(m => [m.sid, m])), rsp = new Map(responses.map(r => [r.sid, r])), rev = new Map(reviews.map(r => [r.sid, r]));
   const allFills = storeList(se, 'fill', { includeVoid: true }), voided = allFills.filter(r => r.void).map(r => r.key);
   const bySid = new Map();
   for (const r of allFills) { const sid = r.data.sid; if (!bySid.has(sid)) bySid.set(sid, []); bySid.get(sid).push(r); }
@@ -2494,7 +2722,7 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   const trades = [...led.trades.values()].map(t => {
     const s = sig.get(t.sid), ev = t.events, last = ev[ev.length - 1], net = t.totals.netEnteredMicro, rows = (nullishOr(bySid.get(t.sid), [])).sort((a, b) => a.data.at - b.data.at);
     const rv = rev.get(t.sid), rs = rsp.get(t.sid);
-    return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
+    return { sid: t.sid, dir: t.dir, status: t.status, strategy: s ? s.strategy : null, symbol: s ? s.symbolId.replace(/USDT$/, '') : man.has(t.sid) ? man.get(t.sid).symbolId.replace(/USDT$/, '') : null, lastAt: last.at, openedAt: ev[0].at, closedAt: t.status === 'closed' ? last.at : null, fillDays: [...new Set(rows.filter(r => !r.void).map(r => kstDayOf(r.data.at)))], openedLabel: jvKst(ev[0].at), closedLabel: t.status === 'closed' ? jvKst(last.at) : null,
       netLabel: anUsd(net, { sign: true }), netMicro: String(net), win: t.status === 'closed' && net > BigInt(0), loss: t.status === 'closed' && net < BigInt(0), flags: t.flags, openQty: t.status === 'open' ? t.openQty : null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
       fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key, r.rev) })),
@@ -2924,7 +3152,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, WATCH, watchEma, watchTrend, watchVolRatio, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, watchEvaluate, watchMessage, watchTick, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, watchEvaluate, watchMessage, watchTick, watchSymbolVerdict, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -3018,8 +3246,8 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'f15a32572596';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_' };
+var RICH300_BUILD = '303177c4cdae';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -3149,7 +3377,7 @@ function rich300TgPairCode() {
 /** 모바일 입력 화면(?p=fill). 소유자만(라우터가 확인). 값은 서버가 JSON으로 주입한다. */
 function rich300PageFill_(e) {
   var t = HtmlService.createTemplateFromFile('Fill'), p = (e && e.parameter) || {};
-  var pre = { sid: String(p.sid || ''), dir: p.dir === 'SHORT' ? 'SHORT' : p.dir === 'LONG' ? 'LONG' : '', entry: String(p.entry || ''), stop: String(p.stop || '') };
+  var pre = { sid: String(p.sid || ''), dir: p.dir === 'SHORT' ? 'SHORT' : p.dir === 'LONG' ? 'LONG' : '', entry: String(p.entry || ''), stop: String(p.stop || ''), mode: p.mode === 'exit' ? 'exit' : '' };
   t.preset = JSON.stringify(pre).replace(/</g, '\\u003c');
   return t.evaluate().setTitle('RICH300 입력').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -3205,7 +3433,7 @@ function rich300UiError_(err) {
   var C = RICH300_ENGINE.StoreError;
   if (err instanceof C) {
     if (err.code === 'LOCK') return { ok: false, error: 'busy', retry: true };
-    if (err.code === 'VALIDATION' || err.code === 'NOT_FOUND') return { ok: false, error: 'invalid', message: String(err.message).slice(0, 160) };
+    if (err.code === 'VALIDATION' || err.code === 'NOT_FOUND' || err.code === 'USER') return { ok: false, error: 'invalid', message: String(err.message).slice(0, 160) };
   }
   return { ok: false, error: 'server' };
 }
@@ -3575,6 +3803,7 @@ function rich300WatchEnv_(mode) {
   function tgEnv() { if (!tg) tg = rich300TgEnv_(); return tg; }
   return {
     now: function () { return Date.now(); },
+    clock: function () { return Date.now(); },      // 실행 시간 한도(240초) 판단용 — 종목이 많아도 6분 제한 전에 멈춘다
     mode: function () { return mode; },
     storeEnv: function () { if (!store) { store = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); RICH300_ENGINE.storeInit(store); } return store; },
     kv: {
@@ -3657,6 +3886,49 @@ function rich300PageWatch_(e) {
   var state = rich300WatchState_();
   var html = RICH300_ENGINE.shellRenderWatch({ state: state, result: result, net: netRes, ran: run || net, error: err, ms: Date.now() - t0, appUrl: rich300AppUrl_(), build: RICH300_BUILD });
   return rich300Html_(html, 'RICH300 감시 점검');
+}
+
+// ── gas/Manual.gs ──
+/**
+ * RICH 300 — 수동 포지션 등록(?p=pos). Binance 에서 직접 연 선물 포지션을 종목·방향·실제 진입가·수량·레버리지·증거금·손절·익절로 기록한다.
+ *  · 주문·계정 API 없음. 기록 + (운영 승인 후) 공개 시세 기반 감시 알림 대상 등록만 한다. 이 파일의 어떤 함수도 트리거를 만들거나 Telegram 을 보내지 않는다.
+ *  · google.script.run 대상 함수는 각각 소유자 확인을 다시 한다(클라이언트 호출은 라우터를 거치지 않음).
+ *  · 종목 확인은 OKX·Bybit 공개 티커 2건(읽기 전용)이며 결과는 6시간 캐시한다. 응답을 못 받으면 등록은 허용하고 경고만 한다.
+ *  · 로그에는 아무것도 출력하지 않는다.
+ */
+function rich300ManualEnv_() {
+  var base = rich300JournalEnv_();
+  base.randomId = function (n) { return Utilities.getUuid().replace(/[^A-Za-z0-9]/g, '').slice(0, n || 8); };
+  base.symbolCheck = rich300ManualSymbolCheck_;
+  return base;
+}
+function rich300ManualSymbolCheck_(symbolId) {
+  var E = RICH300_ENGINE, cache = CacheService.getScriptCache(), key = 'sc:' + symbolId;
+  try { if (cache.get(key) === 'ok') return 'ok'; } catch (err) { /* 캐시 실패는 무시 */ }
+  var o = E.watchMarketUrls('OKX', symbolId), b = E.watchMarketUrls('Bybit', symbolId);
+  if (!o || !b) return 'unknown';
+  var res; try { res = UrlFetchApp.fetchAll([{ url: o.ticker, method: 'get', muteHttpExceptions: true }, { url: b.ticker, method: 'get', muteHttpExceptions: true }]); } catch (err) { return 'unverified'; }
+  var verdict = E.watchSymbolVerdict(rich300WatchJson_(res[0]), rich300WatchJson_(res[1]));
+  if (verdict === 'ok') { try { cache.put(key, 'ok', 21600); } catch (err2) { /* 무시 */ } }
+  return verdict;
+}
+/** 페이지(?p=pos): 서버에서 완성된 HTML. 시세 호출 없음(시트만 읽는다). */
+function rich300PagePos_(e) {
+  var html, appUrl = rich300AppUrl_();
+  try {
+    var env = rich300JournalEnv_();
+    html = RICH300_ENGINE.manualRenderHtml({ open: RICH300_ENGINE.manualOpenList(env.storeEnv()), appUrl: appUrl, build: RICH300_BUILD, now: Date.now() });
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '포지션', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'pos' }); }
+  return rich300Html_(html, 'RICH300 포지션');
+}
+/** google.script.run 대상(소유자 전용) */
+function rich300ManualRegister(form) {
+  if (!rich300IsOwner_()) return { ok: false, error: 'forbidden' };
+  try { return RICH300_ENGINE.manualRegister(rich300ManualEnv_(), form || {}, { actor: 'ui:pos' }); } catch (err) { return rich300UiError_(err); }
+}
+function rich300ManualUpdate(sid, patch) {
+  if (!rich300IsOwner_()) return { ok: false, error: 'forbidden' };
+  try { return RICH300_ENGINE.manualUpdate(rich300ManualEnv_(), String(sid || ''), patch || {}, { actor: 'ui:pos' }); } catch (err) { return rich300UiError_(err); }
 }
 
 // ── gas/TgDiag.gs ──

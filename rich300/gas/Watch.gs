@@ -43,6 +43,7 @@ function rich300WatchEnv_(mode) {
   function tgEnv() { if (!tg) tg = rich300TgEnv_(); return tg; }
   return {
     now: function () { return Date.now(); },
+    clock: function () { return Date.now(); },      // 실행 시간 한도(240초) 판단용 — 종목이 많아도 6분 제한 전에 멈춘다
     mode: function () { return mode; },
     storeEnv: function () { if (!store) { store = rich300GasEnv_(props.getProperty('RICH300_SHEET_ID')); RICH300_ENGINE.storeInit(store); } return store; },
     kv: {

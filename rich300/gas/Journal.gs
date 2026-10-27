@@ -25,7 +25,7 @@ function rich300UiError_(err) {
   var C = RICH300_ENGINE.StoreError;
   if (err instanceof C) {
     if (err.code === 'LOCK') return { ok: false, error: 'busy', retry: true };
-    if (err.code === 'VALIDATION' || err.code === 'NOT_FOUND') return { ok: false, error: 'invalid', message: String(err.message).slice(0, 160) };
+    if (err.code === 'VALIDATION' || err.code === 'NOT_FOUND' || err.code === 'USER') return { ok: false, error: 'invalid', message: String(err.message).slice(0, 160) };
   }
   return { ok: false, error: 'server' };
 }

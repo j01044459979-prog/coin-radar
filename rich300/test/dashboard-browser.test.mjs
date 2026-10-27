@@ -34,6 +34,6 @@ test('다크 모드: 배경이 바뀌고 본문·보조 글자 대비 4.5:1 이�
 }));
 test('메뉴 링크는 target=_top 이고 평가액 입력 링크가 있다(미입력 화면)', { skip: !have && 'playwright 없음' }, async () => withBrowser(async b => {
   const { p } = await page(b); await p.setContent(empty); const links = await p.evaluate(() => [...document.querySelectorAll('nav.tabs a')].map(a => [a.textContent, a.target, a.getAttribute('href')]));
-  assert.deepEqual(links.map(l => l[0]), ['홈', '일지', '추천', '성적', '자산']); assert.ok(links.every(l => l[1] === '_top' && l[2].startsWith('https://script.google.com/')));
+  assert.deepEqual(links.map(l => l[0]), ['홈', '포지션', '일지', '추천', '성적', '자산']); assert.ok(links.every(l => l[1] === '_top' && l[2].startsWith('https://script.google.com/')));
   assert.equal(await p.locator('.cta').count(), 1);
 }));

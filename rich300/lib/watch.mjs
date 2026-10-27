@@ -20,7 +20,7 @@ export const WATCH = Object.freeze({
   staleMarketMs: 10 * 60000, barGraceMs: 10 * 60000, marketDownFails: 3,
   cooldownMs: Object.freeze({ STOP_TREND: 60 * 60000, SWING_HOLD: 24 * 3600000 }),
   retryDelaysMs: Object.freeze([2 * 60000, 5 * 60000, 10 * 60000, 20 * 60000]), expireMs: 30 * 60000,
-  capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40,
+  capHour: 12, capDay: 60, maxPerPosTick: 3, keepSent: 40, budgetMs: 240000, symbolFailAlertAfter: 3,
 });
 
 // ── 지표 ──
@@ -49,17 +49,18 @@ const wAgainst = (trend, dir) => (dir === 'LONG' ? trend.state === 'down' : tren
 export function watchOpenPositions(se, { now }) {
   const fills = storeList(se, 'fill').map(r => r.data), by = new Map();
   for (const f of fills) { if (!by.has(f.sid)) by.set(f.sid, []); by.get(f.sid).push(f); }
-  const signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data])), today = kstDayOf(now), positions = [], skipped = []; let realizedTodayMicro = 0;
+  const manual = new Map(storeList(se, 'manualpos').map(r => [r.key, r.data])), signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data])), today = kstDayOf(now), positions = [], skipped = []; let realizedTodayMicro = 0;
   for (const [sid, list] of by) {
     let t; try { t = pnlComputeTrade(list); } catch (e_) { skipped.push({ sid, reason: 'invalid-fills' }); continue; }
     if (!t) continue;
     for (const e of t.events) if (e.day === today) realizedTodayMicro += Number(e.grossMicro) - (e.feeState === 'entered' ? Number(e.feeMicro) : 0) + (e.fundingState === 'entered' ? Number(e.fundingMicro) : 0);
     if (t.status !== 'open') continue;
-    const sg = signals.get(sid); if (!sg) { skipped.push({ sid, reason: 'no-symbol' }); continue; }      // 종목을 알 수 없으면 시세를 볼 수 없다(수동 종목 등록은 별도 기능)
+    const mp = manual.get(sid), sg = mp ? { symbolId: mp.symbolId, signalAt: mp.registeredAt } : signals.get(sid); if (!sg) { skipped.push({ sid, reason: 'no-symbol' }); continue; }      // 추천 신호 또는 수동 등록으로 종목을 알 수 있어야 시세를 본다
     const sorted = [...list].sort((a, b) => a.at - b.at), entry = sorted[0], hasOpening = sorted.some(f => f.kind === 'opening');
-    let plan = null; try { plan = hasOpening ? null : tgPlanOf(se, sid); } catch (e_) { plan = null; }
-    const stop0 = plan ? plan.stop : (entry.plannedStop != null ? Number(entry.plannedStop) : null);
+    let plan = null; try { plan = hasOpening || mp ? null : tgPlanOf(se, sid); } catch (e_) { plan = null; }
+    const stop0 = mp ? Number(mp.stop) : plan ? plan.stop : (entry.plannedStop != null ? Number(entry.plannedStop) : null);
     positions.push({ sid, symbolId: sg.symbolId, dir: t.dir, avgEntry: Number(t.avgEntry), openQty: Number(t.openQty), firstAt: sorted[0].at, signalAt: sg.signalAt, plan, stop0,
+      ...(mp ? { manual: true, r0Stop: entry.plannedStop != null ? Number(entry.plannedStop) : Number(mp.stop), tp: [mp.tp1, mp.tp2].map(x => (x != null ? Number(x) : null)) } : {}),
       fills: sorted.map(f => ({ kind: f.kind, price: Number(f.price), qty: Number(f.qty), at: f.at })) });
   }
   return { positions, skipped, realizedTodayMicro, today };
@@ -120,7 +121,7 @@ const wHhmm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
 export function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
   const sg = splanSign(pos.dir), p = market.price, avg = pos.avgEntry, plan = pos.plan, events = [], st0 = state, ns = { ...st0, armed: { ...st0.armed }, last: { ...st0.last } };
   const t1 = watchTrend(market.bars1h), t4 = watchTrend(market.bars4h), v1 = watchVolRatio(market.bars1h), v4 = watchVolRatio(market.bars4h);
-  const R0 = plan ? plan.R : (pos.stop0 != null ? Math.abs(avg - pos.stop0) : null);
+  const R0 = plan ? plan.R : (pos.r0Stop != null ? Math.abs(avg - pos.r0Stop) : pos.stop0 != null ? Math.abs(avg - pos.stop0) : null);      // 수동 등록: 손절을 본전 쪽으로 옮겨도 1R 은 처음 손절 기준
   const closed15 = market.bars15m && market.bars15m.length ? market.bars15m[market.bars15m.length - 1] : null;
   const since = market.bars1h.filter(b => b.t + 3600000 > pos.firstAt);
   const ctx = { lastClose: closed15 ? closed15.c : undefined, lastHigh: since.length ? Math.max(...since.map(b => b.h)) : undefined, lastLow: since.length ? Math.min(...since.map(b => b.l)) : undefined,
@@ -145,10 +146,11 @@ export function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
   }
   // 2) 익절 도달(TP1·TP2)
   if (R0 > 0) {
-    const legs = st ? st.legs : [0, 1].map(i => ({ n: i + 1, price: avg + sg * WATCH.tpR[i] * R0, qty: pos.openQty * (i === 0 ? 0.5 : 0.3), done: i === 0 ? pos.fills.some(f => f.kind === 'reduce') : false }));
+    const reds = pos.fills.filter(f => f.kind === 'reduce').length, custom = !st && pos.tp && pos.tp.some(x => x != null);
+    const legs = st ? st.legs : [0, 1].map(i => ({ n: i + 1, price: custom ? pos.tp[i] : avg + sg * WATCH.tpR[i] * R0, qty: pos.openQty * (i === 0 ? 0.5 : 0.3), done: reds > i, custom })).filter(l => l.price != null);
     for (const leg of legs) {
       if (leg.done || (p - leg.price) * sg < 0) continue;
-      push(`TP${leg.n}`, `TP${leg.n}:${pos.sid}`, 'info', [`목표 ${leg.n === 1 ? '+1.5R' : '+2R'} 가격 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})`], `Binance에서 ${leg.n === 1 ? '50%' : '30%'}${leg.qty > 0 ? `(약 ${Number(leg.qty)}개)` : ''} 부분 청산 후 웹앱에 청산을 등록하세요`, { leg: leg.n });
+      push(`TP${leg.n}`, `TP${leg.n}:${pos.sid}`, 'info', [leg.custom ? `${leg.n}차 익절가 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})` : `목표 ${leg.n === 1 ? '+1.5R' : '+2R'} 가격 ${wFmt(leg.price, leg.price)} 도달 (현재 ${wFmt(p, p)})`], `Binance에서 ${leg.n === 1 ? '50%' : '30%'}${leg.qty > 0 ? `(약 ${Number(leg.qty)}개)` : ''} 부분 청산 후 웹앱에 청산을 등록하세요`, { leg: leg.n });
     }
   }
   // 3) 추가 진입 조건 충족 / 취소(분할 계획이 있을 때만)
@@ -172,6 +174,19 @@ export function watchEvaluate({ pos, market, now, state, dayBlocked = false }) {
     if (step > 0 && (step >= WATCH.trailStepR * R0 || ns.lastStop === undefined || ns.lastStop === plan.stop)) {
       ns.lastStop = st.stopPrice;
       push('TRAIL', `TRAIL:${pos.sid}:${wFmt(st.stopPrice, st.stopPrice)}`, 'info', [st.stopKind === 'breakeven' ? 'TP1 이후 손절을 평균 진입가(본전)로' : `TP2 이후 추적손절 (고점 기준 −${plan.params.trailR}R)`], `Binance 손절 주문을 ${wFmt(st.stopPrice, st.stopPrice)}로 ${pos.dir === 'LONG' ? '올리세요' : '내리세요'}(포지션에 유리한 방향만, 반대로 넓히지 마세요)`, { newStop: st.stopPrice });
+    }
+  }
+  // 4-2) 수동 등록 포지션의 추적손절 안내(분할 계획이 없을 때): 1차 청산 뒤 본전, 2차 청산 뒤 최고가(최저가)−1R. 유리한 방향으로만, 손절 주문을 직접 옮기라는 안내일 뿐이다.
+  if (!st && pos.manual && R0 > 0) {
+    const reds = pos.fills.filter(f => f.kind === 'reduce').length;
+    if (reds >= 1) {
+      let target = avg, kind = 'breakeven';
+      if (reds >= 2) { const ext = pos.dir === 'LONG' ? ctx.lastHigh : ctx.lastLow; if (Number.isFinite(ext)) { const trail = ext - sg * R0; if ((trail - avg) * sg > 0) { target = trail; kind = 'trailing'; } } }
+      const last = ns.lastStop !== undefined && (ns.lastStop - stopNow) * sg > 0 ? ns.lastStop : stopNow, step = (target - last) * sg;
+      if (stopNow != null && step > 0 && (step >= WATCH.trailStepR * R0 || ns.lastStop === undefined)) {
+        ns.lastStop = target;
+        push('TRAIL', `TRAIL:${pos.sid}:${wFmt(target, target)}`, 'info', [kind === 'breakeven' ? '1차 청산 이후 손절을 평균 진입가(본전)로' : `2차 청산 이후 추적손절 (고점 기준 −1R)`], `Binance 손절 주문을 ${wFmt(target, target)}로 ${pos.dir === 'LONG' ? '올리세요' : '내리세요'}(포지션에 유리한 방향만, 반대로 넓히지 마세요). 옮긴 뒤 웹앱 [포지션]에서 손절가도 수정하세요`, { newStop: target });
+      }
     }
   }
   // 5) 스윙 전환·유지·종료 후보(수익 포지션만)
@@ -239,7 +254,9 @@ export function watchTick(env) {
   const out = { status: 'ok', mode, positions: positions.length, skipped: skipped.length, events: 0, sent: 0, failed: 0, capped: 0, stale: 0, marketFail: 0 };
   const markets = new Map(); out.market = []; out.skippedBy = {}; out.byType = {};
   for (const k of skipped) out.skippedBy[k.reason] = (out.skippedBy[k.reason] || 0) + 1;
+  const clock = typeof env.clock === 'function' ? env.clock : null, t0 = clock ? clock() : 0, budget = nullishOr(env.budgetMs, WATCH.budgetMs);
   for (const sym of new Set(positions.map(p => p.symbolId))) {
+    if (clock && clock() - t0 > budget) { out.market.push({ symbol: sym, ok: false, source: null, ageSec: null, n15: 0, n1h: 0, n4h: 0, why: 'time-budget' }); out.marketFail++; continue; }      // 실행 시간 한도(Apps Script 6분) 전에 멈춘다 — 못 본 종목은 다음 실행에서
     let m; try { m = env.market(sym); } catch (e_) { m = { ok: false, why: 'exception' }; }
     const assess = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: null }, good = assess.ok;
     out.market.push({ symbol: sym, ok: good, source: (m && m.source) || null, ageSec: m && m.ok ? Math.round((now - m.priceAt) / 1000) : null, n15: m && m.bars15m ? m.bars15m.length : 0, n1h: m && m.bars1h ? m.bars1h.length : 0, n4h: m && m.bars4h ? m.bars4h.length : 0,
@@ -252,6 +269,18 @@ export function watchTick(env) {
     if (out.marketFail === new Set(positions.map(p => p.symbolId)).size) { mk.fails = (mk.fails || 0) + 1; if (mk.fails >= WATCH.marketDownFails && !mk.alerted) { const r = env.send('[RICH300] ⚠️ 시세 수집 장애\n보유 포지션 감시용 공개 시세를 가져오지 못하고 있습니다. 감시 알림이 지연됩니다.\n행동: 손절·익절 주문이 거래소에 걸려 있는지 직접 확인하세요.\n※ 자동 주문 아님'); if (r && r.ok) mk.alerted = true; } }
     else { mk.fails = 0; mk.alerted = false; }
     env.kv.put('market', JSON.stringify(mk));
+  }
+  // 일부 종목만 시세 실패가 이어질 때: 연속 N회 뒤 종목별로 한 번 알린다(복구되면 해제). 전체 장애는 위에서 따로 알린다.
+  if (mode === 'on') {
+    const mfRaw = env.kv.get('mfs') || ''; let mf = {}; try { mf = JSON.parse(mfRaw || '{}'); } catch (e_) { mf = {}; }
+    const bad = [], symsNow = new Set(out.market.map(x => x.symbol));
+    for (const x of out.market) { const r = mf[x.symbol] || { n: 0, a: false }; if (x.ok) { r.n = 0; r.a = false; } else { r.n++; if (r.n >= WATCH.symbolFailAlertAfter && !r.a) bad.push(x.symbol); } mf[x.symbol] = r; }
+    for (const k of Object.keys(mf)) if (!symsNow.has(k) || (mf[k].n === 0 && !mf[k].a)) delete mf[k];
+    if (bad.length && out.marketFail < new Set(positions.map(p => p.symbolId)).size) {
+      const r = env.send(`[RICH300] ⚠️ 시세 수집 실패 (${bad.map(x => x.replace(/USDT$/, '')).join(', ')})\n해당 종목 포지션의 감시 알림이 지연됩니다.\n행동: 손절·익절 주문이 거래소에 걸려 있는지 직접 확인하세요.\n※ 자동 주문 아님`);
+      if (r && r.ok) for (const x of bad) mf[x].a = true;
+    }
+    const mfOut = JSON.stringify(mf); if (mfOut !== mfRaw && !(mfRaw === '' && mfOut === '{}')) env.kv.put('mfs', mfOut);      // 바뀐 때만 쓴다(5분마다 불필요한 속성 쓰기 없음)
   }
   // 일일 손실 제한(-3%): 추가 진입 조건 알림을 막고 한 번 알린다
   let unreal = 0; for (const p of positions) { const m = markets.get(p.symbolId); if (m) unreal += (m.price - p.avgEntry) * splanSign(p.dir) * p.openQty; }
@@ -277,4 +306,11 @@ export function watchTick(env) {
     if (d.key !== key) { const r = env.send(`[RICH300] 🚫 일일 손실 한도(−3%) 도달\n오늘 실현+평가 손익 ${dayPnl.toFixed(2)} USDT (오늘 시작 평가액 ${equity.toFixed(2)} 기준)\n행동: 신규 진입과 추가 진입을 중단하세요. 기존 포지션의 위험 축소·청산은 가능합니다.\n※ 자동 주문 아님`); if (r && r.ok) env.kv.put('day', JSON.stringify({ key })); }
   }
   return out;
+}
+
+// 종목 확인(순수): OKX·Bybit 티커 응답 JSON(응답 없으면 null)으로 판정. 'ok' | 'unknown'(두 곳 모두 응답했는데 티커 없음) | 'unverified'(어느 한쪽이라도 응답을 못 받음)
+export function watchSymbolVerdict(okxJson, bybitJson) {
+  const okx = okxJson ? watchParseOkxTicker(okxJson) : null, byb = bybitJson ? watchParseBybitTicker(bybitJson) : null;
+  if (okx || byb) return 'ok';
+  return okxJson && bybitJson ? 'unknown' : 'unverified';
 }

@@ -7,7 +7,7 @@ import { fakeSheetsServices, fakeCache } from './gasfakes.mjs';
 import { fakeTelegram, FAKE_TOKEN } from './faketg.mjs';
 
 export const readGas = f => readFileSync(new URL(`../../gas/${f}`, import.meta.url), 'utf8');
-const FILES = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Watch.gs', 'TgDiag.gs', 'Install.gs'];
+const FILES = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Watch.gs', 'Manual.gs', 'TgDiag.gs', 'Install.gs'];
 export function loadProd({ props = {}, email = 'me@example.com', url = 'https://script.google.com/macros/s/X/exec' } = {}) {
   const sheets = fakeSheetsServices(), tele = fakeTelegram(), cache = fakeCache({ t: 0 }), spy = { logs: [], triggers: [], pages: [], fetches: 0 };
   const pm = new Map(Object.entries({ RICH300_SHEET_ID: 'sheet', RICH300_OWNER_EMAIL: 'me@example.com', RICH300_TG_TOKEN: FAKE_TOKEN, 'verify:startedAt': '1', ...props }));

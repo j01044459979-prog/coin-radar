@@ -17,7 +17,7 @@ const storeParse = (s, where) => { try { return JSON.parse(s); } catch (e_) { th
 const storeInt = (v, where) => { const n = Number(storeCell(v)); if (!Number.isInteger(n)) throw new StoreError('INTEGRITY', `정수 아님: ${where}`); return n; };
 
 export function storeInit(env, { force = false } = {}) {
-  const ck = `store-init:v${SCHEMA_VERSION}`;                // 이미 확인한 시트는 매 요청마다 14개 시트의 머리글을 다시 읽지 않는다(health 화면은 force 로 다시 확인)
+  const ck = `store-init:v${SCHEMA_VERSION}:${ENTITY_NAMES.length}`;                // 이미 확인한 시트는 매 요청마다 14개 시트의 머리글을 다시 읽지 않는다(health 화면은 force 로 다시 확인)
   if (!force && env.initCache && env.initCache.get(ck) === '1') return;
   for (const n of ENTITY_NAMES) env.sheets.ensure(storeEntity(n).sheet, VIEW_HEADERS(n));
   env.sheets.ensure(AUDIT_SHEET, AUDIT_HEADERS); env.sheets.ensure(META_SHEET, META_HEADERS);

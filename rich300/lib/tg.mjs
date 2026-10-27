@@ -126,7 +126,7 @@ export function tgParseAt(raw, now) {
 }
 const tgAtMs = (env, p) => (p.atMs === undefined || p.atMs === null || p.atMs === '' ? undefined : (Number.isSafeInteger(+p.atMs) && +p.atMs > 0 ? +p.atMs : (() => { throw tgUserErr('시각 값이 올바르지 않습니다'); })()));
 function tgNote(raw) { const t = String((raw != null ? raw : '')).replace(/\s+/g, ' ').trim(); if (!t) return undefined; if (t.length > 300) throw tgUserErr('메모는 300자까지입니다'); return t; }
-function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
+export function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
   if (raw === undefined || raw === '') return { state: 'missing' };
   const est = raw.startsWith('~'), v = est ? raw.slice(1) : raw;
   return { state: est ? 'estimated' : 'entered', amount: schemaDecString(v, name) };
@@ -339,7 +339,7 @@ export function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
     const built = isExit ? tgBuildExit(env, { sid, price: String((form.price != null ? form.price : '')), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
       : tgBuildEntry(env, { sid, margin: String((form.margin != null ? form.margin : '')), leverage: String((form.leverage != null ? form.leverage : '')), entry: String((form.entry != null ? form.entry : '')), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
-    if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
+    if (built.fill.kind === 'close' && !sid.startsWith('M-')) { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
   } catch (e) { if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) return { ok: false, error: 'invalid', message: String(e.message).slice(0, 160) }; if (e instanceof StoreError && e.code === 'LOCK') return { ok: false, error: 'busy', retry: true }; return { ok: false, error: 'server' }; }
 }

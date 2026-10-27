@@ -31,3 +31,9 @@ test('청산 입력: 비율 버튼·메모·시각, 같은 화면의 재저장�
 test('모바일 폭 320/390에서 가로 넘침 없음, 입력·버튼 높이 40px 이상', skip, async () => { for (const w of [320, 390]) await withPage(async (p) => {
   for (const m of ['#mEntry', '#mExit']) { await p.click(m); const r = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, small: [...document.querySelectorAll('input,button')].filter(e => e.offsetParent !== null && e.getBoundingClientRect().height < 38).map(e => e.id || e.textContent)})); assert.ok(r.sw <= r.cw, `넘침 @${w}`); assert.deepEqual(r.small, []); }
 }, { w }); });
+
+test('수동 등록 목록의 [청산 기록] 링크(mode=exit)로 열면 청산 입력 모드로 시작하고 해당 포지션 ID 가 채워진다', skip, async () => {
+  const { chromium } = createRequire(PW)(PW), b = await chromium.launch(existsSync(CH) ? { executablePath: CH } : {});
+  try { const p = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage(); await p.setContent(html({ sid: 'M-SOL-L-abc', mode: 'exit' }));
+    assert.equal(await p.isVisible('#exitFields'), true); assert.equal(await p.isVisible('#entryFields'), false); assert.equal(await p.inputValue('#sid'), 'M-SOL-L-abc'); } finally { await b.close(); }
+});
