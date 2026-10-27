@@ -201,7 +201,10 @@ export function sgyStageLines(s, now) {
     lines.push(`   근거: ${why.join(' · ')}${st.n > 1 && info.stages[st.n - 2] ? ` (1차 대비 −${info.stages[st.n - 2].depthR}R)` : ''}`);
     lines.push(st.n === 1 ? `   조건: ${side} 지정가 ${F(st.price)} · 유효 ~${sgyHm(x.validUntil)} KST` : `   조건: 1차 체결 뒤 ${side} 지정가 ${F(st.price)} · 직전 15분 종가 ${structLine} · 유효 ~${sgyHm(addUntil)} KST`);
   }
-  for (let n = plan.stagesCount + 1; n <= 3; n++) lines.push(`${n}차 진입: 설정하지 않음 — ${n === 2 ? (info.notes.find(t => /2차|추가 진입|4시간|1차 단독/.test(t)) || '타당한 구조 가격 없음') : (info.notes.find(t => /3차|2차까지/.test(t)) || '타당한 구조 가격 없음')}`);
+  for (let n = plan.stagesCount + 1; n <= 3; n++) {                                                   // 제외된 분할과 그 이유를 명확히 표시
+    const found = (info.requested || 0) + 1 >= n, why = found ? '구조 가격은 있으나 계획 수량이 최소 주문 단위·증거금 한도에 못 미쳐 제외(소액 계좌 한계)' : (n === 2 ? (info.notes.find(t => /2차|추가 진입|4시간|1차 단독/.test(t)) || '타당한 구조 가격 없음') : (info.notes.find(t => /3차|2차까지/.test(t)) || '타당한 구조 가격 없음'));
+    lines.push(`${n}차 진입: 설정하지 않음(제외) — ${why}`);
+  }
   return lines;
 }
 export function sgyNewMessage(s, { price, priceAt, source, now }) {

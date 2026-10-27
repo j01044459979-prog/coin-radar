@@ -122,3 +122,10 @@ test('피드 되돌림(replay)·오래됨은 GAS 경로에서도 거부', () => 
   w.entries = [entry({ sid: 'SG-ETH-L-new999' })]; w.g.spy.feedHandler = () => ({ status: 200, body: signFeed(w.entries, ts0 - 60000) }); w.at(10); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'replay'); assert.equal(w.g.rows('strategy').length, 1);
   w.g.spy.feedHandler = () => ({ status: 200, body: signFeed(w.entries, w.g.spy.now - 40 * 60000 + 600000, { at: String(w.g.spy.now - 50 * 60000) }) }); w.g.P.deleteProperty('w:sgfeedts'); w.at(15); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'stale');
 });
+test('v10 운영 상태 보존: 위치 감시 ON·수동 포지션·트리거 1개 상태에서 전략 추적 설정이 없으면 v11 코드도 v10 과 같게 동작(피드·전략 시트 호출 0, 기존 속성 불변, 위치 감시 알림 정상)', () => {
+  const w = world({ key: false }); w.g.P.setProperty('RICH300_PROD_APPROVED', 'yes'); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on'); w.g.ctx.rich300WatchInstallTrigger();
+  w.price = 1968; w.g.ctx.rich300ManualRegister({ formId: 'v10', symbol: 'ETH', dir: 'LONG', entry: '2000', qty: '0.1', leverage: '3', stop: '1970', tp1: '', tp2: '', at: '' }); w.g.tele.sent.length = 0; w.hits.length = 0; w.g.cache.evictAll();
+  const before = snap(w.g), trig0 = trig(w.g); const out = w.at(5); assert.equal(out.status, 'ok'); assert.ok(w.sent().some(t => /ETH LONG · 🛑 손절가 이탈/.test(t))); assert.equal(w.g.spy.feedHits.length, 0); assert.equal(w.g.rows('strategy').length, 0); assert.equal(trig(w.g), trig0);
+  const after = snap(w.g); for (const k of Object.keys(before)) if (!/^(w:|watch:last|cache|perf)/.test(k)) assert.equal(after[k], before[k], k); assert.ok(!Object.keys(after).some(k => /^(RICH300_STRATEGY|strategy:|w:sg)/.test(k)));
+  assert.ok(strip(w.g.ctx.doGet({ parameter: { p: 'pos' } }).html).includes('ETH')); assert.match(strip(w.g.ctx.doGet({ parameter: { p: 'ops' } }).html), /실제 동작: 전송 중\(실전 감시 켜짐\)/);
+});

@@ -68,7 +68,7 @@ test('메시지: 요구 항목 전부(1~3차 가격/비중/수량/증거금·근
     /세 분할 모두 체결 시 예상 평균가: 1994\.\d\d \(총 수량 0\.\d+ · 증거금 [\d.]+ USDT · 격리 3배\)/, /전체 예상 최대 손실: −2\.\d\d USDT \(평가액 300 의 0\.\d+% · 위험 예산 3\.00 이내/, /추가 진입 무효화 조건: TP1 도달 · 15분 종가가 [\d.]+ 아래 · 신호 후 240분/, /추천 유효시간: 1차 ~12:45 KST\(남은 40분\) · 2·3차 ~16:00 KST/, /시장 구조: 15분 .+ 1시간 상승 · 4시간 상승 · 1H ATR/, /매수 지정가\(Limit\)로 직접 설정/, /수량 단위 0\.001/, /실제 체결은 Binance 주문 내역에서 직접 확인/, /실제 Binance 체결 아님 · 자동 주문 아님/]) assert.match(t, re);
   const sh = live(stgPlan({ dir: 'SHORT', entry: 2000, stop: 2030, atr1: 8, zone: { lo: 2010, hi: 2020 }, level: null, bars1h: mkBars({ start: 2100, drift: -0.001, mirrorK: null }), bars4h: mkBars({ step: 4 * H, start: 2400, drift: -0.003 }), bars15m: [] }), { dir: 'SHORT', sid: 'SG-ETH-S-abc123', stop: 2030 }), ts = sgyNewMessage(sh, { price: 1995, priceAt: CLOSE, source: 'OKX', now: CLOSE + 5 * 60000 });
   assert.match(ts, /🔴 ETH \/ SHORT/); assert.match(ts, /매도 지정가\(Limit\)로 직접 설정/); assert.match(ts, /2차 진입: 20(0|1)\d\.\d\d/); assert.match(ts, /15분 종가가 [\d.]+ 위 — |15분 종가가 [\d.]+ 위 ·/);
-  const single = sgyNewMessage(live(stgPlan(LONGIN({ bars1h: mkBars({ start: 1900 }) }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 }); assert.match(single, /2차 진입: 설정하지 않음 — 2차로 쓸 만한 구조 가격/); assert.match(single, /3차 진입: 설정하지 않음/); assert.match(single, /1차 진입: 2000\.00 \/ 100%/); assert.match(single, /추가 진입 무효화 조건: 해당 없음/); assert.match(single, /한 분할 모두 체결 시/);
+  const single = sgyNewMessage(live(stgPlan(LONGIN({ bars1h: mkBars({ start: 1900 }) }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 }); assert.match(single, /2차 진입: 설정하지 않음\(제외\) — 2차로 쓸 만한 구조 가격/); assert.match(single, /3차 진입: 설정하지 않음\(제외\)/); assert.match(single, /1차 진입: 2000\.00 \/ 100%/); assert.match(single, /추가 진입 무효화 조건: 해당 없음/); assert.match(single, /한 분할 모두 체결 시/);
 });
 test('일부 분할 미체결 ① 1차만 체결 후 TP1: 2·3차는 함께 취소(+) · 평균·손실 재계산 · 남은 지정가 안내 · 체결 안 된 단계는 이후 체결되지 않는다(LONG)', () => {
   const s = live(stgPlan(LONGIN({ zone: { lo: 1980, hi: 1990 }, level: 1996 }))), bars = [bar(0, 2010, 2012, 1999.5, 2005), bar(1, 2005, 2048, 2003, 2046), bar(2, 2046, 2047, 2030, 2040)];
@@ -118,4 +118,14 @@ test('무작위 시장(LONG/SHORT 각 300개): 단계 가격은 항상 규칙을
     for (const st of p.stages) { assert.ok((prev - st.price) * s > 0, 'depth order'); assert.ok(st.depthR >= STG.s2[0] - 1e-9 && st.depthR <= STG.s3Max + 1e-9); assert.ok((st.price - inp.stop) * s >= STG.stopRoomR * 30 - 1e-6); assert.ok(st.why.length >= 1 && st.score >= STG.minScore); prev = st.price; }
     const r = sgyBuild(fe(dir === 'LONG' ? {} : { dir, sid: 'SG-ETH-S-abc123', stop: 2030 }), { now: CLOSE + 5 * 60000, stage: p }); if (r.ok) { const plan = r.s.x.plan; assert.ok(plan.worstLoss <= plan.riskBudget * 1.000001); assert.ok(sgyScenarios(plan).every(k => k.loss <= plan.riskBudget * 1.000001)); }
   }
+});
+test('제외된 분할은 Telegram 에 이유와 함께 명시: 구조 가격 없음 · 추세 때문에 제한 · 3차만 없음 · 소액으로 단계 축소', () => {
+  const none = sgyNewMessage(live(stgPlan(LONGIN({ bars1h: mkBars({ start: 1900 }) }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 });
+  assert.match(none, /2차 진입: 설정하지 않음\(제외\) — 2차로 쓸 만한 구조 가격\(지지·저항·스윙\)이 눌림 구간에 없음/); assert.match(none, /3차 진입: 설정하지 않음\(제외\) — 2차로 쓸 만한 구조 가격|3차 진입: 설정하지 않음\(제외\)/);
+  const h4 = sgyNewMessage(live(stgPlan(LONGIN({ zone: { lo: 1980, hi: 1990 }, bars4h: mkBars({ step: 4 * H, start: 2300, drift: -0.001 }) }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 });
+  assert.match(h4, /2차 진입: 설정하지 않음\(제외\) — 4시간 추세가 하락 — 롱 추가 진입\(물타기\) 금지/);
+  const two = sgyNewMessage(live(stgPlan(LONGIN({ zone: { lo: 1993.5, hi: 1990 } }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 }); assert.match(two, /3차 진입: 설정하지 않음\(제외\) — 3차로 쓸 만한 구조 가격이 없음 — 2차까지만 분할/); assert.match(two, /2차 진입: [\d.]+ \/ \d+%/);
+  const h1 = sgyNewMessage(live(stgPlan(LONGIN({ zone: { lo: 1980, hi: 1990 }, bars1h: mkBars({ start: 2100, drift: -0.001 }) }))), { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 }); assert.match(h1, /3차 진입: 설정하지 않음\(제외\) — 1시간 추세가 하락 — 추가 진입은 2차까지만/);
+  const info = { source: 'structure', stages: [{ n: 2, price: 1990.9, depthR: 0.3, score: 3, why: ['x'] }, { n: 3, price: 1980.9, depthR: 0.6, score: 3, why: ['y'] }], notes: [], trends: null, atr: 8, requested: 2 }, s3 = live(stgPlan(LONGIN({ zone: { lo: 1980, hi: 1990 } })));
+  const degraded = { ...s3, x: { ...s3.x, stageInfo: info, plan: { ...s3.x.plan, stagesCount: 2, stages: s3.x.plan.stages.slice(0, 2) } } }; assert.match(sgyNewMessage(degraded, { price: 2001, priceAt: CLOSE, now: CLOSE + 5 * 60000 }), /3차 진입: 설정하지 않음\(제외\) — 구조 가격은 있으나 계획 수량이 최소 주문 단위·증거금 한도에 못 미쳐 제외/);
 });

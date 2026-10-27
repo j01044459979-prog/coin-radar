@@ -2872,7 +2872,10 @@ function sgyStageLines(s, now) {
     lines.push(`   근거: ${why.join(' · ')}${st.n > 1 && info.stages[st.n - 2] ? ` (1차 대비 −${info.stages[st.n - 2].depthR}R)` : ''}`);
     lines.push(st.n === 1 ? `   조건: ${side} 지정가 ${F(st.price)} · 유효 ~${sgyHm(x.validUntil)} KST` : `   조건: 1차 체결 뒤 ${side} 지정가 ${F(st.price)} · 직전 15분 종가 ${structLine} · 유효 ~${sgyHm(addUntil)} KST`);
   }
-  for (let n = plan.stagesCount + 1; n <= 3; n++) lines.push(`${n}차 진입: 설정하지 않음 — ${n === 2 ? (info.notes.find(t => /2차|추가 진입|4시간|1차 단독/.test(t)) || '타당한 구조 가격 없음') : (info.notes.find(t => /3차|2차까지/.test(t)) || '타당한 구조 가격 없음')}`);
+  for (let n = plan.stagesCount + 1; n <= 3; n++) {                                                   // 제외된 분할과 그 이유를 명확히 표시
+    const found = (info.requested || 0) + 1 >= n, why = found ? '구조 가격은 있으나 계획 수량이 최소 주문 단위·증거금 한도에 못 미쳐 제외(소액 계좌 한계)' : (n === 2 ? (info.notes.find(t => /2차|추가 진입|4시간|1차 단독/.test(t)) || '타당한 구조 가격 없음') : (info.notes.find(t => /3차|2차까지/.test(t)) || '타당한 구조 가격 없음'));
+    lines.push(`${n}차 진입: 설정하지 않음(제외) — ${why}`);
+  }
   return lines;
 }
 function sgyNewMessage(s, { price, priceAt, source, now }) {
@@ -3912,7 +3915,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '3e97db65f99b';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'b88a8e41b246';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
