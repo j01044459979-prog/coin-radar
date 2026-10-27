@@ -16,8 +16,8 @@ function rich300TgDiagState_() {
   try { paired = !!RICH300_ENGINE.tgPairedUser(rich300TgEnv_()); } catch (err) { paired = false; }
   try { pairingActive = !paired && rich300TgEnv_().kv.get('pair') !== null; } catch (err) { pairingActive = false; }
   try { var l = JSON.parse(props.getProperty('tg:last') || 'null'); if (l) lastPoll = { ageMin: Math.round((Date.now() - l.at) / 60000), status: l.r && l.r.status }; } catch (err) { lastPoll = null; }
-  var t = rich300TgTestRead_();
-  return { env: props.getProperty('RICH300_ENV') || null, tokenSet: !!props.getProperty('RICH300_TG_TOKEN'), prodApproved: props.getProperty('RICH300_PROD_APPROVED') === 'yes', testAllow: props.getProperty('RICH300_TG_TEST_OK') === 'yes',
+  var t = rich300TgTestRead_(), tl = null; try { var r = JSON.parse(props.getProperty('tgdiag:tokenlast') || 'null'); if (r) tl = { ageMin: Math.round((Date.now() - r.at) / 60000), code: r.code, d: r.d }; } catch (err) { tl = null; }
+  return { env: props.getProperty('RICH300_ENV') || null, tokenLast: tl, tokenSet: !!props.getProperty('RICH300_TG_TOKEN'), prodApproved: props.getProperty('RICH300_PROD_APPROVED') === 'yes', testAllow: props.getProperty('RICH300_TG_TEST_OK') === 'yes',
     gateSend: rich300TgGateFor_('sendMessage', ''), gateTestSend: rich300TgGateFor_('sendMessage', 'test-send'), gateRead: rich300TgGateFor_('getMe', ''), gatePair: rich300TgGateFor_('getUpdates', 'pair-poll'), paired: paired, pairingActive: pairingActive,
     pollTriggers: ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300TgPoll'; }).length, lastPoll: lastPoll, test: t ? { state: t.state, code: t.code || null, at: t.at, tries: t.tries || 0 } : null };
 }
@@ -63,21 +63,36 @@ function rich300TgTestAck(received) {
   rich300TgTestWrite_({ state: received ? 'acked' : 'unacked', at: Date.now(), tries: t.tries || 1 }); return { ok: true, code: received ? 'acked' : 'unacked' };
 }
 
-/** 토큰 등록(소유자 전용, 토큰이 없을 때만). 값은 반환·로그·화면에 쓰지 않는다. 형식 확인 후 저장 → 가드가 허용하면 getMe 로 확인하고, 토큰이 거절되면 저장을 취소한다. */
+/**
+ * 토큰 등록(소유자 전용, 토큰이 없을 때만). 값은 반환·로그·화면에 쓰지 않는다.
+ *  · 붙여 넣은 글에서 `숫자:영문숫자_-` 형태의 토큰만 뽑아 쓴다(앞뒤 설명 문구·따옴표·"bot" 접두·보이지 않는 문자·줄바꿈이 있어도 됨).
+ *  · 저장 자체는 어떤 가드(운영 승인·테스트 허용)에도 막히지 않는다. 가드는 저장 *후* getMe 확인 호출만 막는다.
+ *  · 저장 후 다시 읽어 길이를 비교하고, 모든 시도의 결과 코드와 입력의 *구조 정보*(길이·콜론 유무·자릿수 — 값 아님)를 tgdiag:tokenlast 에 남겨 화면에 보여 준다.
+ *  · 실패 코드: forbidden(소유자 아님) · busy/lock-error · already-set · bad-format(+detail) · storage-error · storage-verify-failed · token-rejected(getMe 거절 → 저장 취소)
+ */
+function rich300TgTokenShape_(raw) {
+  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(\d{6,12}):([A-Za-z0-9_-]{30,80})/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
+  return { token: m ? m[1] + ':' + m[2] : null, detail: { len: text.length, hasColon: i >= 0, idDigits: before, secretLen: after } };
+}
+function rich300TgTokenLog_(code, detail) { try { PropertiesService.getScriptProperties().setProperty('tgdiag:tokenlast', JSON.stringify({ at: Date.now(), code: code, d: detail || null })); } catch (err) { /* 기록 실패는 무시 */ } }
 function rich300TgSetToken(token) {
-  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
-  var props = PropertiesService.getScriptProperties(), lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  var out = function (ok, code, detail) { rich300TgTokenLog_(code, detail); return { ok: ok, code: code, detail: detail || null }; };
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden', detail: null };
+  var props = PropertiesService.getScriptProperties(), lock, got = false;
+  try { lock = LockService.getScriptLock(); got = lock.tryLock(5000); } catch (err) { return out(false, 'lock-error'); }
+  if (!got) return out(false, 'busy');
   try {
-    var t = String(token === null || token === undefined ? '' : token).trim();
-    if (props.getProperty('RICH300_TG_TOKEN')) return { ok: false, code: 'already-set' };
-    if (!/^\d{6,12}:[A-Za-z0-9_-]{30,60}$/.test(t)) return { ok: false, code: 'bad-format' };
-    props.setProperty('RICH300_TG_TOKEN', t); t = null;
-    if (rich300TgGateFor_('getMe', '')) return { ok: true, code: 'saved-unverified' };       // 가드가 getMe 를 막고 있으면 저장만(허용 후 읽기 점검에서 확인)
+    var sh = rich300TgTokenShape_(token), t = sh.token;
+    if (props.getProperty('RICH300_TG_TOKEN')) return out(false, 'already-set');
+    if (!t) return out(false, 'bad-format', sh.detail);
+    try { props.setProperty('RICH300_TG_TOKEN', t); if (String(props.getProperty('RICH300_TG_TOKEN') || '').length !== t.length) { props.deleteProperty('RICH300_TG_TOKEN'); return out(false, 'storage-verify-failed'); } } catch (err) { return out(false, 'storage-error'); }
+    t = null;
+    if (rich300TgGateFor_('getMe', '')) return out(true, 'saved-unverified');       // 가드가 getMe 를 막고 있으면 저장만(허용 후 읽기 점검에서 확인)
     var me = RICH300_ENGINE.tgCall(rich300TgEnv_(), 'getMe', {});
-    if (!me.ok && me.code === 'auth') { props.deleteProperty('RICH300_TG_TOKEN'); return { ok: false, code: 'token-rejected' }; }
-    return { ok: true, code: me.ok ? 'saved-verified' : 'saved-unverified' };
-  } catch (err) { return { ok: false, code: 'exception' }; }
-  finally { lock.releaseLock(); }
+    if (!me.ok && me.code === 'auth') { props.deleteProperty('RICH300_TG_TOKEN'); return out(false, 'token-rejected'); }
+    return out(true, me.ok ? 'saved-verified' : 'saved-unverified');
+  } catch (err) { return out(false, 'exception'); }
+  finally { try { lock.releaseLock(); } catch (err) { /* 이미 풀림 */ } }
 }
 /** 테스트 전송 허용 켜기/끄기(RICH300_TG_TEST_OK). 운영 승인(RICH300_PROD_APPROVED)은 이 화면에서 절대 바꾸지 않는다. 켤 때는 확인 문구가 필요하다. */
 function rich300TgSetTestAllow(on, phrase) {

@@ -871,17 +871,25 @@ function shellRenderTgDiag({ d, check = null, nonce = null, pairCode = null, app
   if (check) body += `<section class="card"><div class="k">Telegram 읽기 점검 (getMe·getWebhookInfo 두 호출만 · 메시지 없음)</div><ul class="warn" style="list-style:none;padding:0">${(check.items || []).map(li).join('')}</ul></section>`;
   const canTest = !!nonce && !d.gateTestSend && d.paired && d.tokenSet && (!test || test.state === 'failed' || test.state === 'unacked'), waitingAck = !!test && (test.state === 'sent' || test.state === 'pending');
   const step = (n, title, inner) => `<div class="day"><div class="row"><strong>${n}. ${dashEsc(title)}</strong></div>${inner}</div>`;
+  const TL = { 'saved-verified': '저장됨(Telegram 확인 성공)', 'saved-unverified': '저장됨(확인 호출은 하지 않았거나 실패)', 'bad-format': '형식이 맞지 않아 저장하지 않음', 'forbidden': '소유자 확인 실패', 'busy': '다른 작업 중이라 저장하지 않음', 'lock-error': '잠금 오류', 'already-set': '이미 저장돼 있어 저장하지 않음', 'storage-error': '속성 저장소 오류', 'storage-verify-failed': '저장 후 확인 실패', 'token-rejected': 'Telegram 이 토큰을 거부해 삭제함' };
+  const tl = d.tokenLast, dt = tl && tl.d ? ` (길이 ${tl.d.len}, 콜론 ${tl.d.hasColon ? '있음' : '없음'}, 앞 숫자 ${tl.d.idDigits}자, 뒤 문자 ${tl.d.secretLen}자)` : '';
+  const tokLast = tl ? `<div class="sub">마지막 토큰 저장 시도: ${dashEsc(String(tl.ageMin))}분 전 · ${dashEsc(TL[tl.code] || String(tl.code))}${dashEsc(dt)} — 값은 기록하지 않습니다.</div>` : '';
   let steps = '';
-  steps += step(1, '봇 토큰 등록', d.tokenSet ? '<div class="sub">완료 (값은 표시하지 않습니다)</div>' : '<div class="sub">BotFather 의 /mybots → 봇 선택 → API Token 값을 붙여 넣으세요. 화면에 다시 표시되지 않고 Script Properties 에만 저장됩니다. 채팅·URL·로그에 붙여 넣지 마세요.</div><input id="tok" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123456789:AA…"><button id="tokBtn" class="cta" type="button">토큰 저장</button>');
+  steps += step(1, '봇 토큰 등록', d.tokenSet ? '<div class="sub"><strong>토큰 있음</strong> — 완료 (값은 표시하지 않습니다)</div>' + tokLast : '<div class="sub"><strong>토큰 없음</strong>. BotFather 의 /mybots → 봇 선택 → API Token 값을 붙여 넣으세요. 화면에 다시 표시되지 않고 Script Properties 에만 저장됩니다. 채팅·URL·로그에 붙여 넣지 마세요.</div><input id="tok" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123456789:AA…"><button id="tokBtn" class="cta" type="button">토큰 저장</button><div id="tokMsg" class="sub" role="status" aria-live="polite"></div>' + tokLast);
   steps += step(2, '테스트 전송 허용 (운영 승인과 별개)', d.testAllow ? '<div class="sub">허용됨.</div><button id="allowOff" class="cta" type="button">허용 해제</button>' : (d.tokenSet ? '<div class="sub">테스트 목적의 getMe·페어링 확인·테스트 메시지 1건만 허용합니다. 감시·폴링·추천 알림은 계속 막힙니다. 아래 칸에 <strong>테스트 전송 허용</strong> 이라고 입력하세요.</div><input id="phrase" autocomplete="off" placeholder="테스트 전송 허용"><button id="allowOn" class="cta" type="button">허용</button>' : '<div class="sub">먼저 토큰을 등록하세요.</div>'));
   steps += step(3, '연결 읽기 점검', checkUrlBlock(d, selfUrl));
   steps += step(4, '소유자 Telegram 계정 페어링', d.paired ? '<div class="sub">완료.</div>' : (d.tokenSet && d.testAllow ? `<div class="sub">① 코드를 만들고 ② Telegram 에서 이 봇에게 <code>/start 코드</code> 를 보낸 뒤(10분 이내, 개인 대화) ③ 확인을 누르세요. 확인은 1회 조회이며 메시지를 보내지 않습니다.</div><button id="pairStart" class="cta" type="button">코드 만들기</button> <button id="pairCheck" class="cta" type="button">페어링 확인</button>${pairCode ? `<div class="v">${dashEsc(pairCode)}</div>` : ''}<div id="codeBox" class="v"></div>` : '<div class="sub">토큰 등록과 테스트 전송 허용이 필요합니다.</div>'));
   steps += step(5, '테스트 메시지 1건', canTest ? `<div class="sub">[RICH300 TEST] 메시지를 <strong>딱 1건</strong> 보냅니다. 버튼은 한 번만 눌러 주세요(연타해도 서버가 한 번만 보냅니다).</div><button id="sendTest" class="cta" type="button">테스트 메시지 1건 보내기</button>` : (waitingAck ? '<div class="sub">전송했습니다. Telegram 에서 [RICH300 TEST] 를 확인하세요. 이 화면은 다시 보내지 않습니다.</div>' : `<div class="sub">${d.gateTestSend ? '테스트 전송 허용이 필요합니다.' : !d.paired ? '페어링이 필요합니다.' : test && test.state === 'acked' ? '완료.' : '대기 중.'}</div>`));
   steps += step(6, '수신 확인', waitingAck ? '<div class="sub">메시지를 받으셨나요?</div><button id="ackYes" class="cta" type="button">받았음</button> <button id="ackNo" class="cta" type="button">못 받음</button>' : `<div class="sub">${test && test.state === 'acked' ? '수신 확인됨.' : '전송 후에 표시됩니다.'}</div>`);
-  const script = `<script>(function(){var m=document.getElementById('msg');function say(t){m.textContent=t}function $(i){return document.getElementById(i)}
-var call=function(fn,args,ok){say('처리 중…');var r=google.script.run.withSuccessHandler(function(x){ok(x||{})}).withFailureHandler(function(){say('연결 오류 — 결과가 불확실합니다. 새로고침해서 상태를 확인하세요(자동 재시도 없음).')});r[fn].apply(r,args)};
-var done=function(t){say(t+' 아래 새로고침을 눌러 상태를 확인하세요.');var a=$('reload');if(a)a.hidden=false};
-if($('tokBtn'))$('tokBtn').onclick=function(){var v=$('tok').value;$('tok').value='';$('tokBtn').disabled=true;call('rich300TgSetToken',[v],function(r){done(r.ok?'토큰을 저장했습니다.':'저장하지 않음: '+(r.code||'error'))})};
+  const script = `<script>(function(){var cur=null;function $(i){return document.getElementById(i)}
+var say=function(t,id){var e=$(id||'msg')||$('msg');if(e){e.textContent=t;try{e.scrollIntoView({block:'center'})}catch(x){}}};
+var call=function(fn,args,ok,id,fail){say('처리 중…',id);var t=setTimeout(function(){say('응답이 늦습니다(30초). 결과가 불확실하면 새로고침해서 상태를 확인하세요.',id)},30000);
+if(!(window.google&&google.script&&google.script.run)){clearTimeout(t);say('이 화면에서 서버 연결(google.script.run)을 쓸 수 없습니다. 앱 주소(/exec)를 브라우저 주소창에 직접 열어 주세요.',id);if(fail)fail();return}
+var r=google.script.run.withSuccessHandler(function(x){clearTimeout(t);ok(x||{})}).withFailureHandler(function(e){clearTimeout(t);var m='';try{m=String(e&&e.message||e||'').replace(/\\d{6,12}:[A-Za-z0-9_-]{20,}/g,'[가림]').slice(0,120)}catch(z){}say('서버 호출 실패'+(m?': '+m:'')+' — 결과가 불확실합니다. 새로고침해서 상태를 확인하세요(자동 재시도 없음).',id);if(fail)fail()});r[fn].apply(r,args)};
+var done=function(t,id){say(t+' 아래 새로고침을 눌러 상태를 확인하세요.',id);var a=$('reload');if(a)a.hidden=false};
+var TM={'bad-format':'형식이 맞지 않습니다. BotFather 의 API Token(숫자:문자열)을 통째로 붙여 넣으세요.','forbidden':'소유자 계정으로 열려 있지 않아 저장할 수 없습니다(구글 로그인 계정 확인).','busy':'다른 작업이 진행 중입니다. 잠시 뒤 다시 누르세요.','lock-error':'잠금을 얻지 못했습니다. 잠시 뒤 다시 누르세요.','already-set':'이미 토큰이 저장돼 있습니다. 새로고침하세요.','storage-error':'속성 저장소 쓰기 오류(권한 확인 필요).','storage-verify-failed':'저장 후 확인에 실패했습니다.','token-rejected':'Telegram 이 이 토큰을 거부했습니다(저장하지 않음). 토큰을 다시 복사하세요.'};
+if($('tokBtn'))$('tokBtn').onclick=function(){var v=$('tok').value;if(!v||!v.replace(/\\s/g,'')){say('토큰 칸이 비어 있습니다. 붙여 넣은 뒤 다시 누르세요.','tokMsg');return}
+$('tokBtn').disabled=true;call('rich300TgSetToken',[v],function(r){if(r.ok){$('tok').value='';var tb=$('tokBtn');tb.style.display='none';$('tok').style.display='none';done('토큰 있음 — 저장했습니다'+(r.code==='saved-verified'?'(Telegram 확인 성공).':'(확인 호출은 하지 않았습니다).'),'tokMsg')}else{$('tokBtn').disabled=false;var dd=r.detail?' (길이 '+r.detail.len+', 콜론 '+(r.detail.hasColon?'있음':'없음')+', 앞 숫자 '+r.detail.idDigits+'자, 뒤 문자 '+r.detail.secretLen+'자)':'';say('저장하지 않음['+(r.code||'error')+']: '+(TM[r.code]||'원인을 알 수 없습니다.')+dd,'tokMsg')}},'tokMsg',function(){$('tokBtn').disabled=false})};
 if($('allowOn'))$('allowOn').onclick=function(){var v=$('phrase').value;$('phrase').value='';call('rich300TgSetTestAllow',[true,v],function(r){done(r.ok?'테스트 전송 허용을 켰습니다.':'변경하지 않음: '+(r.code||'error'))})};
 if($('allowOff'))$('allowOff').onclick=function(){call('rich300TgSetTestAllow',[false,''],function(r){done('테스트 전송 허용을 껐습니다.')})};
 if($('pairStart'))$('pairStart').onclick=function(){call('rich300TgPairStart',[],function(r){if(r.ok){$('codeBox').textContent=r.pairCode;say('이 코드를 Telegram 의 봇 대화에 /start '+r.pairCode+' 로 보내고(10분 이내) “페어링 확인”을 누르세요.')}else say('만들지 않음: '+(r.code||'error'))})};
@@ -3010,7 +3018,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '94ba6f14e5c1';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'a0d860a846a5';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -3670,8 +3678,8 @@ function rich300TgDiagState_() {
   try { paired = !!RICH300_ENGINE.tgPairedUser(rich300TgEnv_()); } catch (err) { paired = false; }
   try { pairingActive = !paired && rich300TgEnv_().kv.get('pair') !== null; } catch (err) { pairingActive = false; }
   try { var l = JSON.parse(props.getProperty('tg:last') || 'null'); if (l) lastPoll = { ageMin: Math.round((Date.now() - l.at) / 60000), status: l.r && l.r.status }; } catch (err) { lastPoll = null; }
-  var t = rich300TgTestRead_();
-  return { env: props.getProperty('RICH300_ENV') || null, tokenSet: !!props.getProperty('RICH300_TG_TOKEN'), prodApproved: props.getProperty('RICH300_PROD_APPROVED') === 'yes', testAllow: props.getProperty('RICH300_TG_TEST_OK') === 'yes',
+  var t = rich300TgTestRead_(), tl = null; try { var r = JSON.parse(props.getProperty('tgdiag:tokenlast') || 'null'); if (r) tl = { ageMin: Math.round((Date.now() - r.at) / 60000), code: r.code, d: r.d }; } catch (err) { tl = null; }
+  return { env: props.getProperty('RICH300_ENV') || null, tokenLast: tl, tokenSet: !!props.getProperty('RICH300_TG_TOKEN'), prodApproved: props.getProperty('RICH300_PROD_APPROVED') === 'yes', testAllow: props.getProperty('RICH300_TG_TEST_OK') === 'yes',
     gateSend: rich300TgGateFor_('sendMessage', ''), gateTestSend: rich300TgGateFor_('sendMessage', 'test-send'), gateRead: rich300TgGateFor_('getMe', ''), gatePair: rich300TgGateFor_('getUpdates', 'pair-poll'), paired: paired, pairingActive: pairingActive,
     pollTriggers: ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300TgPoll'; }).length, lastPoll: lastPoll, test: t ? { state: t.state, code: t.code || null, at: t.at, tries: t.tries || 0 } : null };
 }
@@ -3717,21 +3725,36 @@ function rich300TgTestAck(received) {
   rich300TgTestWrite_({ state: received ? 'acked' : 'unacked', at: Date.now(), tries: t.tries || 1 }); return { ok: true, code: received ? 'acked' : 'unacked' };
 }
 
-/** 토큰 등록(소유자 전용, 토큰이 없을 때만). 값은 반환·로그·화면에 쓰지 않는다. 형식 확인 후 저장 → 가드가 허용하면 getMe 로 확인하고, 토큰이 거절되면 저장을 취소한다. */
+/**
+ * 토큰 등록(소유자 전용, 토큰이 없을 때만). 값은 반환·로그·화면에 쓰지 않는다.
+ *  · 붙여 넣은 글에서 `숫자:영문숫자_-` 형태의 토큰만 뽑아 쓴다(앞뒤 설명 문구·따옴표·"bot" 접두·보이지 않는 문자·줄바꿈이 있어도 됨).
+ *  · 저장 자체는 어떤 가드(운영 승인·테스트 허용)에도 막히지 않는다. 가드는 저장 *후* getMe 확인 호출만 막는다.
+ *  · 저장 후 다시 읽어 길이를 비교하고, 모든 시도의 결과 코드와 입력의 *구조 정보*(길이·콜론 유무·자릿수 — 값 아님)를 tgdiag:tokenlast 에 남겨 화면에 보여 준다.
+ *  · 실패 코드: forbidden(소유자 아님) · busy/lock-error · already-set · bad-format(+detail) · storage-error · storage-verify-failed · token-rejected(getMe 거절 → 저장 취소)
+ */
+function rich300TgTokenShape_(raw) {
+  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(\d{6,12}):([A-Za-z0-9_-]{30,80})/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
+  return { token: m ? m[1] + ':' + m[2] : null, detail: { len: text.length, hasColon: i >= 0, idDigits: before, secretLen: after } };
+}
+function rich300TgTokenLog_(code, detail) { try { PropertiesService.getScriptProperties().setProperty('tgdiag:tokenlast', JSON.stringify({ at: Date.now(), code: code, d: detail || null })); } catch (err) { /* 기록 실패는 무시 */ } }
 function rich300TgSetToken(token) {
-  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
-  var props = PropertiesService.getScriptProperties(), lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  var out = function (ok, code, detail) { rich300TgTokenLog_(code, detail); return { ok: ok, code: code, detail: detail || null }; };
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden', detail: null };
+  var props = PropertiesService.getScriptProperties(), lock, got = false;
+  try { lock = LockService.getScriptLock(); got = lock.tryLock(5000); } catch (err) { return out(false, 'lock-error'); }
+  if (!got) return out(false, 'busy');
   try {
-    var t = String(token === null || token === undefined ? '' : token).trim();
-    if (props.getProperty('RICH300_TG_TOKEN')) return { ok: false, code: 'already-set' };
-    if (!/^\d{6,12}:[A-Za-z0-9_-]{30,60}$/.test(t)) return { ok: false, code: 'bad-format' };
-    props.setProperty('RICH300_TG_TOKEN', t); t = null;
-    if (rich300TgGateFor_('getMe', '')) return { ok: true, code: 'saved-unverified' };       // 가드가 getMe 를 막고 있으면 저장만(허용 후 읽기 점검에서 확인)
+    var sh = rich300TgTokenShape_(token), t = sh.token;
+    if (props.getProperty('RICH300_TG_TOKEN')) return out(false, 'already-set');
+    if (!t) return out(false, 'bad-format', sh.detail);
+    try { props.setProperty('RICH300_TG_TOKEN', t); if (String(props.getProperty('RICH300_TG_TOKEN') || '').length !== t.length) { props.deleteProperty('RICH300_TG_TOKEN'); return out(false, 'storage-verify-failed'); } } catch (err) { return out(false, 'storage-error'); }
+    t = null;
+    if (rich300TgGateFor_('getMe', '')) return out(true, 'saved-unverified');       // 가드가 getMe 를 막고 있으면 저장만(허용 후 읽기 점검에서 확인)
     var me = RICH300_ENGINE.tgCall(rich300TgEnv_(), 'getMe', {});
-    if (!me.ok && me.code === 'auth') { props.deleteProperty('RICH300_TG_TOKEN'); return { ok: false, code: 'token-rejected' }; }
-    return { ok: true, code: me.ok ? 'saved-verified' : 'saved-unverified' };
-  } catch (err) { return { ok: false, code: 'exception' }; }
-  finally { lock.releaseLock(); }
+    if (!me.ok && me.code === 'auth') { props.deleteProperty('RICH300_TG_TOKEN'); return out(false, 'token-rejected'); }
+    return out(true, me.ok ? 'saved-verified' : 'saved-unverified');
+  } catch (err) { return out(false, 'exception'); }
+  finally { try { lock.releaseLock(); } catch (err) { /* 이미 풀림 */ } }
 }
 /** 테스트 전송 허용 켜기/끄기(RICH300_TG_TEST_OK). 운영 승인(RICH300_PROD_APPROVED)은 이 화면에서 절대 바꾸지 않는다. 켤 때는 확인 문구가 필요하다. */
 function rich300TgSetTestAllow(on, phrase) {

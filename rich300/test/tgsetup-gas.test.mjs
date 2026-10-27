@@ -13,14 +13,14 @@ const secretFree = (g, ...texts) => texts.every(t => !String(t).includes(TOKEN) 
 
 test('토큰 등록: 형식 검사 → 저장(값 비노출) → 이미 있으면 거부 · 가드가 getMe 를 막으면 텔레그램 호출 0', () => {
   const g = world(); assert.match(page(g), /id="tokBtn"/); assert.match(strip(page(g)), /봇 토큰 속성: 없음/);
-  assert.deepEqual(j(g.ctx.rich300TgSetToken('nope')), { ok: false, code: 'bad-format' }); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), '');
-  const r = j(g.ctx.rich300TgSetToken(`  ${TOKEN}  `)); assert.deepEqual(r, { ok: true, code: 'saved-unverified' }); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), TOKEN); assert.equal(g.tele.calls.length, 0);
-  assert.deepEqual(j(g.ctx.rich300TgSetToken(TOKEN)), { ok: false, code: 'already-set' });
+  { const b = j(g.ctx.rich300TgSetToken('nope')); assert.equal(b.ok, false); assert.equal(b.code, 'bad-format'); assert.deepEqual(b.detail, { len: 4, hasColon: false, idDigits: 0, secretLen: 0 }); } assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), '');
+  const r = j(g.ctx.rich300TgSetToken(`  ${TOKEN}  `)); assert.deepEqual(r, { ok: true, code: 'saved-unverified', detail: null }); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), TOKEN); assert.equal(g.tele.calls.length, 0);
+  assert.deepEqual(j(g.ctx.rich300TgSetToken(TOKEN)), { ok: false, code: 'already-set', detail: null });
   const html = page(g); assert.ok(!/id="tokBtn"/.test(html)); assert.match(strip(html), /봇 토큰 속성: 있음/); assert.ok(secretFree(g, html, JSON.stringify(r), JSON.stringify(g.spy.logs)));
 });
 test('토큰이 거절되면(getMe auth) 저장을 취소한다', () => {
   const g = world(); g.P.setProperty('RICH300_TG_TEST_OK', 'yes'); g.tele.fail('getMe', [{ status: 401, body: { ok: false, description: 'Unauthorized' } }]);
-  assert.deepEqual(j(g.ctx.rich300TgSetToken(TOKEN)), { ok: false, code: 'token-rejected' }); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), null);
+  assert.deepEqual(j(g.ctx.rich300TgSetToken(TOKEN)), { ok: false, code: 'token-rejected', detail: null }); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), null);
 });
 test('테스트 전송 허용: 확인 문구가 있어야 켜지고, 운영 승인(PROD_APPROVED)은 이 화면이 절대 바꾸지 않는다 · 해제 가능', () => {
   const g = world(); assert.deepEqual(j(g.ctx.rich300TgSetTestAllow(true, '테스트 전송 허용')), { ok: false, code: 'no-token' }); g.ctx.rich300TgSetToken(TOKEN);
@@ -58,6 +58,23 @@ test('테스트 허용만으로 [RICH300 TEST] 1건: 보낸 뒤에도 일반 전
 test('허용을 끄면 다시 막힌다 · 소유자가 아니면 모든 설정 함수가 forbidden(값 변화 없음)', () => {
   const g = world(); g.ctx.rich300TgSetToken(TOKEN); g.ctx.rich300TgSetTestAllow(true, '테스트 전송 허용'); g.ctx.rich300TgSetTestAllow(false, '');
   assert.match(g.ctx.rich300TgPairCheck().code, /^blocked:|^forbidden$/); assert.equal(g.ctx.rich300TgPairStart().code, 'not-allowed');
-  const o = world({ email: 'other@example.com' }); for (const [fn, args] of [['rich300TgSetToken', [TOKEN]], ['rich300TgSetTestAllow', [true, '테스트 전송 허용']], ['rich300TgPairStart', []], ['rich300TgPairCheck', []]]) assert.deepEqual(j(o.ctx[fn](...args)), { ok: false, code: 'forbidden' }, fn);
+  const o = world({ email: 'other@example.com' }); for (const [fn, args] of [['rich300TgSetToken', [TOKEN]], ['rich300TgSetTestAllow', [true, '테스트 전송 허용']], ['rich300TgPairStart', []], ['rich300TgPairCheck', []]]) assert.deepEqual({ ok: j(o.ctx[fn](...args)).ok, code: j(o.ctx[fn](...args)).code }, { ok: false, code: 'forbidden' }, fn);
   assert.equal(o.P.getProperty('RICH300_TG_TOKEN'), ''); assert.equal(o.P.getProperty('RICH300_TG_TEST_OK'), null); assert.equal(o.tele.calls.length, 0);
+});
+
+test('토큰 붙여넣기 변형(줄바꿈·bot 접두·앞뒤 글·제로폭 문자)도 저장되고, 응답·화면·로그에 값이 없다', () => {
+  for (const wrap of [t => `\n${t}\n`, t => `bot${t}`, t => `토큰: ${t} (복사)`, t => `\u200B${t}\uFEFF`, t => `\u00A0${t}\u00A0`]) {
+    const g = world(); const r = j(g.ctx.rich300TgSetToken(wrap(TOKEN))); assert.equal(r.ok, true, wrap(TOKEN)); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), TOKEN);
+    const html = page(g); assert.match(strip(html), /토큰 있음/); assert.ok(secretFree(g, html, JSON.stringify(r), JSON.stringify(g.spy.logs), g.P.getProperty('tgdiag:tokenlast')));
+  }
+});
+test('형식 오류 진단: 값 없이 길이·콜론·자릿수만 기록되고 화면에 "마지막 토큰 저장 시도"로 보인다', () => {
+  const g = world(); const bad = '123456789' + 'B'.repeat(30); const r = j(g.ctx.rich300TgSetToken(bad)); assert.equal(r.code, 'bad-format'); assert.equal(r.detail.hasColon, false);
+  const r2 = j(g.ctx.rich300TgSetToken('123456789:short')); assert.equal(r2.detail.hasColon, true); assert.equal(r2.detail.secretLen, 5);
+  const t = strip(page(g)); assert.match(t, /마지막 토큰 저장 시도: \d+분 전 · 형식이 맞지 않아 저장하지 않음 \(길이 15, 콜론 있음, 앞 숫자 9자, 뒤 문자 5자\)/); assert.ok(!t.includes('short'));
+  assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), '');
+});
+test('운영 승인 게이트는 토큰 저장을 막지 않는다(PROD_APPROVED 없이 저장 가능) · 비소유자는 forbidden', () => {
+  const g = world(); assert.ok(!g.P.getProperty('RICH300_PROD_APPROVED')); assert.equal(j(g.ctx.rich300TgSetToken(TOKEN)).ok, true); assert.ok(!g.P.getProperty('RICH300_PROD_APPROVED'));
+  const o = world({ email: 'other@example.com' }); assert.equal(j(o.ctx.rich300TgSetToken(TOKEN)).code, 'forbidden'); assert.equal(o.P.getProperty('RICH300_TG_TOKEN'), '');
 });
