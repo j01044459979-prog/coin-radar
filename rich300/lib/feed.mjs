@@ -45,5 +45,6 @@ export function feedParseEntry(e) {
   if (!(validUntil > closeT && validUntil - closeT <= 3 * 3600000)) return { ok: false, why: 'bad-validity' };
   const score = typeof e.score === 'string' && /^\d{1,3}$/.test(e.score) ? Number(e.score) : null, rr = fdNum(e.rr1);
   const ref = [fdNum(e.ref1), fdNum(e.ref2)], ev = Array.isArray(e.evidence) ? e.evidence.slice(0, 3).map(x => String(x).slice(0, 80)) : [];
-  return { ok: true, kind: 'candidate', sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+  const zlo = fdNum(e.zlo), zhi = fdNum(e.zhi), lvl = fdNum(e.lvl), atr = fdNum(e.atr);
+  return { ok: true, kind: 'candidate', zlo: zlo === null ? undefined : zlo, zhi: zhi === null ? undefined : zhi, lvl: lvl === null ? undefined : lvl, atr: atr === null ? undefined : atr, sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
 }
