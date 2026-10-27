@@ -40,7 +40,7 @@ test('preview: 피드를 읽기 전용으로 가져와 계산만 — 저장·전
   assert.equal(w.g.rows('strategy').length, 0); assert.equal(w.sent().length, 0); assert.equal(w.g.P.getKeys().filter(k => k.startsWith('w:sg:')).length, 0); assert.equal(w.g.P.getProperty('strategy:last'), null);
 });
 test('ON + 운영 승인 + 연결: 새 추천 → 전략 생성 · 신규 전략 메시지 정확히 1건 · 다시 실행해도 중복 없음 · 전략 화면에 표시', () => {
-  const w = world(); w.g.P.setProperty('RICH300_STRATEGY', 'on'); const r = w.at(5); assert.equal(w.g.rows('strategy').length, 1); assert.equal(w.sent().length, 1); assert.match(w.sent()[0], /^\[RICH300 신규 매매 전략\]/);
+  const w = world(); w.g.P.setProperty('RICH300_STRATEGY', 'on'); const r = w.at(5); assert.equal(w.g.rows('strategy').length, 1); assert.equal(w.sent().length, 1); assert.match(w.sent()[0], /^\[RICH300 매매 전략\]/);
   w.at(10); w.at(15); assert.equal(w.sent().length, 1); assert.equal(w.g.rows('strategy').length, 1); assert.equal(w.g.rows('strategy')[0].state, 'WAIT_ENTRY');
   const last = JSON.parse(w.g.P.getProperty('strategy:last')); assert.deepEqual([last.requested, last.feed.ok, last.feed.signed], ['on', true, true]);
   const t = strip(w.g.ctx.doGet({ parameter: { p: 'strat' } }).html); assert.match(t, /진입 대기 전략 \(1\)/); assert.match(t, /ETH/); assert.match(t, /전략 기준 가상 추적/); assert.match(t, /켜짐\(추천 → 자동 추적·알림\)/);
@@ -115,7 +115,7 @@ test('서명 키가 없거나 약하거나 틀리면 피드 거부: 전략 0 · 
 test('서명 오류·되돌림·오래된 피드가 기존 보유 포지션 감시를 방해하지 않는다(위치 감시 알림은 정상)', () => {
   const w = world({ key: false }); w.g.P.setProperty('RICH300_STRATEGY', 'on'); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on');
   w.price = 1968; w.g.ctx.rich300ManualRegister({ formId: 'p1', symbol: 'ETH', dir: 'LONG', entry: '2000', qty: '0.1', leverage: '3', stop: '1970', tp1: '', tp2: '', at: '' }); w.g.tele.sent.length = 0; w.g.cache.evictAll();
-  const out = w.at(5); assert.equal(out.status, 'ok'); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'no-key'); assert.ok(w.sent().some(t => /ETH LONG · 🛑 손절가 이탈/.test(t))); assert.equal(w.sent().filter(t => /신규 매매 전략|실행 불가/.test(t)).length, 0);
+  const out = w.at(5); assert.equal(out.status, 'ok'); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'no-key'); assert.ok(w.sent().some(t => /ETH LONG · 🛑 손절가 이탈/.test(t))); assert.equal(w.sent().filter(t => /^\[RICH300 매매 전략\]|실행 불가/.test(t)).length, 0);
 });
 test('피드 되돌림(replay)·오래됨은 GAS 경로에서도 거부', () => {
   const w = world(); w.g.P.setProperty('RICH300_STRATEGY', 'on'); w.at(5); assert.equal(w.g.rows('strategy').length, 1); const ts0 = Number(w.g.P.getProperty('w:sgfeedts')); assert.ok(ts0 > 0);

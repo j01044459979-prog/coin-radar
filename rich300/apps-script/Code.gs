@@ -2326,9 +2326,9 @@ function watchParseBybitTicker(json) {
 const WATCH_BAR_MS = Object.freeze({ '15m': 900000, '1h': 3600000, '4h': 14400000 });
 function watchMarketUrls(src, symbolId) {
   if (!/^[A-Z0-9]{2,20}USDT$/.test(symbolId)) return null;
-  if (src === 'OKX') { const i = watchOkxInst(symbolId), b = 'https://www.okx.com/api/v5/market'; return { ticker: `${b}/ticker?instId=${i}`, '15m': `${b}/candles?instId=${i}&bar=15m&limit=6`, '1h': `${b}/candles?instId=${i}&bar=1H&limit=100`, '4h': `${b}/candles?instId=${i}&bar=4H&limit=100` }; }
+  if (src === 'OKX') { const i = watchOkxInst(symbolId), b = 'https://www.okx.com/api/v5/market'; return { ticker: `${b}/ticker?instId=${i}`, '15m': `${b}/candles?instId=${i}&bar=15m&limit=60`, '1h': `${b}/candles?instId=${i}&bar=1H&limit=100`, '4h': `${b}/candles?instId=${i}&bar=4H&limit=100` }; }
   const b = 'https://api.bybit.com/v5/market', k = `${b}/kline?category=linear&symbol=${symbolId}`;
-  return { ticker: `${b}/tickers?category=linear&symbol=${symbolId}`, '15m': `${k}&interval=15&limit=6`, '1h': `${k}&interval=60&limit=100`, '4h': `${k}&interval=240&limit=100` };
+  return { ticker: `${b}/tickers?category=linear&symbol=${symbolId}`, '15m': `${k}&interval=15&limit=60`, '1h': `${k}&interval=60&limit=100`, '4h': `${k}&interval=240&limit=100` };
 }
 // 응답(JSON 객체들)을 시세 묶음으로 해석. jsons = { ticker, '15m', '1h', '4h' } (없거나 잘못된 응답은 null)
 function watchParseSource(src, jsons, now) {
@@ -2470,10 +2470,11 @@ function wDeliver(env, state, ev, text, now) {
   if (rec && (rec.st === 'sent' || rec.st === 'pending' || rec.st === 'expired')) return 'skipped';            // 이미 보냈거나(또는 전송 직후 중단된 pending) 만료됨 → 다시 보내지 않는다
   if (rec && rec.st === 'failed' && now < rec.next) return 'skipped';
   const cap = wCapCheck(kv, now); if (!cap.ok && ev.level !== 'critical') return 'capped';      // 손절 관련(critical)은 상한과 무관하게 보낸다
-  state.sent[ev.key] = { at: nullishOr(rec && rec.at, now), st: 'pending', tries: (rec ? rec.tries : 0) + 1, text: nullishOr(rec && rec.text, text.slice(0, 1200)) };
+  state.sent[ev.key] = { at: nullishOr(rec && rec.at, now), st: 'pending', tries: (rec ? rec.tries : 0) + 1, text: nullishOr(rec && rec.text, text.slice(0, 3900)) };
   wSaveState(kv, ev.sid, state);                                                                                 // 보내기 전에 표시 → 중복 실행·중단에도 한 번만
   let r; try { r = env.send(state.sent[ev.key].text); } catch (e_) { r = { ok: false, code: 'exception' }; }
-  if (r && r.ok) { state.sent[ev.key].st = 'sent'; state.sent[ev.key].sentAt = now; cap.commit(); wSaveState(kv, ev.sid, state); return 'sent'; }
+  if (r && r.ok) { state.sent[ev.key].st = 'sent'; state.sent[ev.key].sentAt = now; delete state.sent[ev.key].text;      // 재시도용 본문은 전송이 끝나면 지운다(속성 값 9KB 한도 보호)
+      cap.commit(); wSaveState(kv, ev.sid, state); return 'sent'; }
   const rec2 = state.sent[ev.key], delay = WATCH.retryDelaysMs[rec2.tries - 1];
   if (delay === undefined || now - rec2.at + delay > WATCH.expireMs) { rec2.st = 'expired'; rec2.code = r && r.code; }
   else { rec2.st = 'failed'; rec2.next = now + delay; rec2.code = r && r.code; }
@@ -2599,7 +2600,79 @@ function feedParseEntry(e) {
   if (!(validUntil > closeT && validUntil - closeT <= 3 * 3600000)) return { ok: false, why: 'bad-validity' };
   const score = typeof e.score === 'string' && /^\d{1,3}$/.test(e.score) ? Number(e.score) : null, rr = fdNum(e.rr1);
   const ref = [fdNum(e.ref1), fdNum(e.ref2)], ev = Array.isArray(e.evidence) ? e.evidence.slice(0, 3).map(x => String(x).slice(0, 80)) : [];
-  return { ok: true, kind: 'candidate', sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+  const zlo = fdNum(e.zlo), zhi = fdNum(e.zhi), lvl = fdNum(e.lvl), atr = fdNum(e.atr);
+  return { ok: true, kind: 'candidate', zlo: zlo === null ? undefined : zlo, zhi: zhi === null ? undefined : zhi, lvl: lvl === null ? undefined : lvl, atr: atr === null ? undefined : atr, sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+}
+
+// ── stages.mjs ──
+// 분할 진입 가격 산출(순수 함수): 2·3차 가격을 고정 −0.3R/−0.6R 로 찍지 않고 *시장 구조*에서 찾아 검증한다. 주문이 아니라 계산이다.
+//  · 후보 가격: 1H 지지·저항 구간 경계 · 돌파 기준선 되돌림 · 1H/4H/15분 스윙 저점(고점) · 1H 20EMA. 각 후보에 가중치(4H 3 · 구간 3 · 1H 2 · 돌파선 2 · 15분 1 · EMA 1)를 주고, 가까운 후보(0.08R 이내)는 한 곳으로 합쳐 근거를 모은다.
+//  · 지정가는 지지선 *바로 위*(롱)·저항선 *바로 아래*(숏)에 둔다(ATR 의 10% 또는 0.03R 중 큰 값). 구조 근거 점수가 3 미만이면 그 단계는 만들지 않는다 — 억지로 분할하지 않는다.
+//  · 검증: 1차 가격에서 0.25 ATR(1H) 이상 떨어질 것(잡음 체결 방지) · 단계 간격 ≥ max(0.15R, 0.25 ATR) · 손절선에서 0.2R 이상 위일 것 · 2차는 0.2~0.6R, 3차는 2차+0.15R~0.8R 깊이.
+//  · 추세: 4H 추세가 포지션 반대면 추가 진입 없음, 1H 추세가 반대면 최대 2차까지. 15분 추세는 근거로만 표시한다.
+//  · 모든 이름은 stg 접두사(번들 이름 충돌 방지). 반환 addR 은 scaleplan.mjs 의 params.addR 로 그대로 넘긴다(그 파일은 바꾸지 않는다).
+
+const STG = Object.freeze({ s2: Object.freeze([0.2, 0.6]), s3Max: 0.8, gap3R: 0.15, minGapR: 0.15, minGapAtr: 0.25, minFromE1Atr: 0.25, stopRoomR: 0.2, cluster: 0.08, minScore: 3, bufAtr: 0.1, bufR: 0.03, target2: 0.4, target3: 0.65,
+  pivots1h: 72, pivots4h: 30, pivots15: 48 });
+function stgAtr(bars, n = 14) {
+  if (!Array.isArray(bars) || bars.length < n + 1) return null;
+  const tr = []; for (let i = 1; i < bars.length; i++) tr.push(Math.max(bars[i].h - bars[i].l, Math.abs(bars[i].h - bars[i - 1].c), Math.abs(bars[i].l - bars[i - 1].c)));
+  let a = tr.slice(0, n).reduce((x, y) => x + y, 0) / n; for (let i = n; i < tr.length; i++) a = (a * (n - 1) + tr[i]) / n;
+  return Number.isFinite(a) && a > 0 ? a : null;
+}
+// 확정된 피벗(좌우 k봉보다 높은(낮은) 점). kind 'low' | 'high'. 최근 last 봉 안에서만.
+function stgPivots(bars, kind, k, last) {
+  if (!Array.isArray(bars)) return []; const from = Math.max(k, bars.length - last), out = [];
+  for (let i = from; i < bars.length - k; i++) {
+    let ok = true, v = kind === 'low' ? bars[i].l : bars[i].h;
+    for (let j = 1; j <= k && ok; j++) { const a = kind === 'low' ? bars[i - j].l : bars[i - j].h, b = kind === 'low' ? bars[i + j].l : bars[i + j].h; if (kind === 'low' ? !(v < a && v <= b) : !(v > a && v >= b)) ok = false; }
+    if (ok) out.push({ price: v, t: bars[i].t });
+  }
+  return out;
+}
+const stgTrendKo = t => ({ up: '상승', down: '하락', flat: '횡보', unknown: '확인 불가' }[t && t.state] || '확인 불가');
+// in: { dir, entry, stop, atr1?(없으면 1H 봉으로 계산), zone:{lo,hi}|null, level|null, bars1h, bars4h, bars15m }
+// out: { ok, atr, R, trends:{m15,h1,h4}, stages:[{n, price, depthR, score, why:[…]}] (2·3차만), addR:[…], notes:[…], rejected:[…] }
+function stgPlan(inp) {
+  const L = inp.dir === 'LONG', s = splanSign(inp.dir), E = Number(inp.entry), S = Number(inp.stop), R = (E - S) * s;
+  const out = { ok: false, R, atr: null, trends: {}, stages: [], addR: [], notes: [], rejected: [] };
+  if (!(R > 0) || !(E > 0)) { out.notes.push('손절가가 방향과 맞지 않음'); return out; }
+  const b1 = inp.bars1h || [], b4 = inp.bars4h || [], b15 = inp.bars15m || [];
+  const atr = stgAtr(b1) || (Number(inp.atr1) > 0 ? Number(inp.atr1) : null); out.atr = atr;
+  const tr = { m15: watchTrend(b15), h1: watchTrend(b1), h4: watchTrend(b4) }; out.trends = { m15: stgTrendKo(tr.m15), h1: stgTrendKo(tr.h1), h4: stgTrendKo(tr.h4) };
+  out.ok = true; if (atr === null) { out.notes.push('변동성(ATR) 계산 불가 — 추가 진입 가격을 만들지 않음'); return out; }
+  const against = t => (L ? t.state === 'down' : t.state === 'up');
+  let maxStages = 3;
+  if (against(tr.h4)) { maxStages = 1; out.notes.push(`4시간 추세가 ${out.trends.h4} — ${L ? '롱' : '숏'} 추가 진입(물타기) 금지, 1차 단독`); }
+  else if (against(tr.h1)) { maxStages = 2; out.notes.push(`1시간 추세가 ${out.trends.h1} — 추가 진입은 2차까지만`); }
+  if (maxStages === 1) return out;
+  const depth = p => (E - p) * s / R, cands = [], add = (price, kind, w, label) => { if (Number.isFinite(price) && price > 0) cands.push({ price, kind, w, label }); };
+  const z = inp.zone;
+  if (z && Number.isFinite(z.lo) && Number.isFinite(z.hi)) { add(z.lo, 'zone', 3, `1H ${L ? '지지' : '저항'} 구간 ${L ? '하단' : '하단'} ${'{p}'}`); add(z.hi, 'zone', 3, `1H ${L ? '지지' : '저항'} 구간 ${L ? '상단' : '상단'} ${'{p}'}`); }
+  if (Number.isFinite(inp.level)) add(Number(inp.level), 'level', 2, `15분 돌파 기준선 되돌림 ${'{p}'}`);
+  const kind = L ? 'low' : 'high', nm = L ? '저점' : '고점';
+  for (const p of stgPivots(b1, kind, 2, STG.pivots1h)) add(p.price, 'p1h', 2, `1시간 스윙 ${nm} ${'{p}'}`);
+  for (const p of stgPivots(b4, kind, 1, STG.pivots4h)) add(p.price, 'p4h', 3, `4시간 스윙 ${nm} ${'{p}'}`);
+  for (const p of stgPivots(b15, kind, 2, STG.pivots15)) add(p.price, 'p15', 1, `15분 스윙 ${nm} ${'{p}'}`);
+  if (b1.length >= 25) { const e = watchEma(b1.map(b => b.c), 20); if (e) add(e, 'ema', 1, `1H 20EMA ${'{p}'}`); }
+  const buf = Math.max(STG.bufAtr * atr, STG.bufR * R), place = c => c + s * buf;
+  // 구조 후보를 가까운 것끼리 묶는다(가장 큰 가중치 가격을 대표로, 점수는 합)
+  const groups = []; for (const c of [...cands].sort((a, b) => b.w - a.w || depth(a.price) - depth(b.price))) { const g = groups.find(x => Math.abs(x.rep.price - c.price) <= STG.cluster * R); if (g) { g.score += c.w; g.members.push(c); } else groups.push({ rep: c, score: c.w, members: [c] }); }
+  const usable = g => { const p = place(g.rep.price), d = depth(p); return { g, p, d }; };
+  const valid = (lo, hi, prevP) => groups.map(usable).filter(x => x.d >= lo && x.d <= hi && x.g.score >= STG.minScore && (E - x.p) * s >= STG.minFromE1Atr * atr && (x.p - S) * s >= STG.stopRoomR * R
+    && (prevP === undefined || Math.abs(prevP - x.p) >= Math.max(STG.minGapR * R, STG.minGapAtr * atr)));
+  for (const g of groups.map(usable)) if (g.g.score < STG.minScore && g.d >= STG.s2[0] && g.d <= STG.s3Max) out.rejected.push({ price: g.p, why: '구조 근거 점수 부족' });
+  const fmt = p => Number(p).toFixed(Math.max((String(E).split('.')[1] || '').length, 2));
+  const mk = (x, n) => ({ n, price: x.p, depthR: Number(x.d.toFixed(4)), score: x.g.score, why: x.g.members.sort((a, b) => b.w - a.w).slice(0, 3).map(m => m.label.replace('{p}', fmt(m.price))) });
+  const c2s = valid(STG.s2[0], STG.s2[1]);
+  if (!c2s.length) { out.notes.push('2차로 쓸 만한 구조 가격(지지·저항·스윙)이 눌림 구간에 없음 — 억지로 분할하지 않고 1차 단독'); return out; }
+  // 2·3차를 *함께* 놓을 수 있는 조합을 먼저 찾는다(근거 점수 합 → 목표 깊이(0.4R/0.65R)에 가까운 순). 3차가 없으면 2차 단독 최선안.
+  let best = null;
+  if (maxStages >= 3) for (const c2 of c2s) for (const c3 of valid(c2.d + STG.gap3R, STG.s3Max, c2.p)) { const sc = c2.g.score + c3.g.score, dist = Math.abs(c2.d - STG.target2) + Math.abs(c3.d - STG.target3); if (!best || sc > best.sc || (sc === best.sc && dist < best.dist)) best = { c2, c3, sc, dist }; }
+  if (best) { out.stages.push(mk(best.c2, 2), mk(best.c3, 3)); }
+  else { c2s.sort((a, b) => b.g.score - a.g.score || Math.abs(a.d - STG.target2) - Math.abs(b.d - STG.target2)); out.stages.push(mk(c2s[0], 2)); if (maxStages >= 3) out.notes.push('3차로 쓸 만한 구조 가격이 없음 — 2차까지만 분할'); }
+  out.addR = out.stages.map(x => x.depthR);
+  return out;
 }
 
 // ── strategy.mjs ──
@@ -2630,18 +2703,29 @@ const sgyRiskPct = score => (Number.isFinite(score) && score >= STRAT.strongScor
 
 // ── 생성 ──
 // fe: feedParseEntry 결과(candidate). ctx: { now, activeMargin, dayPnl }. 반환 { ok, s } | { ok:false, reason, notify, s? } — 거절도 CANCELLED 기록으로 남긴다.
-function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, activeCount = 0 }) {
+function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, activeCount = 0, stage = null }) {
   const base = { sid: fe.sid, symbolId: fe.symbolId, dir: fe.dir, createdAt: now, updatedAt: now, score: fe.score === null ? undefined : fe.score, entry: String(fe.entry), stop: String(fe.stop) };
   const x0 = { recAt: nullishOr(fe.createdAt, fe.closeT), arrivedAt: now, validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
   const cancel = (reason, notify, plan) => ({ ok: false, reason, notify, s: { ...base, state: 'CANCELLED', endedAt: now, x: { ...x0, reason, ...(plan ? { plan } : {}) } } });
   if (now > fe.validUntil) return cancel('expired-on-arrival', now - fe.closeT <= 3 * 3600000);      // 아주 늦게 도착한 오래된 추천은 조용히 기록만
   if (activeCount >= STRAT.maxActive) return cancel('too-many-active', true);
   if (dayPnl <= -STRAT.dayLossPct * STRAT.equity) return cancel('day-loss-limit', true);
-  const riskPct = sgyRiskPct(fe.score), plan = splanBuild({ symbol: fe.symbolId, dir: fe.dir, entry: fe.entry, stop: fe.stop, equity: STRAT.equity, params: { riskPct } });
+  const riskPct = sgyRiskPct(fe.score), params = { riskPct };
+  // 분할 가격: 시장 구조에서 찾은 값(stage)을 쓴다. 구조 정보가 없으면(시험·구버전) 고정 −0.3R/−0.6R(기본값)을 쓰고 그렇게 표시한다. 찾지 못한 단계는 만들지 않는다(1차 단독 또는 2차까지).
+  if (stage && stage.ok) { params.addR = stage.addR; params.maxStages = 1 + stage.addR.length; if (stage.addR.length) params.structureR = Math.max(0.1, Math.min(0.25, 1 - stage.addR[stage.addR.length - 1] - 0.05)); }
+  const plan = splanBuild({ symbol: fe.symbolId, dir: fe.dir, entry: fe.entry, stop: fe.stop, equity: STRAT.equity, params });
   if (plan.status !== 'ok') return cancel(`plan-${plan.reason}`, true);
   if (plan.lev > 3) return cancel('leverage-over-3x', true);
+  if (!(plan.worstLoss <= plan.riskBudget * 1.000001)) return cancel('risk-over-budget', true, plan);           // 모든 분할이 체결된 뒤 손절돼도 위험 예산 이내여야 한다(검증)
   if (activeMargin + plan.totalMargin > STRAT.maxMarginUsage * STRAT.equity + 1e-9) return cancel('margin-cap-total', true, plan);
-  return { ok: true, s: { ...base, state: 'CANDIDATE', x: { ...x0, plan, riskLabel: riskPct === STRAT.riskStrong ? 'strong' : 'base', riskPct } } };
+  const stageInfo = stage && stage.ok ? { source: 'structure', stages: stage.stages.slice(0, plan.stagesCount - 1), notes: stage.notes, trends: stage.trends, atr: stage.atr, requested: stage.stages.length } : { source: 'fixed', stages: [], notes: ['구조 정보 없음 — 고정 간격(−0.3R/−0.6R)'], trends: null, atr: null, requested: 0 };
+  return { ok: true, s: { ...base, state: 'CANDIDATE', x: { ...x0, plan, stageInfo, riskLabel: riskPct === STRAT.riskStrong ? 'strong' : 'base', riskPct } } };
+}
+// 체결 단계별 시나리오: k 단계까지만 체결된 뒤 최초 손절가에서 청산될 때의 평균 진입가·수량·손실(수수료·슬리피지 포함). k=전체 단계면 plan.worstLoss 와 같다.
+function sgyScenarios(plan) {
+  const sg = splanSign(plan.dir), f = plan.params.feeBps / 10000, sx = splanStopExec(plan.dir, plan.stop, plan.params.stopSlipBps), out = []; let q = 0, c = 0;
+  for (const st of plan.stages) { q += st.qty; c += st.execPrice * st.qty; const avg = c / q; out.push({ upTo: st.n, qty: q, avg, loss: ((avg - sx) * sg + f * (avg + sx)) * q, margin: plan.stages.slice(0, st.n).reduce((a, y) => a + y.margin, 0) }); }
+  return out;
 }
 
 // ── 봉 처리(순수) ──
@@ -2663,6 +2747,13 @@ function sgyFinish(s, state, at, reason, markPrice) {
   return s;
 }
 const sgyEv = (x, type, at, price, extra) => { const e = { type, at, price, ...(extra || {}) }; x.events.push(e); if (x.events.length > 40) x.events.shift(); return e; };
+// 이벤트 시점의 분할 상태 스냅샷(메시지가 '그 순간'의 평균가·손실·남은 지정가를 말하도록): { n 체결 단계 수, p 평균 체결가, q 수량, l 현재 손절 시 손실(+손실/−이익), pend 남은 단계, canc 취소 단계 }
+function sgySnap(s) {
+  const x = s.x, plan = x.plan, sg = splanSign(s.dir), f = plan.params.feeBps / 10000, q = sgyEnteredOf(x); if (q <= 0) return null;
+  const avgE = sgyAvgExec(x), sx = splanStopExec(s.dir, x.stopPrice, plan.params.stopSlipBps), open = sgyOpenOf(x);
+  return { n: x.fills.length, p: x.fills.reduce((a, y) => a + y.price * y.qty, 0) / q, q, l: ((avgE - sx) * sg + f * (avgE + sx)) * open, sp: x.stopPrice,
+    pend: plan.stages.filter(y => !x.fills.some(fl => fl.n === y.n) && !x.events.some(e => e.type === 'ADD_CANCEL' && e.n === y.n)).map(y => y.n), canc: plan.stages.filter(y => x.events.some(e => e.type === 'ADD_CANCEL' && e.n === y.n)).map(y => y.n) };
+}
 
 // bars: [{t,o,h,l,c,v,dur,coarse?}] 오래된 것 → 최신, *마감된 봉만*. 반환 { s, events } (s 는 복사본)
 function sgyRunBars(s0, bars, now) {
@@ -2675,19 +2766,22 @@ function sgyRunBars(s0, bars, now) {
     const note = b.coarse ? { coarse: true } : undefined;
     let entered = sgyEnteredOf(x) > 0, filledNow = false;
     if (!entered && b.t >= x.validUntil) { sgyFinish(s, 'EXPIRED', x.validUntil, 'entry-window-passed'); events.push(sgyEv(x, 'EXPIRED', x.validUntil, undefined)); break; }
-    // 진입·추가 진입(사전 지정 가격에 닿을 때만)
+    // 진입·추가 진입(사전 지정 가격에 닿을 때만). 취소 조건(TP 이후·구조 이탈·허용 시간 경과)이 생기면 아직 안 채워진 *모든 뒤 단계*를 함께 취소한다 — 앞 단계가 빠졌는데 뒤 단계만 남는 모순을 만들지 않는다.
+    const cancelFrom = (n0, reason) => { const made = []; for (const st2 of plan.stages) if (st2.n >= n0 && !x.fills.some(fl => fl.n === st2.n) && !x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st2.n)) { const e2 = sgyEv(x, 'ADD_CANCEL', b.t, st2.price, { n: st2.n, reason: st2.n === n0 ? reason : (reason + '+') }); events.push(e2); made.push(e2); } const sn = sgySnap(s); for (const e2 of made) e2.snap = sn; };
     for (const st of plan.stages) {
       if (x.fills.some(fl => fl.n === st.n) || x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) continue;           // 취소 알림이 나간 단계는 다시 체결하지 않는다
       if (st.n === 1) { if (!sgyTouch(s.dir, b, st.price)) continue; }
       else {
-        if (!x.fills.some(fl => fl.n === st.n - 1) || x.legs.length > 0) { if (x.legs.length > 0) { events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'after-tp' })); } continue; }
-        if (!sgyTouch(s.dir, b, st.price)) continue;
+        if (!x.fills.some(fl => fl.n === 1)) continue;
         const bars15 = Math.max(0, Math.floor((b.t - x.closeT) / STRAT.barMs));
-        if (Number.isFinite(x.lastClose) && (x.lastClose - plan.add.structurePrice) * sg <= 0) { if (!x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'structure' })); continue; }
-        if (bars15 > plan.add.window) { if (!x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'window' })); continue; }
+        if (x.legs.length > 0) { cancelFrom(st.n, 'after-tp'); continue; }
+        if (bars15 > plan.add.window) { cancelFrom(st.n, 'window'); continue; }
+        if (Number.isFinite(x.lastClose) && (x.lastClose - plan.add.structurePrice) * sg <= 0) { cancelFrom(st.n, 'structure'); continue; }
+        if (!x.fills.some(fl => fl.n === st.n - 1)) continue;                                                                     // 앞 단계가 체결돼야 다음 단계
+        if (!sgyTouch(s.dir, b, st.price)) continue;
       }
       x.fills.push({ n: st.n, price: st.price, exec: st.execPrice, qty: st.qty, at: b.t, ...(note || {}) }); filledNow = true;
-      if (st.n === 1) { s.state = 'ENTRY_TRIGGERED'; x.entryAt = b.t; events.push(sgyEv(x, 'ENTRY', b.t, st.price, { ...(note || {}) })); } else events.push(sgyEv(x, 'ADD', b.t, st.price, { n: st.n, ...(note || {}) }));
+      if (st.n === 1) { s.state = 'ENTRY_TRIGGERED'; x.entryAt = b.t; const e3 = sgyEv(x, 'ENTRY', b.t, st.price, { ...(note || {}) }); e3.snap = sgySnap(s); events.push(e3); } else { const e3 = sgyEv(x, 'ADD', b.t, st.price, { n: st.n, ...(note || {}) }); e3.snap = sgySnap(s); events.push(e3); }
     }
     entered = sgyEnteredOf(x) > 0;
     if (!entered) {                                                                         // 진입 전: 목표 1차가 먼저 닿으면 추격 금지(무효)
@@ -2767,22 +2861,46 @@ function sgyTimingLines(x, now) {
   L.push(left > 0 ? `   진입 유효 ~${sgyHm(x.validUntil)} KST (남은 ${left}분${left < 10 ? ' ⚠ 얼마 남지 않음' : ''}) — 그 전에 1차가 안 닿으면 만료` : `   진입 유효시간(${sgyHm(x.validUntil)} KST)이 이미 지났습니다(전략 만료)`);
   return L;
 }
+const sgyUsd = v => `${v < 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`;
+// 진입 단계별 문장(가격·비중·수량·증거금) + 산출 근거 + 조건·유효기간·취소 조건. 사용자가 Binance 에서 지정가 주문 가격을 그대로 설정할 수 있는 수준으로 쓴다.
+function sgyStageLines(s, now) {
+  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), L = s.dir === 'LONG', side = L ? '매수' : '매도', info = x.stageInfo || { stages: [], notes: [] }, lines = [], addUntil = x.closeT + plan.add.window * STRAT.barMs;
+  const structLine = plan.stagesCount > 1 ? `${F(plan.add.structurePrice)} ${L ? '위' : '아래'}` : '';
+  for (const st of plan.stages) {
+    const why = st.n === 1 ? [`추천 기준가(15분봉 확정 종가) · 진입 구간 ${L ? '지지' : '저항'} 위치`] : (info.stages[st.n - 2] ? info.stages[st.n - 2].why : [`고정 간격 −${plan.params.addR[st.n - 2]}R`]);
+    lines.push(`${st.n}차 진입: ${F(st.price)} / ${Math.round(st.weight * 100)}% / 수량 ${splanQty(st.qty, plan.spec)} / 증거금 ${st.margin.toFixed(2)} USDT`);
+    lines.push(`   근거: ${why.join(' · ')}${st.n > 1 && info.stages[st.n - 2] ? ` (1차 대비 −${info.stages[st.n - 2].depthR}R)` : ''}`);
+    lines.push(st.n === 1 ? `   조건: ${side} 지정가 ${F(st.price)} · 유효 ~${sgyHm(x.validUntil)} KST` : `   조건: 1차 체결 뒤 ${side} 지정가 ${F(st.price)} · 직전 15분 종가 ${structLine} · 유효 ~${sgyHm(addUntil)} KST`);
+  }
+  for (let n = plan.stagesCount + 1; n <= 3; n++) lines.push(`${n}차 진입: 설정하지 않음 — ${n === 2 ? (info.notes.find(t => /2차|추가 진입|4시간|1차 단독/.test(t)) || '타당한 구조 가격 없음') : (info.notes.find(t => /3차|2차까지/.test(t)) || '타당한 구조 가격 없음')}`);
+  return lines;
+}
 function sgyNewMessage(s, { price, priceAt, source, now }) {
-  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), sg = splanSign(s.dir), icon = s.dir === 'LONG' ? '🟢' : '🔴', L = [];
-  L.push(`[RICH300 신규 매매 전략]`, '✅ 실행 가능 전략 — COIN RADAR 관찰 후보가 RICH300 위험 한도 검증을 통과했습니다', `${icon} ${sgyBase(s.symbolId)} · ${s.dir}${s.score !== undefined ? ` · 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`);
-  if (x.evidence && x.evidence.length) { L.push('📈 진입 근거'); for (const e of x.evidence) L.push(`• ${e}`); }
-  L.push(`💵 현재가 ${F(price)} (${source || '시세'} ${sgyHm(priceAt)} KST) · 추천 기준가 ${F(plan.entry)}`);
-  L.push(...sgyTimingLines(x, now));
-  L.push(`🧭 1차 진입 구간 ${F(plan.stages[0].price)}(지정가 기준, 눌림 접근 알림 ${STRAT.nearEntryR}R 이내)`);
-  for (const st of plan.stages) L.push(`  ${st.n}차 ${Math.round(st.weight * 100)}% · ${F(st.price)}${st.n > 1 ? ` (−${plan.params.addR[st.n - 2]}R, 구조 유지·TP 전에만)` : ''} · 수량 ${splanQty(st.qty, plan.spec)} · 증거금 ${st.margin.toFixed(2)}`);
-  L.push(`🛑 손절 ${F(plan.stop)} (1R=${F(plan.R)}, 고정) · 예상 최대 손실 −${plan.worstLoss.toFixed(2)} USDT (평가액 ${plan.equity} 의 ${(plan.worstLossPct * 100).toFixed(2)}%, 수수료·슬리피지 포함)`);
-  L.push(`🎯 TP1 ${F(plan.tps[0].price)} (+${plan.tps[0].r}R) ${Math.round(plan.tps[0].w * 100)}% 청산 → 손절 본전 · TP2 ${F(plan.tps[1].price)} (+${plan.tps[1].r}R) ${Math.round(plan.tps[1].w * 100)}% 청산 · 잔여 ${Math.round(plan.runnerWeight * 100)}% 최고(최저)−${plan.params.trailR}R 추적`);
-  L.push(`⚖️ 목표 손익비 TP1 ${plan.tps[0].r}R · TP2 ${plan.tps[1].r}R${x.rr1 ? ` · 비용 반영 1차 ${x.rr1.toFixed(2)}R(참고)` : ''} · 예상 비용 수수료 −${plan.worstFee.toFixed(2)} · 슬리피지 −${plan.worstSlip.toFixed(2)} USDT`);
-  L.push(`📊 격리 ${plan.lev}배 · 증거금 ${plan.totalMargin.toFixed(2)} USDT (평가액의 ${(plan.marginUsage * 100).toFixed(1)}%, 한도 ${Math.round(STRAT.maxMarginUsage * 100)}%) · 청산가(근사) ${F(plan.liqPrice)}`);
-  if (x.volRel || x.btcAlign) L.push(`🌐 추천 당시: ${x.volRel ? `15분 거래량 ×${x.volRel.toFixed(1)}` : ''}${x.volRel && x.btcAlign ? ' · ' : ''}${x.btcAlign ? `BTC 4H ${x.btcAlign}` : ''}`);
-  L.push('🚫 무효화: 15분 봉이 손절가를 터치 · 진입 전 TP1 선도달 · 4시간 추세 반전 · 유효시간 경과');
-  L.push(`📌 진입 조건 알림이 와도 이는 '전략 기준 가상 진입'입니다. 실제로 진입하려면 Binance 에서 직접 주문하세요.`, SGY_FOOT);
-  return L.join('\n');
+  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), icon = s.dir === 'LONG' ? '🟢' : '🔴', L = s.dir === 'LONG', side = L ? '매수' : '매도', info = x.stageInfo || { stages: [], notes: [], trends: null }, addUntil = x.closeT + plan.add.window * STRAT.barMs;
+  const sc = sgyScenarios(plan), all = sc[sc.length - 1], out = [];
+  out.push('[RICH300 매매 전략]', `${icon} ${sgyBase(s.symbolId)} / ${s.dir}${s.score !== undefined ? ` / 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`, '✅ 신규 · 실행 가능 전략 — COIN RADAR 관찰 후보가 RICH300 위험 한도 검증을 통과했습니다', '');
+  out.push(...sgyStageLines(s, now), '');
+  out.push(`최초 손절가: ${F(plan.stop)} (1R=${F(plan.R)}, 고정 · 체결된 수량 전체에 거는 손절)`);
+  out.push(`1차 익절가: ${F(plan.tps[0].price)} (+${plan.tps[0].r}R) · 보유 ${Math.round(plan.tps[0].w * 100)}% 청산 후 손절을 본전으로`);
+  out.push(`2차 익절가: ${F(plan.tps[1].price)} (+${plan.tps[1].r}R) · 보유 ${Math.round(plan.tps[1].w * 100)}% 청산`);
+  out.push(`잔여 물량 추적손절: ${Math.round(plan.runnerWeight * 100)}% · TP2 이후 최고(최저)가 −${plan.params.trailR}R, 본전 아래로는 내리지 않음`);
+  out.push(`${plan.stagesCount === 3 ? '세' : plan.stagesCount === 2 ? '두' : '한'} 분할 모두 체결 시 예상 평균가: ${F(all.avg)} (총 수량 ${splanQty(all.qty, plan.spec)} · 증거금 ${all.margin.toFixed(2)} USDT · 격리 ${plan.lev}배)`);
+  out.push(`체결 단계별 손절 시 손실: ${sc.map(k => `${k.upTo === 1 ? '1차만' : '1~' + k.upTo + '차'} 평균 ${F(k.avg)} → −${k.loss.toFixed(2)}`).join(' · ')} USDT`);
+  out.push(`전체 예상 최대 손실: −${plan.worstLoss.toFixed(2)} USDT (평가액 ${plan.equity} 의 ${(plan.worstLossPct * 100).toFixed(2)}% · 위험 예산 ${plan.riskBudget.toFixed(2)} 이내 · 수수료·슬리피지 포함)`);
+  out.push(`추가 진입 무효화 조건: ${plan.stagesCount > 1 ? `TP1 도달 · 15분 종가가 ${F(plan.add.structurePrice)} ${L ? '아래' : '위'} · 신호 후 ${plan.add.window * 15}분(~${sgyHm(addUntil)} KST) 경과 · 앞 단계 미체결 · 4시간 추세 반전 — 하나라도 생기면 남은 지정가는 모두 취소하세요` : '해당 없음(추가 진입 없음)'}`);
+  { const left = Math.round((x.validUntil - now) / 60000); out.push(`추천 유효시간: 1차 ~${sgyHm(x.validUntil)} KST(남은 ${Math.max(0, left)}분)${plan.stagesCount > 1 ? ` · 2·3차 ~${sgyHm(addUntil)} KST` : ''}`); }
+  out.push(...sgyTimingLines(x, now));
+  out.push('');
+  if (x.evidence && x.evidence.length) { out.push('📈 진입 근거'); for (const e of x.evidence) out.push(`• ${e}`); }
+  if (info.trends) out.push(`🧭 시장 구조: 15분 ${info.trends.m15} · 1시간 ${info.trends.h1} · 4시간 ${info.trends.h4}${info.atr ? ` · 1H ATR ${F(info.atr)}(손절 거리 ${(plan.R / info.atr).toFixed(1)} ATR)` : ''}${x.volRel ? ` · 15분 거래량 ×${x.volRel.toFixed(1)}` : ''}${x.btcAlign ? ` · BTC 4H ${x.btcAlign}` : ''}`);
+  for (const n of info.notes || []) out.push(`ℹ️ ${n}`);
+  if (info.source === 'fixed') out.push('ℹ️ 분할 가격은 시장 구조 대신 고정 간격입니다(구조 정보 없음).');
+  out.push(`💵 현재가 ${F(price)} (${source || '시세'} ${sgyHm(priceAt)} KST) · 추천 기준가 ${F(plan.entry)}`);
+  out.push(`📊 주문 안내: 위 가격을 Binance 선물 ${side} 지정가(Limit)로 직접 설정하세요. 수량 단위 ${plan.spec.step} · 최소 ${plan.spec.minQty}(참고값, 거래소 화면에서 확인) · 가격 단위는 거래소 기준에 맞추세요.`);
+  out.push(`⚖️ TP 손익비 ${plan.tps[0].r}R/${plan.tps[1].r}R${x.rr1 ? ` · 비용 반영 1차 ${x.rr1.toFixed(2)}R(참고)` : ''} · 예상 수수료 −${plan.worstFee.toFixed(2)} · 슬리피지 −${plan.worstSlip.toFixed(2)} USDT · 청산가(근사) ${F(plan.liqPrice)}`);
+  out.push('🚫 무효화: 15분 봉이 손절가를 터치 · 진입 전 TP1 선도달 · 4시간 추세 반전 · 유효시간 경과');
+  out.push('📌 지정가에 가격이 닿았다는 알림은 \'전략 기준 가상 체결\'입니다. 실제 체결은 Binance 주문 내역에서 직접 확인하세요.', SGY_FOOT);
+  return out.join('\n');
 }
 function sgyCancelMessage(s, now) {
   const x = s.x, expired = x.reason === 'expired-on-arrival', L = [`[RICH300 실행 불가] ${sgyBase(s.symbolId)} ${s.dir} · 관찰 후보일 뿐 진입 추천이 아닙니다`, `사유: ${sgyReasonKo(x.reason)}`];
@@ -2791,6 +2909,14 @@ function sgyCancelMessage(s, now) {
 }
 const SGY_HEAD = { ENTRY_NEAR: '🧭 진입 구간 접근', ENTRY: '✅ 진입 조건 충족(가상 진입)', ADD: '➕ 추가 진입 조건 충족(가상)', ADD_CANCEL: '✖️ 추가 진입 취소', STOP_NEAR: '⚠️ 손절 접근', STOP: '🛑 손절 조건 충족(가상 손절)', TP1: '🎯 TP1 도달', TP2: '🎯 TP2 도달', BE: '🔼 손절 본전 이동 제안', TRAIL: '🔼 트레일링 기준 변경', WEAK: '⚠️ 추세 약화', TREND_INVALID: '🚫 전략 무효화(4시간 추세 반전)', INVALIDATED: '🚫 전략 무효화', EXPIRED: '⌛ 전략 만료', DONE: '🏁 전량 목표 완료' };
 const SGY_ADD_WHY = { 'after-tp': '익절이 시작되어 추가 진입 취소', structure: '구조 유지 조건(직전 15분 종가) 미충족', window: '추가 진입 허용 시간 경과' };
+// 지금까지 체결(가상)된 분할 기준으로 평균 진입가·수량·손절 시 손실을 다시 계산하고 남은 지정가를 알려 준다.
+function sgyFillState(s, ev, F) {
+  const x = s.x, plan = x.plan, sn = ev.snap, L = []; if (!sn) return L;
+  L.push(`현재 체결 ${sn.n}/${plan.stagesCount}단계 · 평균 진입가 ${F(sn.p)} · 수량 ${splanQty(sn.q, plan.spec)} · 현재 손절 ${F(sn.sp)} 에서 청산 시 ${sn.l >= 0 ? '손실 −' + sn.l.toFixed(2) : '이익 +' + (-sn.l).toFixed(2)} USDT (예산 ${plan.riskBudget.toFixed(2)})`);
+  if (sn.pend.length) L.push(`남은 지정가: ${sn.pend.map(n => `${n}차 ${F(plan.stages[n - 1].price)}(${splanQty(plan.stages[n - 1].qty, plan.spec)})`).join(' · ')} — 다음 체결 때까지 유효`);
+  if (sn.canc.length) L.push(`취소된 단계: ${sn.canc.map(n => `${n}차`).join(' · ')}`);
+  return L;
+}
 const SGY_INV_WHY = { 'radar-invalidated': 'COIN RADAR 가 이 추천을 무효화(구조 이탈·손절 기준 이탈)', 'tp1-before-entry': '진입 전에 TP1 가격이 먼저 닿음(추격 금지)', '4h-trend-flip': '4시간 추세가 전략 방향과 반대로 전환' };
 function sgyResultLines(s) {
   const r = s.x.result, plan = s.x.plan; if (!r) return ['최종 가상 성적: 진입 없음(손익 0)'];
@@ -2801,9 +2927,9 @@ function sgyEventMessage(s, ev, { price, now, snap }) {
   const sg = splanSign(s.dir), open = sgyOpenOf(x), avg = sgyAvgExec(x);
   switch (ev.type) {
     case 'ENTRY_NEAR': L.push(`현재가 ${F(price)} → 1차 진입가 ${F(plan.stages[0].price)} 근처(유효 ~${sgyHm(x.validUntil)} KST)`); break;
-    case 'ENTRY': L.push(`전략 기준 1차 가상 진입 ${F(ev.price)} · 수량 ${splanQty(plan.stages[0].qty, plan.spec)}`, `손절 ${F(plan.stop)} · TP1 ${F(plan.tps[0].price)} · TP2 ${F(plan.tps[1].price)}`, '실제 Binance 주문이 체결됐다는 뜻이 아닙니다.'); break;
-    case 'ADD': L.push(`${ev.n}차 가상 추가 진입 ${F(ev.price)} · 평균 ${F(avg)} · 보유 ${splanQty(open, plan.spec)}`); break;
-    case 'ADD_CANCEL': L.push(`${ev.n}차 추가 진입 취소: ${SGY_ADD_WHY[ev.reason] || ev.reason}`); break;
+    case 'ENTRY': L.push(`전략 기준 1차 가상 진입 ${F(ev.price)} · 수량 ${splanQty(plan.stages[0].qty, plan.spec)}`, ...sgyFillState(s, ev, F), '실제 Binance 주문이 체결됐다는 뜻이 아닙니다.'); break;
+    case 'ADD': L.push(`${ev.n}차 가상 추가 진입 ${F(ev.price)} · 수량 ${splanQty(plan.stages[ev.n - 1].qty, plan.spec)}`, ...sgyFillState(s, ev, F), '실제 Binance 체결과 다를 수 있습니다.'); break;
+    case 'ADD_CANCEL': L.push(`${ev.n}차(${F(ev.price)}) 추가 진입 취소: ${SGY_ADD_WHY[String(ev.reason).replace(/\+$/, '')] || ev.reason}${String(ev.reason).endsWith('+') ? ' (앞 단계가 취소되어 함께 취소)' : ''}`, ...sgyFillState(s, ev, F), 'Binance 에 걸어 둔 해당 지정가가 있으면 취소하세요.'); break;
     case 'STOP_NEAR': L.push(`현재가 ${F(price)} · 손절 ${F(x.stopPrice)}까지 ${snap && snap.dStopR !== undefined ? snap.dStopR.toFixed(2) + 'R' : ''} 남음`, '전략 손절 조건이 가까워졌습니다.'); break;
     case 'STOP': L.push(`손절 기준 ${F(ev.price)} (${{ initial: '최초 손절', breakeven: '본전 손절', trailing: '추적 손절' }[ev.kind] || ev.kind}) 15분 봉이 터치`, ...sgyResultLines(s)); break;
     case 'TP1': L.push(`TP1 ${F(ev.price)} 도달 · 전략상 ${Math.round(plan.tps[0].w * 100)}% 가상 청산(${splanQty(ev.qty || 0, plan.spec)})`, '다음 봉부터 손절이 본전으로 이동합니다.'); break;
@@ -2844,6 +2970,10 @@ function strategyTick(env) {
   const kv = { get: k => env.kv.get(k === 'cap' ? 'sgcap' : k.replace(/^pos:/, 'sg:')), put: (k, v) => env.kv.put(k === 'cap' ? 'sgcap' : k.replace(/^pos:/, 'sg:'), v), del: k => env.kv.del(k.replace(/^pos:/, 'sg:')), keys: () => env.kv.keys() };
   const env2 = { ...env, kv };
   const rows = new Map(sgyList(se).map(r => [r.sid, r]));
+  // 시세(종목별 한 번만 가져온다): 새 전략의 분할 가격 산출과 활성 전략 추적이 같이 쓴다
+  const markets = new Map();
+  const clock = typeof env.clock === 'function' ? env.clock : null, t0 = clock ? clock() : 0, budget = nullishOr(env.budgetMs, 150000);
+  const getMarket = sym => { if (markets.has(sym)) return markets.get(sym); if (clock && clock() - t0 > budget) { out.marketFail++; out.budget = true; markets.set(sym, null); return null; } let m; try { m = env.market(sym); } catch (e_) { m = { ok: false }; } const a = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: 'fetch' }; const r = a.ok ? { ...m } : null; if (!r) { out.marketFail++; if (m && m.ok) out.stale++; } markets.set(sym, r); return r; };
   // 1) 피드 → 새 전략
   const radarInv = new Set();
   let f = null; try { f = env.feed(); } catch (e_) { f = { ok: false, code: 'exception' }; }
@@ -2859,7 +2989,13 @@ function strategyTick(env) {
       let dayPnl = [...rows.values()].filter(r => STRAT_ENDED.includes(r.state) && r.x.result && kstDayOf(r.endedAt) === day).reduce((a, r) => a + r.x.result.usdt, 0);
       for (const fe of cands) {
         if (rows.has(fe.sid)) continue; if (out.created + out.cancelled >= STRAT.maxNewPerTick) break;
-        const margin = activeRows.reduce((a, r) => a + (r.x.plan ? r.x.plan.totalMargin : 0), 0), res = sgyBuild(fe, { now, activeMargin: margin, dayPnl, activeCount: activeRows.length });
+        const margin = activeRows.reduce((a, r) => a + (r.x.plan ? r.x.plan.totalMargin : 0), 0), expiredNow = now > fe.validUntil;
+        let stage = null;
+        if (!expiredNow) {                                                                                  // 분할 가격은 시장 구조로 산출·검증한다 — 시세를 못 받으면 만들지 않고 다음 실행으로 미룬다(구조 검증 없는 분할 금지)
+          const m = getMarket(fe.symbolId); if (!m) { out.deferred = (out.deferred || 0) + 1; continue; }
+          stage = stgPlan({ dir: fe.dir, entry: fe.entry, stop: fe.stop, atr1: fe.atr, zone: Number.isFinite(fe.zlo) && Number.isFinite(fe.zhi) ? { lo: fe.zlo, hi: fe.zhi } : null, level: fe.lvl, bars1h: m.bars1h, bars4h: m.bars4h, bars15m: m.bars15m });
+        }
+        const res = sgyBuild(fe, { now, activeMargin: margin, dayPnl, activeCount: activeRows.length, stage });
         try { if (live) sgyPersist(se, null, res.s); } catch (e_) { out.persistError = (out.persistError || 0) + 1; continue; }      // 저장하지 못하면 만들지 않는다(다음 실행에서 다시)
         if (res.ok) { out.created++; rows.set(res.s.sid, res.s); activeRows.push(res.s); }
         else { out.cancelled++; rows.set(res.s.sid, res.s); if (res.notify) res.s.pendingNotice = true; }
@@ -2867,9 +3003,6 @@ function strategyTick(env) {
     }
   } else out.feed = { ok: false, code: (f && f.code) || 'no-feed' };
   // 2) 활성 전략 추적
-  const markets = new Map();
-  const clock = typeof env.clock === 'function' ? env.clock : null, t0 = clock ? clock() : 0, budget = nullishOr(env.budgetMs, 150000);
-  const getMarket = sym => { if (markets.has(sym)) return markets.get(sym); if (clock && clock() - t0 > budget) { out.marketFail++; out.budget = true; markets.set(sym, null); return null; } let m; try { m = env.market(sym); } catch (e_) { m = { ok: false }; } const a = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: 'fetch' }; const r = a.ok ? { ...m } : null; if (!r) { out.marketFail++; if (m && m.ok) out.stale++; } markets.set(sym, r); return r; };
   out.preview = [];
   for (const s0 of [...rows.values()].sort((a, b) => a.createdAt - b.createdAt)) {
     const ns = wLoadState(kv, s0.sid), nsRaw = JSON.stringify(ns), msgs = [];
@@ -3685,7 +3818,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -3779,7 +3912,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '86213acafea5';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '3e97db65f99b';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {

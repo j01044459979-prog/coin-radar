@@ -31,8 +31,8 @@ const bar = (k, o, h, l, c) => ({ t: Math.ceil((NOW + 6 * 60000) / M) * M + k * 
 
 test('통합: radar 후보 전달 → 산출물 → 서명 → 공개 피드 → Apps Script 검증 → 전략 생성 → 진입·TP1·손절 가상 추적 · 알림 각 1회 · 수동 등록 없음', async () => {
   const r = await radar(); assert.equal(r.out.sentMessages, 1); const f = publish(r.st); assert.equal(f.ok, true, JSON.stringify(f)); assert.equal(f.count, 1);
-  const w = gas({ raw: f.raw }); const fills0 = w.g.rows('fill').length; const t1 = w.at(6 * 60000); assert.equal(w.g.rows('strategy').length, 1, JSON.stringify(t1)); assert.match(w.sent()[0], /^\[RICH300 신규 매매 전략\]\n✅ 실행 가능 전략/); assert.match(w.sent()[0], /ETH · LONG · 추천 점수 80 \(강한 조건: 위험 1\.5%\)/);
-  assert.match(w.sent()[0], /지연 \d+분/); assert.equal(w.g.rows('strategy')[0].state, 'WAIT_ENTRY'); w.at(11 * 60000); assert.equal(w.sent().length, 1);                    // 같은 피드를 다시 읽어도 중복 없음
+  const w = gas({ raw: f.raw }); const fills0 = w.g.rows('fill').length; const t1 = w.at(6 * 60000); assert.equal(w.g.rows('strategy').length, 1, JSON.stringify(t1)); assert.match(w.sent()[0], /^\[RICH300 매매 전략\]\n🟢 ETH \/ LONG[\s\S]*✅ 신규 · 실행 가능 전략/); assert.match(w.sent()[0], /ETH \/ LONG \/ 추천 점수 80 \(강한 조건: 위험 1\.5%\)/);
+  assert.match(w.sent()[0], /지연 \d+분/); assert.match(w.sent()[0], /2차 진입: [\d.]+ \/ \d+% \/ 수량 [\d.]+ \/ 증거금 [\d.]+ USDT\n   근거: .*(1H 지지 구간|스윙 저점)/); assert.match(w.sent()[0], /전체 예상 최대 손실: −/);       // 구조 정보(피드)로 2차 가격 산출 assert.equal(w.g.rows('strategy')[0].state, 'WAIT_ENTRY'); w.at(11 * 60000); assert.equal(w.sent().length, 1);                    // 같은 피드를 다시 읽어도 중복 없음
   const start = Math.ceil((NOW + 6 * 60000) / M) * M; assert.equal(w.g.rows('strategy')[0].x.startT, start);
   w.bars15 = [bar(0, 100.4, 100.5, 100.1, 100.3)]; w.price = 100.3; w.at(start - NOW + M + 60000); w.bars15.push(bar(1, 100.3, 104.4, 100.2, 104.2)); w.price = 104.2; w.at(start - NOW + 2 * M + 60000);
   w.bars15.push(bar(2, 104.2, 104.3, 100.0, 100.05)); w.price = 100.05; w.at(start - NOW + 3 * M + 60000);

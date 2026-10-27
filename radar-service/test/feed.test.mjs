@@ -11,6 +11,7 @@ const ev = (o = {}) => ({ dir: 'LONG', entry: 2000.5, stop: 1970.25, triggerT: T
 test('플래그: RADAR_RICH300_FEED=on 일 때만(기본 off)', () => { assert.equal(feedEnabled({}), false); assert.equal(feedEnabled({ RADAR_RICH300_FEED: 'off' }), false); assert.equal(feedEnabled({ RADAR_RICH300_FEED: ' ON ' }), true); });
 test('항목: 숫자는 문자열 · sid 는 R9 고유 ID 와 같다 · 잘못된 입력은 null', () => {
   const e = feedEntryOf('ETHUSDT', ev(), { now: T + 30000 }); assert.equal(e.sid, feedSid('ETHUSDT', ev())); assert.deepEqual([e.entry, e.stop, e.score, e.rr1, e.ref1, e.ref2, e.closeT], ['2000.5', '1970.25', '72', '1.83', '2050', '2090', String(T)]); assert.ok(Object.values(e).every(v => typeof v === 'string' || Array.isArray(v)));
+  const z = feedEntryOf('ETHUSDT', ev({ zone: { lo: 1980.5, hi: 1990.25, level: 1985 }, level: 1996.4, riskAbs: 30.25, riskAtr: 3.5 }), { now: T }); assert.deepEqual([z.zlo, z.zhi, z.lvl, z.atr], ['1980.5', '1990.25', '1996.4', '8.642857143']);       // 분할 가격 산출용 구조 정보
   assert.equal(feedEntryOf('ETH', ev(), { now: T }), null); assert.equal(feedEntryOf('ETHUSDT', ev({ entry: NaN }), { now: T }), null); assert.equal(feedEntryOf('ETHUSDT', ev({ dir: 'UP' }), { now: T }), null);
 });
 test('링: 같은 신호는 한 번만 · 24시간 지난 항목과 상한 초과분은 지운다', () => {

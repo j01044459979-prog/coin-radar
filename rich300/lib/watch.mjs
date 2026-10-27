@@ -89,9 +89,9 @@ export function watchParseBybitTicker(json) {
 export const WATCH_BAR_MS = Object.freeze({ '15m': 900000, '1h': 3600000, '4h': 14400000 });
 export function watchMarketUrls(src, symbolId) {
   if (!/^[A-Z0-9]{2,20}USDT$/.test(symbolId)) return null;
-  if (src === 'OKX') { const i = watchOkxInst(symbolId), b = 'https://www.okx.com/api/v5/market'; return { ticker: `${b}/ticker?instId=${i}`, '15m': `${b}/candles?instId=${i}&bar=15m&limit=6`, '1h': `${b}/candles?instId=${i}&bar=1H&limit=100`, '4h': `${b}/candles?instId=${i}&bar=4H&limit=100` }; }
+  if (src === 'OKX') { const i = watchOkxInst(symbolId), b = 'https://www.okx.com/api/v5/market'; return { ticker: `${b}/ticker?instId=${i}`, '15m': `${b}/candles?instId=${i}&bar=15m&limit=60`, '1h': `${b}/candles?instId=${i}&bar=1H&limit=100`, '4h': `${b}/candles?instId=${i}&bar=4H&limit=100` }; }
   const b = 'https://api.bybit.com/v5/market', k = `${b}/kline?category=linear&symbol=${symbolId}`;
-  return { ticker: `${b}/tickers?category=linear&symbol=${symbolId}`, '15m': `${k}&interval=15&limit=6`, '1h': `${k}&interval=60&limit=100`, '4h': `${k}&interval=240&limit=100` };
+  return { ticker: `${b}/tickers?category=linear&symbol=${symbolId}`, '15m': `${k}&interval=15&limit=60`, '1h': `${k}&interval=60&limit=100`, '4h': `${k}&interval=240&limit=100` };
 }
 // 응답(JSON 객체들)을 시세 묶음으로 해석. jsons = { ticker, '15m', '1h', '4h' } (없거나 잘못된 응답은 null)
 export function watchParseSource(src, jsons, now) {
@@ -233,10 +233,11 @@ export function wDeliver(env, state, ev, text, now) {
   if (rec && (rec.st === 'sent' || rec.st === 'pending' || rec.st === 'expired')) return 'skipped';            // 이미 보냈거나(또는 전송 직후 중단된 pending) 만료됨 → 다시 보내지 않는다
   if (rec && rec.st === 'failed' && now < rec.next) return 'skipped';
   const cap = wCapCheck(kv, now); if (!cap.ok && ev.level !== 'critical') return 'capped';      // 손절 관련(critical)은 상한과 무관하게 보낸다
-  state.sent[ev.key] = { at: nullishOr(rec && rec.at, now), st: 'pending', tries: (rec ? rec.tries : 0) + 1, text: nullishOr(rec && rec.text, text.slice(0, 1200)) };
+  state.sent[ev.key] = { at: nullishOr(rec && rec.at, now), st: 'pending', tries: (rec ? rec.tries : 0) + 1, text: nullishOr(rec && rec.text, text.slice(0, 3900)) };
   wSaveState(kv, ev.sid, state);                                                                                 // 보내기 전에 표시 → 중복 실행·중단에도 한 번만
   let r; try { r = env.send(state.sent[ev.key].text); } catch (e_) { r = { ok: false, code: 'exception' }; }
-  if (r && r.ok) { state.sent[ev.key].st = 'sent'; state.sent[ev.key].sentAt = now; cap.commit(); wSaveState(kv, ev.sid, state); return 'sent'; }
+  if (r && r.ok) { state.sent[ev.key].st = 'sent'; state.sent[ev.key].sentAt = now; delete state.sent[ev.key].text;      // 재시도용 본문은 전송이 끝나면 지운다(속성 값 9KB 한도 보호)
+      cap.commit(); wSaveState(kv, ev.sid, state); return 'sent'; }
   const rec2 = state.sent[ev.key], delay = WATCH.retryDelaysMs[rec2.tries - 1];
   if (delay === undefined || now - rec2.at + delay > WATCH.expireMs) { rec2.st = 'expired'; rec2.code = r && r.code; }
   else { rec2.st = 'failed'; rec2.next = now + delay; rec2.code = r && r.code; }

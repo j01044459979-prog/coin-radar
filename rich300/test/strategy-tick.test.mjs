@@ -10,7 +10,7 @@ import { authSignedString } from '../lib/auth.mjs';
 
 const M = 900000, H = 3600000, T0 = Date.UTC(2026, 9, 26, 3, 0), CLOSE = T0, KEY = 'k'.repeat(40);
 const hmac = (key, msg) => createHmac('sha256', key).update(msg, 'utf8').digest('hex');
-const entry = (o = {}) => ({ sid: 'SG-ETH-L-abc123', symbol: 'ETHUSDT', dir: 'LONG', entry: '2000', stop: '1970', closeT: String(CLOSE), triggerT: String(CLOSE - M), validUntil: String(CLOSE + 45 * 60000), score: '70', rr1: '1.9', ref1: '2050', ref2: '2090', evidence: ['4H 상승 · 1H 지지 눌림', '15분 돌파 · 거래량 ×1.5'], volRel: '1.5', btcAlign: '동행', stageLabel: '진입 후보', costPct: '0.15', createdAt: String(CLOSE + 30000), ...o });
+const entry = (o = {}) => ({ sid: 'SG-ETH-L-abc123', symbol: 'ETHUSDT', dir: 'LONG', entry: '2000', stop: '1970', closeT: String(CLOSE), triggerT: String(CLOSE - M), validUntil: String(CLOSE + 45 * 60000), score: '70', rr1: '1.9', ref1: '2050', ref2: '2090', evidence: ['4H 상승 · 1H 지지 눌림', '15분 돌파 · 거래량 ×1.5'], volRel: '1.5', btcAlign: '동행', stageLabel: '진입 후보', costPct: '0.15', zlo: '1980', zhi: '1990', lvl: '1996', atr: '8', createdAt: String(CLOSE + 30000), ...o });
 const META = (ts, o = {}) => ({ runId: '9001', attempt: '1', ref: 'refs/heads/main', sha: 'a'.repeat(40), event: 'schedule', mode: 'once', at: String(ts - 30000), ...o });
 const signFeed = (entries, { ts = CLOSE + 60000, key = KEY, meta = {} } = {}) => { const body = { entries, meta: META(ts, meta) }, nonce = 'n'.repeat(20); return JSON.stringify({ v: 1, ts, nonce, body, sig: hmac(key, authSignedString(1, ts, nonce, body)) }); };
 const bars = (n, { start, drift, step, now }) => Array.from({ length: n }, (_, i) => { const c = start * (1 + drift * i); return { t: now - (n - i) * step, o: c, h: c * 1.002, l: c * 0.998, c, v: 100 }; });
@@ -47,7 +47,9 @@ test('피드 검증(서명 필수): 키 없음·짧은 키·서명 누락/불일
 });
 test('새 추천 → 전략 생성 → "[RICH300 신규 매매 전략]" 메시지 1건(모든 항목 포함) → 진입 대기 · 같은 피드를 다시 읽어도 중복 생성·전송 없음', () => {
   const w = world(); const r = w.at(5); assert.equal(r.status, 'ok'); assert.deepEqual([r.created, r.sent, r.feed.ok, r.feed.signed], [1, 1, true, true]);
-  const t = w.texts()[0]; assert.match(t, /^\[RICH300 신규 매매 전략\]\n✅ 실행 가능 전략/); for (const re of [/추천 시각 \d\d:\d\d KST\(COIN RADAR\) → RICH300 전달 \d\d:\d\d KST · 지연 \d+분/, /남은 \d+분/, /ETH · LONG · 추천 점수 70/, /진입 근거/, /4H 상승/, /현재가 2005\.00 \(OKX /, /진입 유효 ~/, /1차 진입 구간 2000\.00/, /1차 \d+% · 2000\.00/, /2차 \d+% · 1991\.00/, /3차 \d+% · 1982\.00/, /손절 1970\.00/, /예상 최대 손실 −\d+\.\d+ USDT/, /TP1 2045\.00 \(\+1\.5R\) 50%/, /TP2 2060\.00 \(\+2R\) 30%/, /잔여 20% 최고\(최저\)−1R 추적/, /목표 손익비/, /수수료 −/, /슬리피지 −/, /무효화:/, /가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님/]) assert.match(t, re);
+  const t = w.texts()[0]; assert.match(t, /^\[RICH300 매매 전략\]\n🟢 ETH \/ LONG \/ 추천 점수 70/); for (const re of [/✅ 신규 · 실행 가능 전략/, /추천 시각 \d\d:\d\d KST\(COIN RADAR\) → RICH300 전달 \d\d:\d\d KST · 지연 \d+분/, /남은 \d+분/, /진입 근거/, /4H 상승/,
+    /1차 진입: 2000\.00 \/ 50% \/ 수량 [\d.]+ \/ 증거금 [\d.]+ USDT/, /2차 진입: 1990\.90 \/ 3\d% \/ 수량/, /3차 진입: 1980\.90 \/ [12]\d% \/ 수량/, /근거: 1H 지지 구간 상단 1990\.00/, /근거: 1H 지지 구간 하단 1980\.00/, /조건: 1차 체결 뒤 매수 지정가 1990\.90 · 직전 15분 종가 1977\.50 위 · 유효 ~/,
+    /최초 손절가: 1970\.00/, /1차 익절가: 2045\.00 \(\+1\.5R\)/, /2차 익절가: 2060\.00 \(\+2R\)/, /잔여 물량 추적손절: 20%/, /세 분할 모두 체결 시 예상 평균가: 1994\.\d\d/, /체결 단계별 손절 시 손실: 1차만 평균/, /전체 예상 최대 손실: −\d+\.\d\d USDT/, /추가 진입 무효화 조건: TP1 도달/, /추천 유효시간: 1차 ~\d\d:\d\d KST/, /시장 구조: 15분/, /매수 지정가\(Limit\)로 직접 설정/, /가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님/]) assert.match(t, re);
   const row = w.rows()[0]; assert.equal(row.state, 'WAIT_ENTRY'); assert.equal(row.x.startT, CLOSE + 15 * 60000);
   assert.deepEqual([w.at(10).created, w.at(15).sent], [0, 0]); assert.equal(w.texts().length, 1); assert.equal(w.rows().length, 1);
 });
@@ -109,7 +111,7 @@ test('일일 손실 한도: 가상 손실이 −3%(−9 USDT)에 닿으면 이�
   lose(1, 0); lose(2, 120); const total2 = w.rows().reduce((a, r) => a + r.x.result.usdt, 0); assert.ok(total2 < -7 && total2 > -9, String(total2));                              // 아직 한도 전
   lose(3, 240); const total3 = w.rows().reduce((a, r) => a + r.x.result.usdt, 0); assert.ok(total3 <= -9, String(total3));
   all.push(mk(4, 360)); w.feedRaw = signFeed(all, { ts: CLOSE + 363 * 60000 }); const rr = w.at(365); assert.equal(rr.cancelled, 1); const row4 = w.rows()[3]; assert.deepEqual([row4.state, row4.x.reason], ['CANCELLED', 'day-loss-limit']);
-  assert.match(w.texts().at(-1), /^\[RICH300 실행 불가\]/); assert.match(w.texts().at(-1), /일일 가상 손실 한도\(−3%\)/); assert.equal(w.texts().filter(t => /신규 매매 전략/.test(t)).length, 3);
+  assert.match(w.texts().at(-1), /^\[RICH300 실행 불가\]/); assert.match(w.texts().at(-1), /일일 가상 손실 한도\(−3%\)/); assert.equal(w.texts().filter(t => /^\[RICH300 매매 전략\]/.test(t)).length, 3);
 });
 test('분리: 추천 전략의 가상 성적은 실제 체결(Fills)·수동 포지션에 쓰이지 않는다 · 시트는 Strategies 한 곳', () => {
   const w = world(); w.at(5); w.bars15 = [b(0, 2010, 2012, 1999, 2005)]; w.at(31); assert.ok(w.m.sheets.has('Strategies')); assert.equal((w.m.sheets.get('Fills') || []).length, 0); assert.equal((w.m.sheets.get('ManualPositions') || []).length, 0);
@@ -141,4 +143,10 @@ test('추천 지연·만료: 전달 지연 분과 남은 유효시간을 메시�
 });
 test('관찰 후보와 실행 가능 전략 구분: 위험 한도로 제외된 후보는 "신규 매매 전략"으로 안내하지 않는다', () => {
   const w = world(); const e = entry({ stop: '1999', sid: 'SG-ETH-L-near01' }); w.feedRaw = signFeed([e]); w.at(5); assert.equal(w.rows()[0].state, 'CANCELLED'); assert.equal(w.texts().length, 1); assert.ok(!/^\[RICH300 신규 매매 전략\]/.test(w.texts()[0]) && !/✅ 실행 가능 전략/.test(w.texts()[0])); assert.match(w.texts()[0], /실행 불가/); assert.match(w.texts()[0], /관찰 후보일 뿐 진입 추천이 아닙니다/);
+});
+test('긴 메시지는 잘리지 않고 전송되며(재시도 본문 포함), 전송 후 본문은 상태에서 지워져 속성 크기(9KB)를 넘지 않는다', () => {
+  const w = world(); w.at(5); const full = w.texts()[0]; assert.ok(full.length > 1500 && full.length < 3900, String(full.length)); assert.match(full, /가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님 · 판단 보조용$/);
+  const k = [...w.kv.keys()].find(q => q.startsWith('sg:SG')), raw = w.kv.get(k); assert.ok(raw.length < 2000, String(raw.length)); assert.ok(!JSON.parse(raw).sent['NEW:SG-ETH-L-abc123'].text);
+  w.bars15 = [b(0, 2010, 2012, 1999.5, 2005), b(1, 2005, 2006, 1985, 1992), b(2, 1992, 1993, 1979, 1980), b(3, 1980, 1981, 1965, 1968)]; for (const m of [31, 46, 61, 76]) w.at(m); assert.ok(w.kv.get(k).length < 4000, String(w.kv.get(k).length));
+  assert.ok(w.texts().filter(t => /추가 진입 조건 충족/.test(t)).every(t => /현재 체결 [23]\/3단계 · 평균 진입가/.test(t))); assert.equal(w.rows()[0].state, 'STOP');
 });

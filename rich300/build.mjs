@@ -31,6 +31,7 @@ export const ENGINE_MODULES = [
   'opsview',
   'watch',
   'feed',
+  'stages',
   'strategy',
   'stratview',
   'close',
