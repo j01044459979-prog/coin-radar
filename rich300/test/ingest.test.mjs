@@ -113,12 +113,12 @@ test('Api.gs(가짜 Apps Script): 서명된 신호 저장·재전송 duplicate·
 });
 
 // ── GET 라우터: 익명·타인 거부(fail-closed), 소유자만 페이지 함수 호출 ──
-const PAGE = `function rich300PageFill_(e) { return ContentService.createTextOutput('FILL-PAGE'); } function rich300PageDash_(e) { return ContentService.createTextOutput('DASH-PAGE'); }`;
-test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명·타인이면 접근 안내(빈 화면 아님·데이터 없음), 소유자만 페이지, 모르는 페이지·프로토타입 이름은 메인(dash)으로', () => {
+const PAGE = `function rich300PageFill_(e) { return ContentService.createTextOutput('FILL-PAGE'); } function rich300PageDash_(e) { return ContentService.createTextOutput('DASH-PAGE'); } function rich300PageStrat_(e) { return ContentService.createTextOutput('STRAT-PAGE'); }`;
+test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명·타인이면 접근 안내(빈 화면 아님·데이터 없음), 소유자만 페이지, 모르는 페이지·프로토타입 이름은 메인(strat 추천 전략)으로', () => {
   const get = (a, p) => { const o = a.ctx.doGet({ parameter: { p } }); return o.text !== undefined ? o.text : o.html; }, DENIED = /접근 제한/;
   const owner = loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'Me@Example.com' }, email: 'me@example.com', extra: PAGE });
   assert.equal(get(owner, 'fill'), 'FILL-PAGE'); assert.equal(get(owner, 'dash'), 'DASH-PAGE');
-  for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'DASH-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'DASH-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'DASH-PAGE');         // 빈 화면 대신 메인
+  for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'STRAT-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'STRAT-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'STRAT-PAGE');         // 빈 화면 대신 메인
   for (const email of ['', 'other@example.com', 'me@example.com.evil.io']) assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email, extra: PAGE }), 'dash'), DENIED, email || '(익명)');
   assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY }, email: 'me@example.com', extra: PAGE }), 'dash'), DENIED);                     // 소유자 이메일 미설정 → 닫힘(접근 안내)
   assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email: 'me@example.com' }), 'dash'), /오류 코드|다시 시도/); // 페이지 함수 없음 → 빈 응답이 아니라 오류 화면(재시도 버튼)

@@ -1,0 +1,49 @@
+name: rich300-feed
+run-name: rich300-feed · ${{ github.event_name }}
+# RICH 300 추천 피드 게시: radar 실행이 끝나면, 상태 캐시에서 진입 후보 피드를 읽어 서명한 feed.json 을 rich300-feed 브랜치(단일 커밋, 매번 덮어씀)에 올린다.
+# RICH300(Apps Script)이 공개 주소(raw.githubusercontent.com)에서 읽어 가서 전략을 자동 생성·추적한다. 기존 radar 워크플로와 완전히 분리되어 있다(권한·Secret 을 radar 에 더하지 않는다).
+# 저장소 변수 RADAR_RICH300_FEED 가 'on' 이고 Secret RICH300_FEED_KEY 가 있을 때만 동작한다(기본 off → 아무것도 하지 않음). 주문·계정 API 없음. 로그에는 개수만 남는다.
+on:
+  workflow_run:
+    workflows: [radar]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: write   # rich300-feed 브랜치 갱신에만 사용
+  actions: read
+concurrency:
+  group: rich300-feed
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'j01044459979-prog/coin-radar' && vars.RADAR_RICH300_FEED == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore radar state (read only)
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-feedread-${{ github.run_id }}
+          restore-keys: radar-state-
+      - name: Export signed feed
+        id: export
+        env:
+          RICH300_FEED_KEY: ${{ secrets.RICH300_FEED_KEY }}
+        run: node rich300/client/feed-export.mjs .radar-state/state.json .rich300-feed/feed.json
+      - name: Publish feed branch
+        if: hashFiles('.rich300-feed/feed.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          cd .rich300-feed
+          git init -q -b rich300-feed
+          git config user.name "rich300-feed"
+          git config user.email "rich300-feed@users.noreply.github.com"
+          git add feed.json
+          git commit -q -m "rich300 feed"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:refs/heads/rich300-feed
+          echo "feed published"

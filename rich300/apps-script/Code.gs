@@ -723,7 +723,7 @@ const dashEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&
 const DASH_ARROW = (pos, neg) => (pos ? '▲' : neg ? '▼' : '■');
 const dashTone = (pos, neg) => (pos ? 'pos' : neg ? 'neg' : 'zero');
 
-const DASH_PAGES = Object.freeze([['dash', '홈'], ['pos', '포지션'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
+const DASH_PAGES = Object.freeze([['strat', '전략'], ['dash', '홈'], ['pos', '포지션'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
 
 const DASH_CSS = `
 :root{color-scheme:light;--bg:#f6f7f9;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#3f3e3b;--mute:#5c5b57;--line:#dcdbd6;--accent:#2a78d6;--good:#17794f;--bad:#c62828;--warnbg:#fff4d6;--warnink:#6b4a00;--track:#e8e7e2}
@@ -982,6 +982,12 @@ const ENTITIES = {
     normalize: d => { if (d.dir !== 'LONG' && d.dir !== 'SHORT') bad('dir 값 오류'); return strip({ sid: needStr(d.sid, 'sid', 54), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: d.dir,
       stop: schemaDecString(d.stop, 'stop', { positive: true }), tp1: optDec(d.tp1, 'tp1', { positive: true }), tp2: optDec(d.tp2, 'tp2', { positive: true }), registeredAt: needMs(d.registeredAt, 'registeredAt'), symbolCheck: d.symbolCheck === undefined ? undefined : needEnum(d.symbolCheck, ['ok', 'unverified'], 'symbolCheck') }); },
     display: d => [d.sid, d.symbolId, d.dir, d.stop, (d.tp1 != null ? d.tp1 : ''), (d.tp2 != null ? d.tp2 : '')] },
+  // 추천 전략(COIN RADAR 추천 → RICH300 자동 생성·가상 추적). 사용자의 실제 체결이 아니다 — Fills·ManualPositions 와 섞지 않는다. 상태 전이마다 리비전으로 남는다.
+  strategy: { sheet: 'Strategies', keyOf: d => d.sid, headers: ['sid', 'symbol', 'dir', 'state', 'createdAtKst'],
+    normalize: d => { if (d.dir !== 'LONG' && d.dir !== 'SHORT') bad('dir 값 오류'); if (!d.x || typeof d.x !== 'object' || Array.isArray(d.x) || JSON.stringify(d.x).length > 45000) bad('x 형식 오류');
+      return strip({ sid: needStr(d.sid, 'sid', 54), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: d.dir, state: needEnum(d.state, ['CANDIDATE', 'WAIT_ENTRY', 'ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING', 'DONE', 'STOP', 'INVALIDATED', 'EXPIRED', 'CANCELLED'], 'state'),
+        createdAt: needMs(d.createdAt, 'createdAt'), updatedAt: needMs(d.updatedAt, 'updatedAt'), endedAt: d.endedAt === undefined || d.endedAt === null ? undefined : needMs(d.endedAt, 'endedAt'), score: d.score === undefined ? undefined : Math.max(0, Math.min(100, Math.round(Number(d.score)))), entry: schemaDecString(d.entry, 'entry', { positive: true }), stop: schemaDecString(d.stop, 'stop', { positive: true }), x: d.x }); },
+    display: d => [d.sid, d.symbolId, d.dir, d.state, kst(d.createdAt)] },
   tgupdate: { sheet: 'TgUpdates', immutable: true, keyOf: d => `${d.kind}:${d.id}`, headers: ['kind', 'id'],
     normalize: d => ({ kind: needEnum(d.kind, ['u', 'cb'], 'kind'), id: needStr(String(d.id), 'id', 80), at: needMs(d.at, 'at') }), display: d => [d.kind, d.id] },
 };
@@ -2126,6 +2132,7 @@ run('rich300ManualUpdate',[s,{stop:bx.querySelector('.e-stop').value.trim(),tp1:
 //  · 활성화는 서버가 사전 점검 통과 기록(15분 이내·같은 빌드)과 확인 문구를 다시 검사한다 — 화면의 버튼 상태는 편의일 뿐 보안 경계가 아니다.
 
 const OPS_PHRASE = '실전 감시 시작';
+const OPS_STRAT_PHRASE = '전략 추적 시작';
 const OPS_PRECHECK_TTL_MS = 15 * 60000;
 // info: { state:{env,tokenSet,paired,gateSend,triggers}, net:[{symbol,ok,why}], preview:{status,positions,marketFail,skipped} } → { ok, items:[{id,must,ok,text}] }
 function opsEvaluate(info) {
@@ -2144,6 +2151,21 @@ function opsEvaluate(info) {
   if (pv.skipped > 0) add('skipped', false, false, `감시에서 제외되는 포지션 ${pv.skipped}건(종목 불명·체결 오류) — 확인하세요`);
   return { ok: items.filter(i => i.must).every(i => i.ok), items };
 }
+// 전략 추적 사전 점검 판정(순수): info.preview = { status, feed:{ok,signed,ageMin,stale,entries,code}, marketFail, code, keySet }
+function opsEvaluateStrategy(info) {
+  const s = info.state || {}, net = Array.isArray(info.net) ? info.net : [], pv = info.preview || {}, fd = pv.feed || null, items = [];
+  const add = (id, must, ok, text) => items.push({ id, must, ok: !!ok, text });
+  add('env', true, s.env === 'prod', `운영 환경 표식 ${s.env === 'prod' ? '확인' : '아님(' + (s.env || '미설정') + ')'}`);
+  add('token', true, s.tokenSet, `Telegram 봇 토큰 ${s.tokenSet ? '있음' : '없음'}`);
+  add('paired', true, s.paired, `소유자 Telegram 페어링 ${s.paired ? '됨' : '안 됨'}`);
+  const gateOk = s.gateSend === null || s.gateSend === undefined || s.gateSend === 'prod-not-approved';
+  add('gate', true, gateOk, gateOk ? '전송 가드: 운영 승인 외 막는 사유 없음' : `전송 가드가 다른 사유로 막혀 있음(${s.gateSend})`);
+  add('feed', true, !!(fd && fd.ok), fd && fd.ok ? `추천 피드 연결 정상 (항목 ${fd.entries}건 · ${fd.ageMin}분 전 생성${fd.stale ? ' · 오래됨(radar 중단 의심)' : ''})` : `추천 피드를 읽지 못함(${(fd && fd.code) || pv.status || 'none'}) — GitHub 쪽 RADAR_RICH300_FEED=on 과 rich300-feed 브랜치가 필요합니다`);
+  add('signed', false, !!(fd && fd.signed), fd && fd.signed ? '피드 서명 검증 통과' : pv.keySet ? '피드 서명 확인 실패' : '서명 키 미등록 — 서명 없이 받습니다(저장소 쓰기 권한자만 위조 가능). 키 등록을 권장합니다');
+  add('net', true, net.length > 0 && net.every(n => n.ok), net.length ? `시세 연결 ${net.filter(n => n.ok).length}/${net.length} 정상` : '시세 연결 점검 결과 없음');
+  add('preview', true, pv.status === 'ok' && !(pv.marketFail > 0), pv.status === 'ok' ? '전략 추적 미리보기 정상(저장·전송 없음)' : `전략 추적 미리보기 실패(${pv.status || 'none'}${pv.code ? ', ' + pv.code : ''})`);
+  return { ok: items.filter(i => i.must).every(i => i.ok), items };
+}
 const opsKst = ms => new Date(ms + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ');
 const opsUrl = (appUrl, q) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}${q}` : null);
 // m: 서버가 만든 상태 모델
@@ -2158,6 +2180,8 @@ function opsRenderHtml({ m, appUrl = '', build = 'dev' } = {}) {
     `실제 동작: ${live ? '전송 중(실전 감시 켜짐)' : m.effective === 'preview-only' ? '계산만(전송 없음)' : '아무것도 하지 않음(꺼짐)'}`,
     `등록된 미청산 포지션: ${m.positions === null ? '확인 못 함' : m.positions + '건'}${m.positions === 0 ? ' — 0건이면 정상 대기(시세 호출 없음)' : ''}`,
     `마지막 감시 실행: ${last}`,
+    `추천 전략 자동 추적(RICH300_STRATEGY): ${{ off: '꺼짐', preview: 'preview(계산만)', on: '켜짐' }[(m.strategy && m.strategy.prop) || 'off']} · 피드 서명 키 ${m.strategy && m.strategy.keySet ? '등록됨' : '없음'}`,
+    `마지막 전략 추적 실행: ${m.strategy && m.strategy.last ? `${Math.round(m.strategy.last.ageMin === undefined ? 0 : m.strategy.last.ageMin)}분 전 · ${m.strategy.last.status} · 생성 ${m.strategy.last.created} · 추적 ${m.strategy.last.tracked} · 전송 ${m.strategy.last.sent}${m.strategy.last.failed ? ' · 실패 ' + m.strategy.last.failed : ''}${m.strategy.last.feed ? ' · 피드 ' + (m.strategy.last.feed.ok ? '정상' : m.strategy.last.feed.code) : ''}` : '기록 없음'}`,
     `마지막 관리 동작: ${m.opsLast ? `${m.opsLast.ageMin}분 전 · ${m.opsLast.action} · ${m.opsLast.code}` : '기록 없음'}`];
   const pre = m.precheck ? `마지막 사전 점검: ${m.precheck.ageMin}분 전 · ${m.precheck.ok ? '통과' : '실패'}${m.precheck.ok && m.precheck.ageMin >= 15 ? ' (15분 지나 만료 — 다시 점검)' : ''}` : '사전 점검 기록 없음';
   const watchUrl = opsUrl(appUrl, 'p=watch'), posUrl = opsUrl(appUrl, 'p=pos'), self = opsUrl(appUrl, 'p=ops');
@@ -2170,6 +2194,12 @@ function opsRenderHtml({ m, appUrl = '', build = 'dev' } = {}) {
 <button id="on" class="go" type="button" disabled>실전 감시 시작</button><div id="onMsg" class="msg" role="status" aria-live="polite"></div></section>
 <section class="card"><div class="k">3. 감시 중지</div><div class="sub">즉시 <code>RICH300_WATCH_ALERTS=off</code> 로 바꾸고 5분 트리거를 제거합니다. 운영 승인 플래그와 시트·Telegram 연결 정보는 그대로 둡니다. 운영 승인이 남아 있어도 감시 설정이 off 이면 감시 전송은 차단됩니다.<br><strong>주의:</strong> 중지를 누르는 순간 이미 실행 중이던 감시가 있으면 그 <strong>최대 1회 실행</strong>은 끝까지 진행될 수 있습니다(그 실행에서 알림이 나갈 수 있음). 그다음 실행부터는 전송되지 않습니다.</div>
 <button id="off" class="go stop" type="button">감시 중지</button><div id="offMsg" class="msg" role="status" aria-live="polite"></div></section>
+<section class="card"><div class="k">4. 추천 전략 자동 추적 (COIN RADAR 추천 → 자동 전략·가상 추적)</div><div class="sub">추천이 생기면 RICH300 이 진입 구간·분할 진입·손절·TP·트레일링을 만들어 Telegram 으로 알리고 종료까지 <strong>가상으로</strong> 추적합니다(수동 등록 불필요, 실제 주문·체결 아님). 위 실제 포지션 감시와 별개로 켜고 끕니다. 켜면 운영 승인(<code>RICH300_PROD_APPROVED=yes</code>)과 <code>RICH300_STRATEGY=on</code>, 5분 트리거(이미 있으면 공유)가 설정됩니다. <strong>COIN RADAR 의 GitHub 쪽 설정 <code>RADAR_RICH300_FEED=on</code> + 서명 키 Secret 이 먼저 있어야 추천이 전달됩니다.</strong></div>
+${m.strategy && m.strategy.keySet ? '<div class="sub">피드 서명 키: 등록됨(값은 표시하지 않습니다)</div>' : `<label for="fkey">피드 서명 키 (선택 · 32자 이상 영문/숫자/_-, 값은 저장 후 표시되지 않음)</label><input id="fkey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="GitHub Secret RICH300_FEED_KEY 와 같은 값"><button id="fkeyBtn" class="go" type="button">서명 키 저장</button><div id="fkeyMsg" class="msg" role="status" aria-live="polite"></div>`}
+<button id="spre" class="go" type="button">전략 추적 사전 점검 (읽기 전용)</button><div id="spreMsg" class="msg" role="status" aria-live="polite"></div><ul id="spreList" class="warn" style="list-style:none;padding:0"></ul>
+<label for="sphrase">확인 문구: <strong>${dashEsc(OPS_STRAT_PHRASE)}</strong> 를 입력</label><input id="sphrase" autocomplete="off" placeholder="${dashEsc(OPS_STRAT_PHRASE)}">
+<button id="son" class="go" type="button" disabled>전략 추적 시작</button><div id="sonMsg" class="msg" role="status" aria-live="polite"></div>
+<button id="soff" class="go stop" type="button">전략 추적 중지</button><div class="sub">중지하면 <code>RICH300_STRATEGY=off</code> 로 바꾸고, 실전 위치 감시가 꺼져 있을 때만 5분 트리거를 제거합니다. 이미 실행 중이던 1회 실행은 끝까지 진행될 수 있습니다. 진행 중이던 전략은 기록에 남고 추적만 멈춥니다.</div><div id="soffMsg" class="msg" role="status" aria-live="polite"></div></section>
 <section class="card"><a id="reload" class="cta" hidden target="_top"${self ? ` href="${dashEsc(self)}"` : ''}>새로고침</a>${watchUrl ? ` <a class="cta" target="_top" href="${dashEsc(watchUrl)}">감시 점검 화면</a>` : ''}${posUrl ? ` <a class="cta" target="_top" href="${dashEsc(posUrl)}">포지션 등록</a>` : ''}
 <div class="sub">이 화면은 열기만 해서는 아무것도 바꾸지 않습니다. 임의의 설정은 바꿀 수 없고(허용 목록: 운영 승인·감시 설정), 소유자만 실행됩니다. 기록 전용 · 자동 주문 없음.</div></section>`;
   const css = `<style>[hidden]{display:none!important}label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}input{width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:46px}
@@ -2192,6 +2222,19 @@ run('rich300OpsEnable',[$('phrase').value.trim()],function(r){busy.on=false;if(r
 else{say('onMsg','시작하지 않았습니다['+(r.code||'error')+']: '+(CODES[r.code]||'원인을 알 수 없습니다.')+(r.rolledBack?'\\n이전 상태로 되돌렸습니다(감시 off).':''),'bad');if(r.code==='rollback-failed')$('reload').hidden=false;sync()}},'onMsg',function(){busy.on=false;sync()})};
 $('off').onclick=function(){if(busy.off)return;busy.off=true;$('off').disabled=true;say('offMsg','중지 중…');
 run('rich300OpsDisable',[],function(r){busy.off=false;$('off').disabled=false;say('offMsg',r.ok?'감시를 중지했습니다: 설정 off · 트리거 '+r.triggers+'개.':'중지 확인에 실패했습니다['+(r.code||'error')+'] — 다시 [감시 중지]를 누르세요.',r.ok?'ok':'bad');$('reload').hidden=false},'offMsg',function(){busy.off=false;$('off').disabled=false})};
+var spassed=false,ssync=function(){$('son').disabled=!(spassed&&$('sphrase').value.trim()===${JSON.stringify(OPS_STRAT_PHRASE)}&&!busy.son)};
+$('sphrase').addEventListener('input',ssync);
+if($('fkeyBtn'))$('fkeyBtn').onclick=function(){if(busy.fk)return;var v=$('fkey').value.replace(/\\s/g,'');if(!v){say('fkeyMsg','키 칸이 비어 있습니다.','bad');return}busy.fk=true;$('fkeyBtn').disabled=true;say('fkeyMsg','저장 중…');
+run('rich300OpsSetFeedKey',[v],function(r){busy.fk=false;if(r.ok){$('fkey').value='';$('fkey').style.display='none';$('fkeyBtn').style.display='none';say('fkeyMsg','서명 키를 저장했습니다(값은 표시하지 않습니다). 새로고침하세요.','ok');$('reload').hidden=false}else{$('fkeyBtn').disabled=false;say('fkeyMsg','저장하지 않음['+(r.code||'error')+']: '+(CODES[r.code]||(r.code==='bad-format'?'32자 이상 영문·숫자·_- 만 가능합니다.':r.code==='already-set'?'이미 키가 저장돼 있습니다.':'원인을 알 수 없습니다.')),'bad')}},'fkeyMsg',function(){busy.fk=false;$('fkeyBtn').disabled=false})};
+$('spre').onclick=function(){if(busy.spre)return;busy.spre=true;$('spre').disabled=true;spassed=false;ssync();say('spreMsg','점검 중… (피드·시세 조회로 10~40초 걸릴 수 있습니다)');$('spreList').textContent='';
+run('rich300OpsStratPrecheck',[],function(r){busy.spre=false;$('spre').disabled=false;if(!r.ok){say('spreMsg',CODES[r.code]||('점검하지 못했습니다('+(r.code||'error')+')'),'bad');return}
+(r.items||[]).forEach(function(i){var l=document.createElement('li');l.textContent=(i.ok?'✓ ':(i.must?'✗ ':'△ '))+i.text;$('spreList').appendChild(l)});
+spassed=!!r.pass;say('spreMsg',spassed?'사전 점검 통과 — 확인 문구를 입력하면 시작할 수 있습니다(15분 이내).':'사전 점검 실패 — 시작할 수 없습니다. ✗ 항목을 해결한 뒤 다시 점검하세요.',spassed?'ok':'bad');ssync()},'spreMsg',function(){busy.spre=false;$('spre').disabled=false})};
+$('son').onclick=function(){if(busy.son)return;busy.son=true;ssync();say('sonMsg','시작 중… 설정·트리거를 적용하고 다시 조회해 확인합니다.');
+run('rich300OpsStratEnable',[$('sphrase').value.trim()],function(r){busy.son=false;if(r.ok){say('sonMsg',(r.code==='already-on'?'이미 켜져 있습니다. ':'추천 전략 자동 추적을 시작했습니다. ')+'트리거 '+r.triggers+'개. 다음 추천부터 자동으로 전략이 만들어집니다.','ok');$('reload').hidden=false}
+else{say('sonMsg','시작하지 않았습니다['+(r.code||'error')+']: '+(CODES[r.code]||'원인을 알 수 없습니다.')+(r.rolledBack?'\\n이전 상태로 되돌렸습니다.':''),'bad');ssync()}},'sonMsg',function(){busy.son=false;ssync()})};
+$('soff').onclick=function(){if(busy.soff)return;busy.soff=true;$('soff').disabled=true;say('soffMsg','중지 중…');
+run('rich300OpsStratDisable',[],function(r){busy.soff=false;$('soff').disabled=false;say('soffMsg',r.ok?'전략 추적을 중지했습니다: 설정 off · 트리거 '+r.triggers+'개.':'중지 확인에 실패했습니다['+(r.code||'error')+'] — 다시 [전략 추적 중지]를 누르세요.',r.ok?'ok':'bad');$('reload').hidden=false},'soffMsg',function(){busy.soff=false;$('soff').disabled=false})};
 })()</script>`;
   return `${dashHead('RICH300 실전 감시 관리')}<body><main>${css}${body}</main>${script}</body></html>`;
 }
@@ -2506,6 +2549,406 @@ function watchSymbolVerdict(okxJson, bybitJson) {
   const okx = okxJson ? watchParseOkxTicker(okxJson) : null, byb = bybitJson ? watchParseBybitTicker(bybitJson) : null;
   if (okx || byb) return 'ok';
   return okxJson && bybitJson ? 'unknown' : 'unverified';
+}
+
+// ── feed.mjs ──
+// COIN RADAR → RICH300 추천 전달(피드): radar(GitHub Actions)가 서명한 피드 파일을 RICH300 이 *가져와서*(pull) 검증한다. 수신 서버·새 배포 없음(웹앱은 '나만' 접근이라 외부 POST 불가).
+//  · 파일: { v:1, ts, nonce, body:{ entries:[…] }, sig } — 요청 인증(auth.mjs)과 같은 봉투·같은 정규화·HMAC-SHA256(키 RICH300_FEED_KEY). 키가 설정돼 있으면 서명이 맞아야만 받는다(없으면 서명 없이 받되 '미서명'으로 표시).
+//  · 숫자는 모두 문자열(정규화 규칙). 항목은 radar 가 *전달이 확인된* 진입 후보만 담는다(전송 실패 후보는 없음).
+//  · 받은 항목도 다시 검증한다: 종목·방향·가격 방향성·시각·유효시간. 검증을 통과해야 전략이 만들어지고, 같은 sid 는 한 번만 만들어진다.
+
+const FEED_VERSION = 1;
+const FEED_MAX_AGE_MS = 30 * 60000;                  // 피드 파일이 이보다 오래되면 radar 쪽 중단으로 본다(진단용 — 이미 받은 전략 추적은 계속한다)
+const FEED_MAX_ENTRIES = 40;
+const FEED_MAX_BYTES = 60000;
+const FEED_SID_RE = /^SG-[A-Za-z0-9]{1,14}-[LS]-[a-z0-9]{4,10}$/, FEED_SYM_RE = /^[A-Z0-9]{2,20}USDT$/, FEED_NUM_RE = /^\d+(?:\.\d+)?$/;
+const fdNum = v => (typeof v === 'string' && FEED_NUM_RE.test(v) && Number(v) > 0 ? Number(v) : null);
+const fdMs = v => (typeof v === 'string' && /^\d{10,14}$/.test(v) ? Number(v) : Number.isSafeInteger(v) && v > 1e9 ? v : null);
+
+// raw: 피드 파일 본문(문자열). env: { now(), hmacSha256(key,msg):hex }. key: 서명 키(없으면 null → 서명 검사 생략, signed:false)
+function feedVerify(env, raw, key) {
+  if (typeof raw !== 'string' || !raw || raw.length > FEED_MAX_BYTES) return { ok: false, reason: 'bad-size' };
+  let msg; try { msg = JSON.parse(raw); } catch (e_) { return { ok: false, reason: 'bad-json' }; }
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg) || Object.keys(msg).sort().join(',') !== 'body,nonce,sig,ts,v' || msg.v !== FEED_VERSION || !Number.isSafeInteger(msg.ts) || typeof msg.sig !== 'string' || !/^[0-9a-f]{64}$/.test(msg.sig)) return { ok: false, reason: 'bad-format' };
+  const signed = typeof key === 'string' && key.length > 0;
+  if (signed) {
+    let s; try { s = authSignedString(msg.v, msg.ts, msg.nonce, msg.body); } catch (e_) { return { ok: false, reason: 'bad-body' }; }
+    if (!authTimingSafeEqual(env.hmacSha256(key, s), msg.sig)) return { ok: false, reason: 'bad-signature' };
+  }
+  const age = env.now() - msg.ts;
+  if (age < -5 * 60000) return { ok: false, reason: 'future-ts' };
+  const entries = msg.body && Array.isArray(msg.body.entries) ? msg.body.entries : null;
+  if (!entries || entries.length > FEED_MAX_ENTRIES) return { ok: false, reason: 'bad-entries' };
+  return { ok: true, signed, ageMs: Math.max(0, age), stale: age > FEED_MAX_AGE_MS, ts: msg.ts, entries };
+}
+// 항목 하나를 검증해 전략 입력으로 바꾼다. 실패하면 { ok:false, why }.
+function feedParseEntry(e) {
+  if (!e || typeof e !== 'object' || Array.isArray(e)) return { ok: false, why: 'not-object' };
+  if (e.type === 'invalidated') return FEED_SID_RE.test(String(e.sid)) ? { ok: true, kind: 'invalidated', sid: e.sid, at: fdMs(e.at), reason: String(e.reason || '').slice(0, 120) } : { ok: false, why: 'bad-sid' };
+  if (!FEED_SID_RE.test(String(e.sid))) return { ok: false, why: 'bad-sid' };
+  if (!FEED_SYM_RE.test(String(e.symbol))) return { ok: false, why: 'bad-symbol' };
+  if (e.dir !== 'LONG' && e.dir !== 'SHORT') return { ok: false, why: 'bad-dir' };
+  const entry = fdNum(e.entry), stop = fdNum(e.stop), closeT = fdMs(e.closeT), triggerT = fdMs(e.triggerT), validUntil = fdMs(e.validUntil), sg = e.dir === 'LONG' ? 1 : -1;
+  if (entry === null || stop === null || closeT === null || triggerT === null || validUntil === null) return { ok: false, why: 'bad-number' };
+  if (!((entry - stop) * sg > 0)) return { ok: false, why: 'stop-wrong-side' };
+  if (!(validUntil > closeT && validUntil - closeT <= 3 * 3600000)) return { ok: false, why: 'bad-validity' };
+  const score = typeof e.score === 'string' && /^\d{1,3}$/.test(e.score) ? Number(e.score) : null, rr = fdNum(e.rr1);
+  const ref = [fdNum(e.ref1), fdNum(e.ref2)], ev = Array.isArray(e.evidence) ? e.evidence.slice(0, 3).map(x => String(x).slice(0, 80)) : [];
+  return { ok: true, kind: 'candidate', sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+}
+
+// ── strategy.mjs ──
+// RICH300 추천 전략 자동 추적: COIN RADAR 가 알린 진입 후보(피드)로 *전략*을 만들고, 추천부터 종료까지 시세만으로 가상 추적한다. 주문·계정 API 없음, 사용자의 수동 등록 불필요.
+//  · 모든 진입·익절·손절은 '전략 기준 가상 체결'이다 — 사용자의 실제 Binance 체결이 아니다. 실제 포지션(Fills·ManualPositions)과 별도 시트(Strategies)·별도 성과로만 다룬다.
+//  · 상태: CANDIDATE → WAIT_ENTRY → ENTRY_TRIGGERED → TRACKING → TP1 → TP2 → TRAILING … 종료: DONE(전량 익절) · STOP · INVALIDATED · EXPIRED · CANCELLED(위험 한도 등으로 추천 제외)
+//  · 보수적 판정(15분 봉 기준, 봉 안에서 선후를 알 수 없을 때 불리한 쪽): ① 진입 체결과 손절이 같은 봉이면 진입 후 손절 ② 같은 봉에서 손절과 익절이 모두 닿으면 손절 ③ 체결이 일어난 봉에서는 익절을 인정하지 않음
+//    ④ 본전·추적 손절은 *다음 봉*부터 적용 ⑤ 지정가는 해당 가격에 닿을 때만 체결(통과해도 더 좋은 체결 가정 없음) ⑥ 추천 시각 *이후*에 시작한 봉만 사용(이미 지나간 봉으로 체결을 만들지 않는다)
+//  · 위험 한도: 평가액 300 USDT 기준, 거래당 위험 1%(점수 80 이상 1.5%), 격리 최대 3배, 동시 사용 증거금 30%, 일일 가상 손실 −3% 도달 시 신규 추천 제외. 한도를 넘는 전략은 일반 추천으로 보내지 않는다.
+//  · 알림은 위치 감시와 같은 전송 규칙(한 번만·실패 재시도·상한)을 쓰되 상태는 별도 접두어(sg:)에 둔다.
+
+const STRAT = Object.freeze({
+  equity: 300, riskBase: 0.01, riskStrong: 0.015, strongScore: 80, dayLossPct: 0.03, maxMarginUsage: 0.3, maxActive: 10, maxNewPerTick: 3,
+  nearEntryR: 0.3, stopNearR: 0.25, stopNearRearmR: 0.5, trailStepR: 0.25, weakStopR: 0.6, weakVol: 1.2, weakCooldownMs: 3600000,
+  maxTrackMs: 72 * 3600000, barMs: 900000, keepKvMs: 3 * 86400000, retryNoteMs: 6 * 3600000,
+});
+const STRAT_ACTIVE = Object.freeze(['CANDIDATE', 'WAIT_ENTRY', 'ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING']);
+const STRAT_ENDED = Object.freeze(['DONE', 'STOP', 'INVALIDATED', 'EXPIRED', 'CANCELLED']);
+const STRAT_LABEL = Object.freeze({ CANDIDATE: '추천 후보', WAIT_ENTRY: '진입 대기', ENTRY_TRIGGERED: '진입 조건 충족', TRACKING: '추적 중', TP1: 'TP1 도달', TP2: 'TP2 도달', TRAILING: '트레일링', DONE: '목표 완료', STOP: '손절', INVALIDATED: '무효화', EXPIRED: '만료', CANCELLED: '추천 취소' });
+const sgyIsActive = st => STRAT_ACTIVE.includes(st);
+const sgyOpenOf = x => x.fills.reduce((a, f) => a + f.qty, 0) - x.legs.reduce((a, l) => a + l.qty, 0) - (x.stopExit ? x.stopExit.qty : 0) - (x.timeExit ? x.timeExit.qty : 0);
+const sgyEnteredOf = x => x.fills.reduce((a, f) => a + f.qty, 0);
+const sgyAvgExec = x => { const q = sgyEnteredOf(x); return q > 0 ? x.fills.reduce((a, f) => a + f.exec * f.qty, 0) / q : null; };
+const sgyKst = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
+const sgyHm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
+const sgyBase = sym => String(sym).replace(/USDT$/, '');
+const sgyRiskPct = score => (Number.isFinite(score) && score >= STRAT.strongScore ? STRAT.riskStrong : STRAT.riskBase);
+
+// ── 생성 ──
+// fe: feedParseEntry 결과(candidate). ctx: { now, activeMargin, dayPnl }. 반환 { ok, s } | { ok:false, reason, notify, s? } — 거절도 CANCELLED 기록으로 남긴다.
+function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, activeCount = 0 }) {
+  const base = { sid: fe.sid, symbolId: fe.symbolId, dir: fe.dir, createdAt: now, updatedAt: now, score: fe.score === null ? undefined : fe.score, entry: String(fe.entry), stop: String(fe.stop) };
+  const x0 = { validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
+  const cancel = (reason, notify, plan) => ({ ok: false, reason, notify, s: { ...base, state: 'CANCELLED', endedAt: now, x: { ...x0, reason, ...(plan ? { plan } : {}) } } });
+  if (now > fe.validUntil) return cancel('expired-on-arrival', false);
+  if (activeCount >= STRAT.maxActive) return cancel('too-many-active', true);
+  if (dayPnl <= -STRAT.dayLossPct * STRAT.equity) return cancel('day-loss-limit', true);
+  const riskPct = sgyRiskPct(fe.score), plan = splanBuild({ symbol: fe.symbolId, dir: fe.dir, entry: fe.entry, stop: fe.stop, equity: STRAT.equity, params: { riskPct } });
+  if (plan.status !== 'ok') return cancel(`plan-${plan.reason}`, true);
+  if (plan.lev > 3) return cancel('leverage-over-3x', true);
+  if (activeMargin + plan.totalMargin > STRAT.maxMarginUsage * STRAT.equity + 1e-9) return cancel('margin-cap-total', true, plan);
+  return { ok: true, s: { ...base, state: 'CANDIDATE', x: { ...x0, plan, riskLabel: riskPct === STRAT.riskStrong ? 'strong' : 'base', riskPct } } };
+}
+
+// ── 봉 처리(순수) ──
+const sgyTouch = (dir, b, p) => (dir === 'LONG' ? b.l <= p : b.h >= p);
+const sgyReach = (dir, b, p) => (dir === 'LONG' ? b.h >= p : b.l <= p);
+function sgyFinish(s, state, at, reason, markPrice) {
+  const x = s.x, plan = x.plan, sg = splanSign(s.dir), f = plan.params.feeBps / 10000, entered = sgyEnteredOf(x);
+  s.state = state; s.endedAt = at; x.reason = reason;
+  if (entered > 0) {
+    let gross = 0, fee = 0; const avg = sgyAvgExec(x);
+    for (const fl of x.fills) fee += f * fl.exec * fl.qty;
+    for (const l of x.legs) { gross += (l.price - avg) * sg * l.qty; fee += f * l.price * l.qty; }
+    if (x.stopExit) { gross += (x.stopExit.exec - avg) * sg * x.stopExit.qty; fee += f * x.stopExit.exec * x.stopExit.qty; }
+    const open = sgyOpenOf(x);
+    if (open > 1e-12 && markPrice !== undefined) { x.timeExit = { at, price: markPrice, qty: open }; gross += (markPrice - avg) * sg * open; fee += f * markPrice * open; }
+    const net = gross - fee;
+    x.result = { usdt: net, gross, fee, pct: net / plan.equity, r: net / (plan.R * entered), entered, avgEntry: avg };
+  } else x.result = null;
+  return s;
+}
+const sgyEv = (x, type, at, price, extra) => { const e = { type, at, price, ...(extra || {}) }; x.events.push(e); if (x.events.length > 40) x.events.shift(); return e; };
+
+// bars: [{t,o,h,l,c,v,dur,coarse?}] 오래된 것 → 최신, *마감된 봉만*. 반환 { s, events } (s 는 복사본)
+function sgyRunBars(s0, bars, now) {
+  const s = JSON.parse(JSON.stringify(s0)), x = s.x, plan = x.plan, sg = splanSign(s.dir), R = plan.R, events = [];
+  for (const b of bars) {
+    if (!sgyIsActive(s.state) || s.state === 'CANDIDATE') break;
+    if (s.state === 'ENTRY_TRIGGERED') s.state = 'TRACKING'; else if (s.state === 'TP2') s.state = 'TRAILING';           // 한 봉 이상 지난 뒤에야 다음 상태로(알림이 나간 상태를 한 번은 보여 준다)
+    if (b.t < x.startT || b.t <= x.lastBarT || b.t + b.dur > now) continue;
+    x.lastBarT = b.t;
+    const note = b.coarse ? { coarse: true } : undefined;
+    let entered = sgyEnteredOf(x) > 0, filledNow = false;
+    if (!entered && b.t >= x.validUntil) { sgyFinish(s, 'EXPIRED', x.validUntil, 'entry-window-passed'); events.push(sgyEv(x, 'EXPIRED', x.validUntil, undefined)); break; }
+    // 진입·추가 진입(사전 지정 가격에 닿을 때만)
+    for (const st of plan.stages) {
+      if (x.fills.some(fl => fl.n === st.n) || x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) continue;           // 취소 알림이 나간 단계는 다시 체결하지 않는다
+      if (st.n === 1) { if (!sgyTouch(s.dir, b, st.price)) continue; }
+      else {
+        if (!x.fills.some(fl => fl.n === st.n - 1) || x.legs.length > 0) { if (x.legs.length > 0) { events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'after-tp' })); } continue; }
+        if (!sgyTouch(s.dir, b, st.price)) continue;
+        const bars15 = Math.max(0, Math.floor((b.t - x.closeT) / STRAT.barMs));
+        if (Number.isFinite(x.lastClose) && (x.lastClose - plan.add.structurePrice) * sg <= 0) { if (!x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'structure' })); continue; }
+        if (bars15 > plan.add.window) { if (!x.events.some(e => e.type === 'ADD_CANCEL' && e.n === st.n)) events.push(sgyEv(x, 'ADD_CANCEL', b.t, st.price, { n: st.n, reason: 'window' })); continue; }
+      }
+      x.fills.push({ n: st.n, price: st.price, exec: st.execPrice, qty: st.qty, at: b.t, ...(note || {}) }); filledNow = true;
+      if (st.n === 1) { s.state = 'ENTRY_TRIGGERED'; x.entryAt = b.t; events.push(sgyEv(x, 'ENTRY', b.t, st.price, { ...(note || {}) })); } else events.push(sgyEv(x, 'ADD', b.t, st.price, { n: st.n, ...(note || {}) }));
+    }
+    entered = sgyEnteredOf(x) > 0;
+    if (!entered) {                                                                         // 진입 전: 목표 1차가 먼저 닿으면 추격 금지(무효)
+      if (sgyReach(s.dir, b, plan.tps[0].price)) { sgyFinish(s, 'INVALIDATED', b.t, 'tp1-before-entry'); events.push(sgyEv(x, 'INVALIDATED', b.t, undefined, { reason: 'tp1-before-entry' })); break; }
+      x.lastClose = b.c; continue;
+    }
+    // 손절(진입·추가 체결이 있었던 봉에도 먼저 적용 — 보수적)
+    const sp = x.stopPrice;
+    if (sg > 0 ? b.l <= sp : b.h >= sp) {
+      const open = sgyOpenOf(x), exec = splanStopExec(s.dir, sp, plan.params.stopSlipBps); x.stopExit = { at: b.t, price: sp, exec, qty: open, kind: x.stopKind };
+      sgyFinish(s, 'STOP', b.t, x.stopKind === 'initial' ? 'stop' : x.stopKind === 'breakeven' ? 'breakeven-stop' : 'trailing-stop'); events.push(sgyEv(x, 'STOP', b.t, sp, { kind: x.stopKind, ...(note || {}) })); break;
+    }
+    // 익절(체결이 있었던 봉에서는 인정하지 않는다). 최소 주문 단위 때문에 TP1 수량이 0 으로 합쳐진 계획은 TP1 을 건너뛰고 TP2 에 합쳐 청산한다.
+    if (!filledNow) {
+      const legs = splanTpLegs(plan, sgyEnteredOf(x)).legs, merged1 = legs[0].qty <= 0;
+      for (const leg of legs) {
+        if (x.legs.some(l => l.n === leg.n) || leg.qty <= 0) continue;
+        if (leg.n === 2 && !merged1 && !x.legs.some(l => l.n === 1)) continue;
+        if (!sgyReach(s.dir, b, leg.price)) continue;
+        x.legs.push({ n: leg.n, price: leg.price, qty: leg.qty, at: b.t }); s.state = leg.n === 1 ? 'TP1' : 'TP2'; events.push(sgyEv(x, leg.n === 1 ? 'TP1' : 'TP2', b.t, leg.price, { qty: leg.qty, ...(note || {}) }));
+      }
+    }
+    const merged = splanTpLegs(plan, sgyEnteredOf(x)).legs[0].qty <= 0, tp2Done = x.legs.some(l => l.n === 2), tp1Done = x.legs.some(l => l.n === 1) || (merged && tp2Done);
+    if (sgyOpenOf(x) <= 1e-12) { sgyFinish(s, 'DONE', b.t, 'all-targets'); events.push(sgyEv(x, 'DONE', b.t, undefined)); break; }
+    // 다음 봉부터 적용되는 손절 이동: TP1 후 본전, TP2 후 최고(최저)−1R(본전 아래로 내리지 않음)
+    const avg = sgyAvgExec(x);
+    if (tp1Done && x.stopKind === 'initial') { x.stopPrice = avg; x.stopKind = 'breakeven'; events.push(sgyEv(x, 'BE', b.t, avg)); }
+    if (tp2Done) {
+      x.ext = x.ext === undefined ? (sg > 0 ? b.h : b.l) : (sg > 0 ? Math.max(x.ext, b.h) : Math.min(x.ext, b.l));
+      const trail = x.ext - sg * plan.params.trailR * R, want = sg > 0 ? Math.max(avg, trail) : Math.min(avg, trail);
+      if ((want - x.stopPrice) * sg > 0) { const step = (want - x.stopPrice) * sg; x.stopKind = 'trailing'; x.stopPrice = want; if (step >= STRAT.trailStepR * R || !x.trailAnnounced) { x.trailAnnounced = true; events.push(sgyEv(x, 'TRAIL', b.t, want)); } }
+    }
+    if (b.t + b.dur - nullishOr(x.entryAt, b.t) > STRAT.maxTrackMs) { sgyFinish(s, 'EXPIRED', b.t + b.dur, 'max-track-time', b.c); events.push(sgyEv(x, 'EXPIRED', b.t + b.dur, b.c, { reason: 'max-track-time' })); break; }
+    x.lastClose = b.c;
+  }
+  if (s.state === 'ENTRY_TRIGGERED' && events.every(e => e.type !== 'ENTRY')) s.state = 'TRACKING'; else if (s.state === 'TP2' && events.every(e => e.type !== 'TP2')) s.state = 'TRAILING';
+  s.updatedAt = now;
+  return { s, events };
+}
+
+// 15분 봉 + 시세 공백 구간은 1시간 봉으로 보충(보수적 규칙 그대로). 마감된 봉만.
+function sgyBarsFor(market, lastBarT, startT, now) {
+  const from = Math.max(lastBarT + 1, startT), b15 = (market.bars15m || []).filter(b => b.t >= from && b.t + 900000 <= now).map(b => ({ ...b, dur: 900000 })), out = [];
+  const first15 = b15.length ? b15[0].t : now;
+  if (first15 - from > 900000) for (const b of (market.bars1h || [])) if (b.t >= from && b.t + 3600000 <= first15) out.push({ ...b, dur: 3600000, coarse: true });
+  return out.concat(b15).sort((a, c) => a.t - c.t);
+}
+
+// ── 시세 기준 점검(봉 마감 전 알림): 진입 접근·손절 접근·추세 약화·진입 전 4시간 추세 반전 ──
+function sgyNotes(s, { price, market, now }, ns) {
+  const x = s.x, plan = x.plan, sg = splanSign(s.dir), R = plan.R, out = [], armed = ns.armed || (ns.armed = {}), last = ns.last || (ns.last = {});
+  if (s.state === 'WAIT_ENTRY') {
+    const d = (price - plan.stages[0].price) * sg;                                                // >0 이면 진입가보다 유리한 쪽(눌림 전)
+    if (armed.entryNear === undefined) armed.entryNear = d > STRAT.nearEntryR * R;                  // 처음 볼 때 이미 가까우면 '접근' 알림 없이 소진(신규 추천 메시지에 이미 현재가가 있다)
+    else if (d > STRAT.nearEntryR * R) armed.entryNear = true;
+    if (d >= 0 && d <= STRAT.nearEntryR * R && armed.entryNear !== false) { armed.entryNear = false; out.push({ type: 'ENTRY_NEAR', key: `ENTRY_NEAR:${s.sid}`, level: 'info', price }); }
+    const t4 = market ? watchTrend(market.bars4h) : { state: 'unknown' };
+    if (wAgainst(t4, s.dir)) out.push({ type: 'TREND_INVALID', key: `TREND_INVALID:${s.sid}`, level: 'warn', price, terminal: true, reason: '4h-trend-flip' });
+  } else if (['ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING'].includes(s.state)) {
+    const dStop = (price - x.stopPrice) * sg;
+    if (dStop > STRAT.stopNearRearmR * R) armed.stopNear = true;
+    if (dStop > 0 && dStop <= STRAT.stopNearR * R && armed.stopNear !== false) { armed.stopNear = false; ns.nNear = (ns.nNear || 0) + 1; out.push({ type: 'STOP_NEAR', key: `STOP_NEAR:${s.sid}:${ns.nNear}`, level: 'critical', price, dStopR: dStop / R }); }
+    const t1 = market ? watchTrend(market.bars1h) : { state: 'unknown' }, v1 = market ? watchVolRatio(market.bars1h) : null;
+    if (dStop > 0 && dStop <= STRAT.weakStopR * R && wAgainst(t1, s.dir) && v1 !== null && v1 >= STRAT.weakVol && now - nullishOr(last.WEAK, 0) >= STRAT.weakCooldownMs) { last.WEAK = now; out.push({ type: 'WEAK', key: `WEAK:${s.sid}:${market.bars1h[market.bars1h.length - 1].t}`, level: 'warn', price, v1, dStopR: dStop / R }); }
+  }
+  return out;
+}
+
+// ── 메시지 ──
+const sgyDp = plan => Math.max(splanDecimals(String(plan.entry)), 2);
+const sgyF = (v, plan) => Number(v).toFixed(sgyDp(plan));
+const sgyReasonKo = c => ({ 'day-loss-limit': '일일 가상 손실 한도(−3%) 도달 — 오늘 신규 추천 제외', 'too-many-active': `동시 추적 전략 ${STRAT.maxActive}개 초과`, 'margin-cap-total': `동시 사용 증거금이 평가액의 ${Math.round(STRAT.maxMarginUsage * 100)}%를 넘음`, 'leverage-over-3x': '격리 3배 초과 필요', 'expired-on-arrival': '전달 지연으로 유효시간 경과' }[c] || (String(c).startsWith('plan-') ? splanReasonText(String(c).slice(5)) : c));
+const SGY_FOOT = '※ 전략 기준 가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님 · 판단 보조용';
+function sgyNewMessage(s, { price, priceAt, source, now }) {
+  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), sg = splanSign(s.dir), icon = s.dir === 'LONG' ? '🟢' : '🔴', L = [];
+  L.push(`[RICH300 신규 매매 전략]`, `${icon} ${sgyBase(s.symbolId)} · ${s.dir}${s.score !== undefined ? ` · 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`);
+  if (x.evidence && x.evidence.length) { L.push('📈 진입 근거'); for (const e of x.evidence) L.push(`• ${e}`); }
+  L.push(`💵 현재가 ${F(price)} (${source || '시세'} ${sgyHm(priceAt)} KST) · 추천 기준가 ${F(plan.entry)}`);
+  L.push(`⏱ 진입 유효: ~${sgyKst(x.validUntil)} KST (그 전에 1차가 안 닿으면 만료)`);
+  L.push(`🧭 1차 진입 구간 ${F(plan.stages[0].price)}(지정가 기준, 눌림 접근 알림 ${STRAT.nearEntryR}R 이내)`);
+  for (const st of plan.stages) L.push(`  ${st.n}차 ${Math.round(st.weight * 100)}% · ${F(st.price)}${st.n > 1 ? ` (−${plan.params.addR[st.n - 2]}R, 구조 유지·TP 전에만)` : ''} · 수량 ${splanQty(st.qty, plan.spec)} · 증거금 ${st.margin.toFixed(2)}`);
+  L.push(`🛑 손절 ${F(plan.stop)} (1R=${F(plan.R)}, 고정) · 예상 최대 손실 −${plan.worstLoss.toFixed(2)} USDT (평가액 ${plan.equity} 의 ${(plan.worstLossPct * 100).toFixed(2)}%, 수수료·슬리피지 포함)`);
+  L.push(`🎯 TP1 ${F(plan.tps[0].price)} (+${plan.tps[0].r}R) ${Math.round(plan.tps[0].w * 100)}% 청산 → 손절 본전 · TP2 ${F(plan.tps[1].price)} (+${plan.tps[1].r}R) ${Math.round(plan.tps[1].w * 100)}% 청산 · 잔여 ${Math.round(plan.runnerWeight * 100)}% 최고(최저)−${plan.params.trailR}R 추적`);
+  L.push(`⚖️ 목표 손익비 TP1 ${plan.tps[0].r}R · TP2 ${plan.tps[1].r}R${x.rr1 ? ` · 비용 반영 1차 ${x.rr1.toFixed(2)}R(참고)` : ''} · 예상 비용 수수료 −${plan.worstFee.toFixed(2)} · 슬리피지 −${plan.worstSlip.toFixed(2)} USDT`);
+  L.push(`📊 격리 ${plan.lev}배 · 증거금 ${plan.totalMargin.toFixed(2)} USDT (평가액의 ${(plan.marginUsage * 100).toFixed(1)}%, 한도 ${Math.round(STRAT.maxMarginUsage * 100)}%) · 청산가(근사) ${F(plan.liqPrice)}`);
+  if (x.volRel || x.btcAlign) L.push(`🌐 추천 당시: ${x.volRel ? `15분 거래량 ×${x.volRel.toFixed(1)}` : ''}${x.volRel && x.btcAlign ? ' · ' : ''}${x.btcAlign ? `BTC 4H ${x.btcAlign}` : ''}`);
+  L.push('🚫 무효화: 15분 봉이 손절가를 터치 · 진입 전 TP1 선도달 · 4시간 추세 반전 · 유효시간 경과');
+  L.push(`📌 진입 조건 알림이 와도 이는 '전략 기준 가상 진입'입니다. 실제로 진입하려면 Binance 에서 직접 주문하세요.`, SGY_FOOT);
+  return L.join('\n');
+}
+function sgyCancelMessage(s) {
+  return [`[RICH300 추천 제외] ${sgyBase(s.symbolId)} ${s.dir}`, `사유: ${sgyReasonKo(s.x.reason)}`, '위험 한도를 넘어 일반 추천으로 보내지 않습니다(추적·기록만 남김).', SGY_FOOT].join('\n');
+}
+const SGY_HEAD = { ENTRY_NEAR: '🧭 진입 구간 접근', ENTRY: '✅ 진입 조건 충족(가상 진입)', ADD: '➕ 추가 진입 조건 충족(가상)', ADD_CANCEL: '✖️ 추가 진입 취소', STOP_NEAR: '⚠️ 손절 접근', STOP: '🛑 손절 조건 충족(가상 손절)', TP1: '🎯 TP1 도달', TP2: '🎯 TP2 도달', BE: '🔼 손절 본전 이동 제안', TRAIL: '🔼 트레일링 기준 변경', WEAK: '⚠️ 추세 약화', TREND_INVALID: '🚫 전략 무효화(4시간 추세 반전)', INVALIDATED: '🚫 전략 무효화', EXPIRED: '⌛ 전략 만료', DONE: '🏁 전량 목표 완료' };
+const SGY_ADD_WHY = { 'after-tp': '익절이 시작되어 추가 진입 취소', structure: '구조 유지 조건(직전 15분 종가) 미충족', window: '추가 진입 허용 시간 경과' };
+const SGY_INV_WHY = { 'radar-invalidated': 'COIN RADAR 가 이 추천을 무효화(구조 이탈·손절 기준 이탈)', 'tp1-before-entry': '진입 전에 TP1 가격이 먼저 닿음(추격 금지)', '4h-trend-flip': '4시간 추세가 전략 방향과 반대로 전환' };
+function sgyResultLines(s) {
+  const r = s.x.result, plan = s.x.plan; if (!r) return ['최종 가상 성적: 진입 없음(손익 0)'];
+  return [`최종 가상 성적: ${r.usdt >= 0 ? '+' : '−'}${Math.abs(r.usdt).toFixed(2)} USDT (${r.pct >= 0 ? '+' : '−'}${Math.abs(r.pct * 100).toFixed(2)}% · ${r.r >= 0 ? '+' : '−'}${Math.abs(r.r).toFixed(2)}R) · 평균 진입 ${sgyF(r.avgEntry, plan)} · 수수료·슬리피지 반영`];
+}
+function sgyEventMessage(s, ev, { price, now, snap }) {
+  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), L = [`[RICH300 전략] ${sgyBase(s.symbolId)} ${s.dir} · ${SGY_HEAD[ev.type] || ev.type}${ev.coarse ? ' (시세 공백 구간: 1시간봉 기준)' : ''}`];
+  const sg = splanSign(s.dir), open = sgyOpenOf(x), avg = sgyAvgExec(x);
+  switch (ev.type) {
+    case 'ENTRY_NEAR': L.push(`현재가 ${F(price)} → 1차 진입가 ${F(plan.stages[0].price)} 근처(유효 ~${sgyHm(x.validUntil)} KST)`); break;
+    case 'ENTRY': L.push(`전략 기준 1차 가상 진입 ${F(ev.price)} · 수량 ${splanQty(plan.stages[0].qty, plan.spec)}`, `손절 ${F(plan.stop)} · TP1 ${F(plan.tps[0].price)} · TP2 ${F(plan.tps[1].price)}`, '실제 Binance 주문이 체결됐다는 뜻이 아닙니다.'); break;
+    case 'ADD': L.push(`${ev.n}차 가상 추가 진입 ${F(ev.price)} · 평균 ${F(avg)} · 보유 ${splanQty(open, plan.spec)}`); break;
+    case 'ADD_CANCEL': L.push(`${ev.n}차 추가 진입 취소: ${SGY_ADD_WHY[ev.reason] || ev.reason}`); break;
+    case 'STOP_NEAR': L.push(`현재가 ${F(price)} · 손절 ${F(x.stopPrice)}까지 ${snap && snap.dStopR !== undefined ? snap.dStopR.toFixed(2) + 'R' : ''} 남음`, '전략 손절 조건이 가까워졌습니다.'); break;
+    case 'STOP': L.push(`손절 기준 ${F(ev.price)} (${{ initial: '최초 손절', breakeven: '본전 손절', trailing: '추적 손절' }[ev.kind] || ev.kind}) 15분 봉이 터치`, ...sgyResultLines(s)); break;
+    case 'TP1': L.push(`TP1 ${F(ev.price)} 도달 · 전략상 ${Math.round(plan.tps[0].w * 100)}% 가상 청산(${splanQty(ev.qty || 0, plan.spec)})`, '다음 봉부터 손절이 본전으로 이동합니다.'); break;
+    case 'TP2': L.push(`TP2 ${F(ev.price)} 도달 · 전략상 ${Math.round(plan.tps[1].w * 100)}% 가상 청산 · 잔여는 추적 손절로 관리`); break;
+    case 'BE': L.push(`TP1 이후 손절을 평균 진입가 ${F(ev.price)}(본전)로 옮기는 것을 제안합니다(유리한 방향만).`); break;
+    case 'TRAIL': L.push(`추적 손절 기준 ${F(ev.price)} (최고·최저 기준 −${plan.params.trailR}R, 본전 아래로는 내리지 않음)`); break;
+    case 'WEAK': L.push(`1시간 추세가 전략 방향과 반대 · 거래량 평균의 ${snap && snap.v1 ? snap.v1.toFixed(1) : '?'}배 · 손절까지 ${snap && snap.dStopR !== undefined ? snap.dStopR.toFixed(2) + 'R' : ''}`, '추가 진입은 없습니다. 전략 유지 여부를 점검하세요.'); break;
+    case 'TREND_INVALID': case 'INVALIDATED': L.push(`사유: ${SGY_INV_WHY[ev.reason] || SGY_INV_WHY['4h-trend-flip']}`, '진입 전 전략이 취소되었습니다(진입 없음).'); break;
+    case 'EXPIRED': L.push(ev.reason === 'max-track-time' ? `추적 최대 시간(72시간) 도달 — 현재가 ${F(price)} 기준으로 종료` : `진입 유효시간(${sgyHm(x.validUntil)} KST)이 지나 만료 — 1차 진입가가 닿지 않아 진입 없음`, ...(x.result ? sgyResultLines(s) : [])); break;
+    case 'DONE': L.push('TP1·TP2·잔여 수량이 모두 목표로 청산되었습니다.', ...sgyResultLines(s)); break;
+    default: break;
+  }
+  L.push(SGY_FOOT); return L.join('\n');
+}
+
+// ── 요약(웹앱·점검용, 순수) ──
+function sgySummary(rows, now) {
+  const ended = rows.filter(r => STRAT_ENDED.includes(r.state)), entered = ended.filter(r => r.x.result), wins = entered.filter(r => r.x.result.usdt > 0), losses = entered.filter(r => r.x.result.usdt < 0);
+  const sum = (a, f) => a.reduce((t, r) => t + f(r), 0), day = kstDayOf(now), today = entered.filter(r => kstDayOf(r.endedAt) === day);
+  return { total: rows.length, active: rows.filter(r => sgyIsActive(r.state)).length, ended: ended.length, entered: entered.length, notEntered: ended.length - entered.length, wins: wins.length, losses: losses.length, winRate: entered.length ? wins.length / entered.length : null,
+    usdt: sum(entered, r => r.x.result.usdt), r: sum(entered, r => r.x.result.r), avgR: entered.length ? sum(entered, r => r.x.result.r) / entered.length : null, todayUsdt: sum(today, r => r.x.result.usdt),
+    byState: Object.fromEntries(STRAT_ENDED.map(k => [k, ended.filter(r => r.state === k).length])) };
+}
+
+// ── 저장(시트) ──
+function sgyList(se) { return storeList(se, 'strategy').map(r => ({ ...r.data, rev: r.rev })); }
+const sgyActor = { actor: 'sys:strategy' };
+function sgyPersist(se, s0, s1) {
+  if (!s0) return storeCreate(se, 'strategy', s1, sgyActor);
+  return storeRevise(se, 'strategy', s1.sid, { state: s1.state, updatedAt: s1.updatedAt, endedAt: s1.endedAt === undefined ? null : s1.endedAt, x: s1.x }, { actor: sgyActor.actor, reason: `전이 ${s0.state}→${s1.state}` });
+}
+
+// ── 한 번의 실행 ──
+// env: { now(), mode():'off'|'preview'|'on', storeEnv(), kv, market(symbol), send(text), feed():{ok,raw|code}, feedKey():string|null, hmacSha256 }
+function strategyTick(env) {
+  const now = env.now(), mode = env.mode(); if (mode !== 'on' && mode !== 'preview') return { status: 'off' };
+  const se = env.storeEnv(), live = mode === 'on', out = { status: 'ok', mode, feed: null, created: 0, cancelled: 0, skippedFeed: 0, tracked: 0, events: 0, sent: 0, failed: 0, capped: 0, ended: 0, marketFail: 0, stale: 0 };
+  const kv = { get: k => env.kv.get(k === 'cap' ? 'sgcap' : k.replace(/^pos:/, 'sg:')), put: (k, v) => env.kv.put(k === 'cap' ? 'sgcap' : k.replace(/^pos:/, 'sg:'), v), del: k => env.kv.del(k.replace(/^pos:/, 'sg:')), keys: () => env.kv.keys() };
+  const env2 = { ...env, kv };
+  const rows = new Map(sgyList(se).map(r => [r.sid, r]));
+  // 1) 피드 → 새 전략
+  const radarInv = new Set();
+  let f = null; try { f = env.feed(); } catch (e_) { f = { ok: false, code: 'exception' }; }
+  if (f && f.ok) {
+    const v = feedVerify(env, f.raw, env.feedKey ? env.feedKey() : null);
+    out.feed = v.ok ? { ok: true, signed: v.signed, ageMin: Math.round(v.ageMs / 60000), stale: v.stale, entries: v.entries.length } : { ok: false, code: v.reason };
+    if (v.ok) {
+      const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
+      const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
+      const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
+      let dayPnl = [...rows.values()].filter(r => STRAT_ENDED.includes(r.state) && r.x.result && kstDayOf(r.endedAt) === day).reduce((a, r) => a + r.x.result.usdt, 0);
+      for (const fe of cands) {
+        if (rows.has(fe.sid)) continue; if (out.created + out.cancelled >= STRAT.maxNewPerTick) break;
+        const margin = activeRows.reduce((a, r) => a + (r.x.plan ? r.x.plan.totalMargin : 0), 0), res = sgyBuild(fe, { now, activeMargin: margin, dayPnl, activeCount: activeRows.length });
+        try { if (live) sgyPersist(se, null, res.s); } catch (e_) { out.persistError = (out.persistError || 0) + 1; continue; }      // 저장하지 못하면 만들지 않는다(다음 실행에서 다시)
+        if (res.ok) { out.created++; rows.set(res.s.sid, res.s); activeRows.push(res.s); }
+        else { out.cancelled++; rows.set(res.s.sid, res.s); if (res.notify) res.s.pendingNotice = true; }
+      }
+    }
+  } else out.feed = { ok: false, code: (f && f.code) || 'no-feed' };
+  // 2) 활성 전략 추적
+  const markets = new Map();
+  const clock = typeof env.clock === 'function' ? env.clock : null, t0 = clock ? clock() : 0, budget = nullishOr(env.budgetMs, 150000);
+  const getMarket = sym => { if (markets.has(sym)) return markets.get(sym); if (clock && clock() - t0 > budget) { out.marketFail++; out.budget = true; markets.set(sym, null); return null; } let m; try { m = env.market(sym); } catch (e_) { m = { ok: false }; } const a = m && m.ok ? watchAssessMarket(m, now) : { ok: false, why: 'fetch' }; const r = a.ok ? { ...m } : null; if (!r) { out.marketFail++; if (m && m.ok) out.stale++; } markets.set(sym, r); return r; };
+  out.preview = [];
+  for (const s0 of [...rows.values()].sort((a, b) => a.createdAt - b.createdAt)) {
+    const ns = wLoadState(kv, s0.sid), nsRaw = JSON.stringify(ns), msgs = [];
+    const push = (ev, text, level) => msgs.push({ key: ev.key || `${ev.type}:${s0.sid}${ev.n ? ':' + ev.n : ''}${ev.at ? ':' + ev.at : ''}`, sid: s0.sid, level, text });
+    let s = s0;
+    if (s0.state === 'CANCELLED') {                                                                   // 위험 한도로 제외된 전략: 안내 1회
+      if (s0.pendingNotice || (live && !ns.sent[`CANCEL:${s0.sid}`] && now - s0.createdAt < STRAT.retryNoteMs && s0.x.reason !== 'expired-on-arrival')) { push({ key: `CANCEL:${s0.sid}`, type: 'CANCEL' }, sgyCancelMessage(s0), 'info'); }
+    } else if (sgyIsActive(s0.state)) {
+      out.tracked++;
+      const m = getMarket(s0.symbolId);
+      if ((s0.state === 'CANDIDATE' || s0.state === 'WAIT_ENTRY') && radarInv.has(s0.sid)) {            // 진입 전 COIN RADAR 가 같은 추천을 무효화했으면 전략도 무효화
+        s = JSON.parse(JSON.stringify(s0)); sgyFinish(s, 'INVALIDATED', now, 'radar-invalidated'); s.updatedAt = now; out.ended++;
+        if (live) { try { sgyPersist(se, s0, s); } catch (e_) { out.persistError = (out.persistError || 0) + 1; continue; } }
+        const evI = { type: 'INVALIDATED', at: now, price: m ? m.price : undefined, reason: 'radar-invalidated' }; out.events++; if (s0.state === 'WAIT_ENTRY') push(evI, sgyEventMessage(s, evI, { price: m ? m.price : s.entry, now, snap: {} }), 'critical');
+      } else if (s0.state === 'CANDIDATE') {
+        if (now > s0.x.validUntil) { s = { ...JSON.parse(JSON.stringify(s0)), state: 'EXPIRED', endedAt: now, updatedAt: now }; s.x.reason = 'not-delivered'; if (live) sgyPersist(se, s0, s); out.ended++; }
+        else if (m) {
+          const text = sgyNewMessage(s0, { price: m.price, priceAt: m.priceAt, source: m.source, now });
+          if (!live) out.preview.push(text.split('\n').slice(0, 3).join(' | ')); else push({ key: `NEW:${s0.sid}`, type: 'NEW' }, text, 'info');
+        }
+      } else if (m) {
+        const res = sgyRunBars(s0, sgyBarsFor(m, s0.x.lastBarT, s0.x.startT, now), now); s = res.s;
+        const price = m.price, snapOf = {};
+        const evs = res.events;
+        // 종료·상태 변화는 먼저 저장(저장 실패 시 전송하지 않는다)
+        const changed = JSON.stringify(s.x) !== JSON.stringify(s0.x) || s.state !== s0.state;
+        let note = [];
+        if (!sgyIsActive(s.state)) out.ended++;
+        else { const ns2 = sgyNotes(s, { price, market: m, now }, ns); for (const n of ns2) { if (n.terminal) { s = sgyFinishTrend(s, now); evs.push({ type: 'TREND_INVALID', at: now, price, reason: n.reason, key: n.key }); out.ended++; break; } note.push(n); } }
+        if (changed || s.state !== s0.state) { if (live) { try { sgyPersist(se, s0, s); } catch (e_) { out.persistError = (out.persistError || 0) + 1; continue; } } }
+        for (const ev of evs) { out.events++; push({ ...ev, key: ev.key || undefined }, sgyEventMessage(s, ev, { price, now, snap: {} }), ['STOP', 'TREND_INVALID', 'INVALIDATED', 'EXPIRED', 'DONE'].includes(ev.type) ? 'critical' : 'info'); }
+        for (const n of note) { out.events++; push(n, sgyEventMessage(s, n, { price, now, snap: n }), n.level); }
+      }
+    }
+    if (!live || !msgs.length) { if (live && JSON.stringify(ns) !== nsRaw) wSaveState(kv, s0.sid, ns); for (const mm of msgs) out.preview.push(mm.text.split('\n')[0]); continue; }
+    const st = ns; st.sent = { ...ns.sent };
+    for (const mm of msgs) { const r = wDeliver(env2, st, mm, mm.text, now); if (r === 'sent') out.sent++; else if (r === 'failed') out.failed++; else if (r === 'capped') out.capped++; }
+    for (const [k, rec] of Object.entries(st.sent)) if (rec.st === 'failed' && now >= rec.next && !msgs.some(e => e.key === k)) { const r = wDeliver(env2, st, { key: k, sid: s0.sid }, rec.text, now); if (r === 'sent') out.sent++; else if (r === 'failed') out.failed++; }
+    wSaveState(kv, s0.sid, st);
+    // 새 전략 안내가 나갔으면(또는 전송 시도 이후 중단 표시가 남았으면) 진입 대기로 전환 — 이때부터의 봉만 사용한다
+    if (s.state === 'CANDIDATE') { const rec = st.sent[`NEW:${s0.sid}`]; if (rec && (rec.st === 'sent' || rec.st === 'pending')) { const s2 = JSON.parse(JSON.stringify(s)); s2.state = 'WAIT_ENTRY'; s2.updatedAt = now; s2.x.startT = Math.ceil(nullishOr(rec.sentAt, now) / STRAT.barMs) * STRAT.barMs; s2.x.sentAt = nullishOr(rec.sentAt, now); try { sgyPersist(se, s, s2); } catch (e_) { out.persistError = (out.persistError || 0) + 1; } } }
+  }
+  // 종료된 전략의 알림 상태는 며칠 뒤 정리
+  if (live) for (const k of env.kv.keys()) if (k.startsWith('sg:')) { const sid = k.slice(3), r = rows.get(sid); if (r && STRAT_ENDED.includes(r.state) && now - nullishOr(r.endedAt, now) > STRAT.keepKvMs) env.kv.del(k); }
+  out.active = [...rows.values()].filter(r => sgyIsActive(r.state)).length;
+  return out;
+}
+function sgyFinishTrend(s, now) { const c = JSON.parse(JSON.stringify(s)); sgyFinish(c, 'INVALIDATED', now, '4h-trend-flip'); c.updatedAt = now; return c; }
+
+// ── stratview.mjs ──
+// 추천 전략 화면(?p=strat): 신규 추천 · 진입 대기 · 자동 추적 중 · 종료 전략과 성과 · (선택) 실제 보유 포지션 링크. 모든 값은 서버가 만든 모델에서 와서 dashEsc 로 출력한다(시세 호출 없음).
+//  · 추천 전략의 성과는 '전략 기준 가상 추적'이다. 사용자의 실제 Binance 체결·계좌 성과(일지·성적·자산)와 따로 표시한다.
+
+const svUrl = (appUrl, q) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}${q}` : null);
+const svKst = ms => (Number.isFinite(ms) ? new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ') : '—');
+const svDp = p => Math.max((String(p).split('.')[1] || '').length, 2);
+const svNum = (v, p) => (v === undefined || v === null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(svDp(p)));
+const svSign = (v, d = 2) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(d)}`;
+const SV_END = { STOP: '손절', DONE: '목표 완료', INVALIDATED: '무효화(진입 없음)', EXPIRED: '만료', CANCELLED: '추천 취소(제외)' };
+const SV_REASON = { 'tp1-before-entry': 'TP1 선도달', '4h-trend-flip': '4시간 추세 반전', 'entry-window-passed': '진입 유효시간 경과', 'max-track-time': '최대 추적 시간', 'not-delivered': '추천 미전달', stop: '최초 손절', 'breakeven-stop': '본전 손절', 'trailing-stop': '추적 손절', 'all-targets': '전량 목표', 'day-loss-limit': '일일 손실 한도', 'margin-cap-total': '증거금 한도', 'too-many-active': '동시 전략 수 한도', 'expired-on-arrival': '전달 지연' };
+
+function svCard(r, now) {
+  const x = r.x, plan = x.plan, p = r.entry, F = v => svNum(v, p), tp = plan ? plan.tps : [];
+  const filled = x.fills ? x.fills.length : 0, legs = x.legs ? x.legs.length : 0;
+  const state = `<span class="badge${['TP1', 'TP2', 'TRAILING', 'DONE'].includes(r.state) ? ' ok' : ''}">${dashEsc(STRAT_LABEL[r.state] || r.state)}</span>`;
+  const lines = [`추천 기준 ${F(r.entry)} · 손절 ${F(x.stopPrice !== undefined ? x.stopPrice : r.stop)}${x.stopKind && x.stopKind !== 'initial' ? `(${x.stopKind === 'breakeven' ? '본전' : '추적'})` : ''}${tp.length ? ` · TP1 ${F(tp[0].price)} · TP2 ${F(tp[1].price)}` : ''}`];
+  if (r.state === 'CANDIDATE' || r.state === 'WAIT_ENTRY') lines.push(`진입 유효 ~${svKst(x.validUntil)} KST · 1차 지정가 ${plan ? F(plan.stages[0].price) : '—'}`);
+  else if (sgyIsActive(r.state)) lines.push(`가상 진입 ${filled}단계 체결 · 가상 청산 ${legs}회${x.fills && x.fills.length ? ` · 시작 ${svKst(x.entryAt)} KST` : ''}`);
+  if (plan && sgyIsActive(r.state)) lines.push(`위험 ${(plan.riskPct * 100).toFixed(1)}% · 격리 ${plan.lev}배 · 증거금 ${plan.totalMargin.toFixed(1)} USDT`);
+  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span><strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> ${state}${r.score !== undefined ? `<span class="sub"> · 점수 ${r.score}</span>` : ''}</div><div class="sub">${dashEsc(svKst(r.createdAt))} KST</div></div>${lines.map(l => `<div class="sub">${dashEsc(l)}</div>`).join('')}<div class="sub">전략 기준 가상 추적 · 실제 체결 아님</div></div>`;
+}
+function svEnded(r) {
+  const x = r.x, res = x.result, p = r.entry;
+  const out = res ? `<span class="${res.usdt >= 0 ? 'pos' : 'neg'}">${res.usdt >= 0 ? '▲' : '▼'} ${svSign(res.usdt)} USDT (${svSign(res.r)}R)</span>` : '<span class="zero">■ 진입 없음</span>';
+  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span><strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> <span class="badge">${dashEsc(SV_END[r.state] || r.state)}</span></div><div>${out}</div></div><div class="sub">${dashEsc(svKst(r.createdAt))} → ${dashEsc(svKst(r.endedAt))} KST · ${dashEsc(SV_REASON[x.reason] || x.reason || '')}${res ? ` · 평균 진입 ${dashEsc(svNum(res.avgEntry, p))}` : ''}${r.score !== undefined ? ` · 점수 ${r.score}` : ''}</div></div>`;
+}
+// m: { rows:[strategy…], now, feed?:{…}, mode:'off'|'preview'|'on', lastRun? }
+function stratRenderHtml({ m, appUrl = '', build = 'dev' } = {}) {
+  const rows = m.rows || [], now = m.now, sm = sgySummary(rows, now), sec = (title, list, empty, fn) => `<section class="card"><div class="k">${dashEsc(title)} (${list.length})</div>${list.length ? list.map(fn).join('') : `<p class="sub">${dashEsc(empty)}</p>`}</section>`;
+  const by = st => rows.filter(r => st.includes(r.state)).sort((a, b) => b.createdAt - a.createdAt), ended = rows.filter(r => !sgyIsActive(r.state)).sort((a, b) => b.endedAt - a.endedAt).slice(0, 30);
+  const modeText = { off: '꺼짐(자동 추적 안 함)', preview: '미리보기(계산만 — 저장·전송 없음)', on: '켜짐(추천 → 자동 추적·알림)' }[m.mode] || m.mode, ops = svUrl(appUrl, 'p=ops'), pos = svUrl(appUrl, 'p=pos'), jr = svUrl(appUrl, 'p=journal');
+  const perf = `<section class="card"><div class="k">추천 전략 가상 성적 (실제 계좌와 별개)</div><div class="grid2"><div><div class="k">진입한 전략</div><div class="v">${sm.entered}<small>건</small></div></div><div><div class="k">승률</div><div class="v">${sm.winRate === null ? '—' : Math.round(sm.winRate * 100) + '<small>%</small>'}</div></div><div><div class="k">가상 손익 합계</div><div class="v ${sm.usdt > 0 ? 'pos' : sm.usdt < 0 ? 'neg' : 'zero'}">${svSign(sm.usdt)}<small> USDT</small></div></div><div><div class="k">평균 R</div><div class="v">${sm.avgR === null ? '—' : svSign(sm.avgR)}<small> R</small></div></div></div>
+<div class="sub">손절 ${sm.byState.STOP} · 목표 완료 ${sm.byState.DONE} · 진입 없이 종료 ${sm.notEntered}(무효 ${sm.byState.INVALIDATED} · 만료 ${sm.byState.EXPIRED} · 취소 ${sm.byState.CANCELLED}) · 오늘 ${svSign(sm.todayUsdt)} USDT · 기준 평가액 300 USDT</div></section>`;
+  const body = `<header><h1>RICH 300 · 추천 전략</h1></header>${dashNav('strat', appUrl)}
+<section class="card"><div class="k">자동 추적 상태</div><div class="sub">COIN RADAR 추천이 생기면 RICH300 이 전략(진입 구간·분할·손절·TP·트레일링)을 만들고 종료까지 자동 추적합니다. 수동 등록은 필요 없습니다. 상태: <strong>${dashEsc(modeText)}</strong>${m.lastRun ? ` · 마지막 실행 ${dashEsc(String(m.lastRun.ageMin))}분 전(${dashEsc(m.lastRun.status)})` : ''}${m.feedOk === false ? ' · 추천 피드 연결 확인 필요' : ''}${ops ? ` · <a href="${dashEsc(ops)}" target="_top">관리 화면</a>` : ''}</div></section>
+${perf}
+${sec('신규 추천 전략', by(['CANDIDATE']), '전달 중인 새 추천이 없습니다.', r => svCard(r, now))}
+${sec('진입 대기 전략', by(['WAIT_ENTRY']), '진입 조건을 기다리는 전략이 없습니다.', r => svCard(r, now))}
+${sec('자동 추적 중인 전략', by(['ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING']), '가상 진입 후 추적 중인 전략이 없습니다.', r => svCard(r, now))}
+${sec('종료 전략 및 성과', ended, '아직 종료된 전략이 없습니다.', svEnded)}
+<section class="card"><div class="k">실제 보유 포지션 (선택 기능)</div><div class="sub">Binance 에서 직접 체결한 포지션을 등록하면 손절·익절을 따로 감시합니다. 추천 전략과는 별도이며 성과도 따로 집계됩니다(일지·성적·자산 화면).</div>${pos ? `<a class="cta" target="_top" href="${dashEsc(pos)}">포지션 등록·관리</a>` : ''}${jr ? ` <a class="cta" target="_top" href="${dashEsc(jr)}">일지(실제 성적)</a>` : ''}</section>
+<footer>전략 기준 가상 추적 · 자동 주문 없음 · 빌드 ${dashEsc(build)} · 갱신 ${dashEsc(svKst(now))} KST</footer>`;
+  const css = `<style>.pc{padding:10px 0;border-bottom:1px solid var(--line)}.pc:last-child{border:0}.pill{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:1px 9px;margin-right:6px}.row{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}</style>`;
+  return `${dashHead('RICH300 추천 전략')}<body><main>${css}${body}</main></body></html>`;
 }
 
 // ── close.mjs ──
@@ -3227,7 +3670,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, watchEvaluate, watchMessage, watchTick, watchSymbolVerdict, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, feedVerify, feedParseEntry, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyRunBars, sgyBarsFor, sgyNotes, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -3321,8 +3764,8 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'b245924cbfbc';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_' };
+var RICH300_BUILD = 'ba23a0dc99b1';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -3345,11 +3788,11 @@ function rich300Html_(html, title) { return HtmlService.createHtmlOutput(html).s
  *  · 페이지 함수가 예외를 던지면 오류 코드와 '다시 시도' 버튼이 있는 화면. 처리 시간은 최근 기록(?p=health)에 남긴다.
  */
 function doGet(e) {
-  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'dash', out;
+  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'strat', out;
   if (name === 'ping') return rich300Ping_();
   try {
     if (rich300UiWho_() !== 'owner') return rich300Html_(RICH300_ENGINE.shellRenderDenied({ appUrl: rich300AppUrl_() }), '접근 제한');
-    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'dash';
+    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'strat';
     var fn = globalThis[RICH300_PAGES_[page]];
     if (typeof fn !== 'function') throw new Error('page-missing');
     out = fn(e);
@@ -3903,7 +4346,11 @@ function rich300WatchCanSend_() {
   } catch (err) { return false; }
 }
 /** 시간 트리거 진입점(5분). 겹쳐 실행되지 않도록 사용자 락을 잡는다. 결과는 개수만 속성에 남긴다. */
-function rich300WatchTick() { return rich300WatchRun_(rich300WatchMode_()); }
+function rich300WatchTick() {
+  var out = rich300WatchRun_(rich300WatchMode_());                                    // 실제 보유 포지션 감시(기존 동작 그대로)
+  try { var sm = rich300StrategyMode_(); if (sm !== 'off') rich300StrategyRun_(sm); } catch (err) { /* 전략 추적 실패가 위치 감시를 막지 않는다 */ }      // 추천 전략 자동 추적(별도 설정·별도 상태)
+  return out;
+}
 /** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관, 어떤 속성도 쓰지 않는다). */
 function rich300WatchPreview() { return rich300WatchRun_('preview'); }
 function rich300WatchRun_(want) {
@@ -4016,11 +4463,12 @@ function rich300ManualUpdate(sid, patch) {
  *  · 이 파일은 Telegram 을 보내지 않는다. 자동 주문 없음. 로그·반환값에 토큰·채팅 ID·가격은 없다(개수·코드만).
  */
 var RICH300_OPS_PROD_ = 'RICH300_PROD_APPROVED', RICH300_OPS_WATCH_ = 'RICH300_WATCH_ALERTS', RICH300_OPS_PRE_ = 'ops:precheck', RICH300_OPS_LAST_ = 'ops:last';
-var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'ops:precheck': 'json', 'ops:last': 'json' };
+var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'RICH300_STRATEGY': ['on', 'off'], 'RICH300_FEED_KEY': 'secret', 'ops:precheck': 'json', 'ops:sprecheck': 'json', 'ops:last': 'json' };
 function rich300OpsSet_(name, value) {
   if (!Object.prototype.hasOwnProperty.call(RICH300_OPS_ALLOW_, name)) throw new Error('ops-not-allowed');
   var rule = RICH300_OPS_ALLOW_[name];
-  if (rule !== 'json' && rule.indexOf(value) < 0) throw new Error('ops-bad-value');
+  if (rule === 'secret') { if (!/^[A-Za-z0-9_-]{32,128}$/.test(String(value))) throw new Error('ops-bad-value'); }       // 비밀값은 전용 함수(rich300OpsSetFeedKey)만 쓴다
+  else if (rule !== 'json' && rule.indexOf(value) < 0) throw new Error('ops-bad-value');
   PropertiesService.getScriptProperties().setProperty(name, String(value));
 }
 function rich300OpsDel_(name) {
@@ -4030,12 +4478,14 @@ function rich300OpsDel_(name) {
 function rich300OpsWatchTriggers_() { return ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'rich300WatchTick'; }); }
 function rich300OpsLog_(action, code) { try { rich300OpsSet_(RICH300_OPS_LAST_, JSON.stringify({ at: Date.now(), action: action, code: code })); } catch (err) { /* 기록 실패는 무시 */ } }
 function rich300OpsJson_(key) { try { var r = PropertiesService.getScriptProperties().getProperty(key); return r ? JSON.parse(r) : null; } catch (err) { return null; } }
+function rich300OpsStratLast_() { var l = rich300StrategyLast_(); return l ? { ageMin: Math.round((Date.now() - l.at) / 60000), status: l.status, created: l.created, tracked: l.tracked, sent: l.sent, failed: l.failed, feed: l.feed ? { ok: l.feed.ok, code: l.feed.code || null } : null } : null; }
+function rich300OpsAge_(pre) { return pre ? { ageMin: Math.round((Date.now() - pre.at) / 60000), ok: !!pre.ok && pre.build === RICH300_BUILD } : null; }
 /** 읽기 전용 상태(시세·텔레그램 호출 없음, 시트는 포지션 개수 확인용으로만 읽는다). */
 function rich300OpsState_() {
   var w = rich300WatchState_(), t = rich300TgDiagState_(), props = PropertiesService.getScriptProperties(), n = null, pre = rich300OpsJson_(RICH300_OPS_PRE_), ol = rich300OpsJson_(RICH300_OPS_LAST_);
   try { n = RICH300_ENGINE.watchOpenPositions(rich300WatchEnv_('preview').storeEnv(), { now: Date.now() }).positions.length; } catch (err) { n = null; }
   return { env: t.env, tokenSet: t.tokenSet, paired: t.paired, prodApproved: t.prodApproved, gateSend: t.gateSend, prop: w.prop, mode: w.mode, effective: w.effective, triggers: w.triggers, last: w.last ? { ageMin: Math.round((Date.now() - w.last.at) / 60000), status: w.last.status, mode: w.last.mode, positions: w.last.positions, events: w.last.events, sent: w.last.sent, failed: w.last.failed, marketFail: w.last.marketFail, code: w.last.code || null } : null,
-    positions: n, precheck: pre ? { ageMin: Math.round((Date.now() - pre.at) / 60000), ok: !!pre.ok && pre.build === RICH300_BUILD } : null, opsLast: ol ? { ageMin: Math.round((Date.now() - ol.at) / 60000), action: ol.action, code: ol.code } : null };
+    strategy: { prop: rich300StrategyMode_(), keySet: !!props.getProperty('RICH300_FEED_KEY'), last: rich300OpsStratLast_(), precheck: rich300OpsAge_(rich300OpsJson_('ops:sprecheck')) }, positions: n, precheck: pre ? { ageMin: Math.round((Date.now() - pre.at) / 60000), ok: !!pre.ok && pre.build === RICH300_BUILD } : null, opsLast: ol ? { ageMin: Math.round((Date.now() - ol.at) / 60000), action: ol.action, code: ol.code } : null };
 }
 /** 페이지(?p=ops): 열기만 해서는 아무것도 바꾸지 않는다. */
 function rich300PageOps_(e) {
@@ -4059,12 +4509,12 @@ function rich300OpsPrecheck() {
 /** 실제 속성·트리거를 다시 조회한 결과. want: 'on' | 'off' */
 function rich300OpsVerify_(want) {
   var props = PropertiesService.getScriptProperties(), n = rich300OpsWatchTriggers_().length, prod = props.getProperty(RICH300_OPS_PROD_), watch = props.getProperty(RICH300_OPS_WATCH_);
-  var ok = want === 'on' ? prod === 'yes' && watch === 'on' && n === 1 && rich300WatchState_().effective === 'sends' : watch === 'off' && n === 0;
+  var ok = want === 'on' ? prod === 'yes' && watch === 'on' && n === 1 && rich300WatchState_().effective === 'sends' : watch === 'off' && (rich300StrategyMode_() !== 'off' ? n <= 1 : n === 0);
   return { ok: ok, triggers: n, prod: prod === 'yes', watch: watch };
 }
 function rich300OpsRollback_(before) {
   try { rich300OpsSet_(RICH300_OPS_WATCH_, 'off'); } catch (err) { /* 아래 확인에서 잡는다 */ }
-  try { rich300WatchRemoveTrigger(); } catch (err2) { /* 확인에서 잡는다 */ }
+  try { if (rich300StrategyMode_() === 'off') rich300WatchRemoveTrigger(); } catch (err2) { /* 확인에서 잡는다 */ }
   try { if (before.prod === null || before.prod === undefined) rich300OpsDel_(RICH300_OPS_PROD_); else if (before.prod === 'yes') rich300OpsSet_(RICH300_OPS_PROD_, 'yes'); } catch (err3) { /* 확인에서 잡는다 */ }
   var v = rich300OpsVerify_('off'), props = PropertiesService.getScriptProperties(), prodNow = props.getProperty(RICH300_OPS_PROD_), prodOk = before.prod === null || before.prod === undefined ? prodNow === null : prodNow === before.prod;
   return v.ok && prodOk;
@@ -4100,10 +4550,142 @@ function rich300OpsDisable() {
   var lock = LockService.getScriptLock(), held = lock.tryLock(10000);          // 못 잡아도 중지는 진행한다(멱등)
   try {
     try { rich300OpsSet_(RICH300_OPS_WATCH_, 'off'); } catch (err) { /* 아래 확인에서 잡는다 */ }
-    try { rich300WatchRemoveTrigger(); } catch (err2) { /* 확인에서 잡는다 */ }
+    try { if (rich300StrategyMode_() === 'off') rich300WatchRemoveTrigger(); } catch (err2) { /* 확인에서 잡는다 */ }      // 추천 전략 추적이 켜져 있으면 같은 5분 트리거를 남긴다
     var v = rich300OpsVerify_('off'); rich300OpsLog_('disable', v.ok ? 'ok' : 'verify-failed');
     return { ok: v.ok, code: v.ok ? 'disabled' : 'verify-failed', triggers: v.triggers, lockless: !held };
   } finally { if (held) lock.releaseLock(); }
+}
+
+/** ── 추천 전략 자동 추적 관리(?p=ops 3개 구역) ───────────────────────────────────────────────── */
+/** 서명 키 등록(한 번만 · 소유자 전용): 값은 화면·로그·반환값에 되돌려 주지 않는다. radar 쪽 GitHub Secret RICH300_FEED_KEY 와 같은 값이어야 한다. */
+function rich300OpsSetFeedKey(key) {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  try {
+    if (PropertiesService.getScriptProperties().getProperty('RICH300_FEED_KEY')) return { ok: false, code: 'already-set' };
+    var k = String(key === null || key === undefined ? '' : key).replace(/\s/g, '');
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(k)) return { ok: false, code: 'bad-format' };
+    rich300OpsSet_('RICH300_FEED_KEY', k);
+    rich300OpsLog_('feed-key', 'ok'); return { ok: true, code: 'saved' };
+  } catch (err) { return { ok: false, code: 'exception' }; }
+  finally { lock.releaseLock(); }
+}
+/** 전략 추적 사전 점검(읽기 전용): Telegram 준비 + 피드 가져오기·서명 검증 + 시세 + 미리보기. 메시지·저장·트리거·설정 변경 없음. */
+function rich300OpsStratPrecheck() {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  try {
+    var st = rich300OpsState_(), net = rich300WatchNetCheck_(), pv = rich300StrategyRun_('preview');
+    var ev = RICH300_ENGINE.opsEvaluateStrategy({ state: st, net: net, preview: { status: pv.status, feed: pv.feed || null, marketFail: pv.marketFail || 0, code: pv.code || null, keySet: st.strategy.keySet } });
+    rich300OpsSet_('ops:sprecheck', JSON.stringify({ at: Date.now(), build: RICH300_BUILD, ok: ev.ok }));
+    return { ok: true, pass: ev.ok, items: ev.items };
+  } catch (err) { return { ok: false, code: 'exception' }; }
+  finally { lock.releaseLock(); }
+}
+function rich300OpsStratVerify_(want) {
+  var props = PropertiesService.getScriptProperties(), n = rich300OpsWatchTriggers_().length, prod = props.getProperty(RICH300_OPS_PROD_), sm = props.getProperty('RICH300_STRATEGY');
+  var ok = want === 'on' ? prod === 'yes' && sm === 'on' && n === 1 && rich300WatchCanSend_() : sm === 'off' && (rich300WatchMode_() !== 'off' ? n <= 1 : n === 0);
+  return { ok: ok, triggers: n, strategy: sm };
+}
+function rich300OpsStratEnable(phrase) {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  if (String(phrase === null || phrase === undefined ? '' : phrase).trim() !== RICH300_ENGINE.OPS_STRAT_PHRASE) return { ok: false, code: 'phrase' };
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  var props = PropertiesService.getScriptProperties(), before = { prod: props.getProperty(RICH300_OPS_PROD_), strat: props.getProperty('RICH300_STRATEGY'), triggers: rich300OpsWatchTriggers_().length }, changed = false;
+  try {
+    var cur = rich300OpsStratVerify_('on'); if (cur.ok) return { ok: true, code: 'already-on', triggers: cur.triggers };
+    var pre = rich300OpsJson_('ops:sprecheck');
+    if (!pre || !pre.ok || pre.build !== RICH300_BUILD || Date.now() - pre.at > RICH300_ENGINE.OPS_PRECHECK_TTL_MS || pre.at > Date.now() + 60000) return { ok: false, code: 'precheck-required' };
+    var t = rich300TgDiagState_();
+    if (!t.tokenSet || !t.paired || t.env !== 'prod' || (t.gateSend && t.gateSend !== 'prod-not-approved')) return { ok: false, code: 'tg-not-ready' };
+    changed = true;
+    rich300OpsSet_(RICH300_OPS_PROD_, 'yes');
+    if (before.triggers !== 1) rich300WatchInstallTrigger();           // 5분 트리거가 이미 정확히 1개면 그대로 둔다(위치 감시와 공유)
+    rich300OpsSet_('RICH300_STRATEGY', 'on');                           // 마지막
+    var v = rich300OpsStratVerify_('on'); if (!v.ok) throw new Error('verify-failed');
+    rich300OpsDel_('ops:sprecheck'); rich300OpsLog_('strategy-enable', 'ok');
+    return { ok: true, code: 'enabled', triggers: v.triggers };
+  } catch (err) {
+    var code = String(err && err.message || 'exception').indexOf('verify-failed') === 0 ? 'verify-failed' : 'exception', rolled = true;
+    if (changed) {
+      try { rich300OpsSet_('RICH300_STRATEGY', 'off'); } catch (e1) { rolled = false; }
+      try { if (before.triggers === 0 && rich300WatchMode_() === 'off') rich300WatchRemoveTrigger(); else if (before.triggers !== 1) { rich300WatchRemoveTrigger(); if (rich300WatchMode_() !== 'off') rich300WatchInstallTrigger(); } } catch (e2) { rolled = false; }
+      try { if (before.prod === null || before.prod === undefined) rich300OpsDel_(RICH300_OPS_PROD_); else if (before.prod === 'yes') rich300OpsSet_(RICH300_OPS_PROD_, 'yes'); } catch (e3) { rolled = false; }
+      var chk = rich300OpsStratVerify_('off'), pn = props.getProperty(RICH300_OPS_PROD_);
+      rolled = rolled && chk.ok && (before.prod === null || before.prod === undefined ? pn === null : pn === before.prod) && rich300OpsWatchTriggers_().length === (before.triggers === 0 ? 0 : 1);
+    }
+    rich300OpsLog_('strategy-enable', rolled ? code + '/rolled-back' : code + '/rollback-failed');
+    return { ok: false, code: rolled ? code : 'rollback-failed', rolledBack: rolled };
+  } finally { lock.releaseLock(); }
+}
+function rich300OpsStratDisable() {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  var lock = LockService.getScriptLock(), held = lock.tryLock(10000);
+  try {
+    try { rich300OpsSet_('RICH300_STRATEGY', 'off'); } catch (err) { /* 확인에서 잡는다 */ }
+    try { if (rich300WatchMode_() === 'off') rich300WatchRemoveTrigger(); } catch (err2) { /* 확인에서 잡는다 */ }      // 실전 위치 감시가 켜져 있으면 같은 트리거를 남긴다
+    var v = rich300OpsStratVerify_('off'); rich300OpsLog_('strategy-disable', v.ok ? 'ok' : 'verify-failed');
+    return { ok: v.ok, code: v.ok ? 'disabled' : 'verify-failed', triggers: v.triggers, lockless: !held };
+  } finally { if (held) lock.releaseLock(); }
+}
+
+// ── gas/Strategy.gs ──
+/**
+ * RICH 300 — 추천 전략 자동 추적(COIN RADAR 추천 → RICH300 전략 생성 → 종료까지 가상 추적). 주문·계정 API 없음, 사용자의 수동 등록 불필요.
+ *  · 추천 전달: radar(GitHub Actions)가 서명한 피드를 저장소의 rich300-feed 브랜치에 올리고, 이 파일이 공개 주소에서 *가져온다*(읽기 전용 GET). 서명 키(RICH300_FEED_KEY)가 있으면 서명이 맞아야만 받는다.
+ *  · 기본 OFF: 스크립트 속성 RICH300_STRATEGY 가 'on' 일 때만 전략 생성·저장·전송, 'preview' 면 계산만(저장·전송 없음), 없으면 아무것도 하지 않는다(피드 호출 0). 관리 화면(?p=ops)에서만 켜고 끈다.
+ *  · 5분 트리거는 위치 감시(rich300WatchTick)와 *같은 트리거*를 쓴다: 그 안에서 위치 감시와 전략 추적이 각각 자기 설정에 따라 실행된다. 이 파일은 트리거를 만들지 않는다.
+ *  · 전송은 텔레그램 환경 가드(rich300TgGate_)를 따른다: 운영 승인 전에는 'on' 이어도 미리보기로만 동작한다. 상태는 Script Properties 'w:sg:' 접두(위치 감시 'w:pos:'·텔레그램 'tg:'·COIN RADAR 와 분리).
+ *  · 로그·반환값에는 개수·코드만 남긴다(키·본문·가격 없음).
+ */
+var RICH300_FEED_REPO_ = 'j01044459979-prog/coin-radar', RICH300_FEED_BRANCH_ = 'rich300-feed';
+function rich300StrategyMode_() {
+  var v = String(PropertiesService.getScriptProperties().getProperty('RICH300_STRATEGY') || '').trim().toLowerCase();
+  return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
+}
+/** 피드 가져오기(읽기 전용 GET, 최대 약 5분 캐시되는 공개 주소). 본문은 검증 전까지 신뢰하지 않는다. */
+function rich300StrategyFeed_() {
+  try {
+    var url = 'https://raw.githubusercontent.com/' + RICH300_FEED_REPO_ + '/' + RICH300_FEED_BRANCH_ + '/feed.json?v=' + Math.floor(Date.now() / 60000);
+    var res = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    if (code !== 200) return { ok: false, code: 'http-' + code };
+    return { ok: true, raw: res.getContentText() };
+  } catch (err) { return { ok: false, code: 'fetch-exception' }; }
+}
+function rich300StrategyEnv_(mode) {
+  var base = rich300WatchEnv_(mode), props = PropertiesService.getScriptProperties();
+  base.feed = rich300StrategyFeed_;
+  base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k ? String(k) : null; };
+  base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); };
+  base.budgetMs = 150000;
+  return base;
+}
+/** 전략 추적 한 번 실행. 겹치지 않도록 사용자 락을 잡고, 결과는 개수·코드만 속성에 남긴다. */
+function rich300StrategyRun_(want) {
+  var props = PropertiesService.getScriptProperties(), t0 = Date.now(), out;
+  if (want === 'off') return { status: 'off' };
+  var lk = typeof LockService.getUserLock === 'function' ? LockService.getUserLock() : null;
+  if (lk && !lk.tryLock(500)) return { status: 'busy' };
+  try {
+    var mode = want === 'on' && !rich300WatchCanSend_() ? 'preview' : want;
+    out = RICH300_ENGINE.strategyTick(rich300StrategyEnv_(mode)); out.requested = want; delete out.preview;
+  } catch (err) { out = { status: 'exception', code: String(err && err.code || err && err.name || 'error').slice(0, 24) }; }
+  finally { if (lk) lk.releaseLock(); }
+  if (want !== 'preview') try { props.setProperty('strategy:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || want, requested: want, created: out.created || 0, cancelled: out.cancelled || 0, tracked: out.tracked || 0, active: out.active || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, feed: out.feed || null, code: out.code || null })); } catch (err2) { /* 기록 실패는 무시 */ }
+  return out;
+}
+/** 편집기 직접 실행용 미리보기(설정과 무관, 저장·전송 없음). */
+function rich300StrategyPreview() { return rich300StrategyRun_('preview'); }
+function rich300StrategyLast_() { try { var r = PropertiesService.getScriptProperties().getProperty('strategy:last'); return r ? JSON.parse(r) : null; } catch (err) { return null; } }
+/** 페이지(?p=strat): 시트만 읽는다(시세·피드 호출 없음). 열기만 해서는 아무것도 바꾸지 않는다. */
+function rich300PageStrat_(e) {
+  var html, appUrl = rich300AppUrl_();
+  try {
+    var env = rich300JournalEnv_(), last = rich300StrategyLast_(), mode = rich300StrategyMode_();
+    html = RICH300_ENGINE.stratRenderHtml({ m: { rows: RICH300_ENGINE.sgyList(env.storeEnv()), now: Date.now(), mode: mode, lastRun: last ? { ageMin: Math.round((Date.now() - last.at) / 60000), status: last.status } : null, feedOk: last && last.feed ? last.feed.ok : null }, appUrl: appUrl, build: RICH300_BUILD });
+  } catch (err) { html = RICH300_ENGINE.shellRenderError({ title: '추천 전략', code: RICH300_ENGINE.shellErrorCode(err), appUrl: appUrl, page: 'strat' }); }
+  return rich300Html_(html, 'RICH300 추천 전략');
 }
 
 // ── gas/TgDiag.gs ──

@@ -42,8 +42,8 @@ export function watchVolRatio(bars, n = WATCH.volLook) {
   const prev = bars.slice(-n - 1, -1), avg = prev.reduce((a, b) => a + b.v, 0) / n;
   return avg > 0 ? bars[bars.length - 1].v / avg : null;
 }
-const wAligned = (trend, dir) => (dir === 'LONG' ? trend.state === 'up' : trend.state === 'down');
-const wAgainst = (trend, dir) => (dir === 'LONG' ? trend.state === 'down' : trend.state === 'up');
+export const wAligned = (trend, dir) => (dir === 'LONG' ? trend.state === 'up' : trend.state === 'down');
+export const wAgainst = (trend, dir) => (dir === 'LONG' ? trend.state === 'down' : trend.state === 'up');
 
 // ── 포지션 목록(사용자 기록에서만) ──
 export function watchOpenPositions(se, { now }) {
@@ -113,8 +113,8 @@ export function watchAssessMarket(m, now) {
   return { ok: true, why: null };
 }
 
-const wFmt = (x, ref) => { const d = Math.abs(ref) >= 100 ? 2 : Math.abs(ref) >= 10 ? 3 : Math.abs(ref) >= 1 ? 4 : 6; return Number(x).toFixed(d); };
-const wHhmm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
+export const wFmt = (x, ref) => { const d = Math.abs(ref) >= 100 ? 2 : Math.abs(ref) >= 10 ? 3 : Math.abs(ref) >= 1 ? 4 : 6; return Number(x).toFixed(d); };
+export const wHhmm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
 
 // ── 포지션 한 건 평가 ──
 // state(포지션별 저장 상태): { sent:{key:{at,st,tries,next,text}}, armed:{stopNear}, nNear, lastStop, swing:'cand'|'ended'|null, lastHoldAt, last:{type:at} }
@@ -216,19 +216,19 @@ export function watchMessage(pos, market, ev, snap) {
 }
 
 // ── 저장 상태 ──
-const wLoadState = (kv, sid) => { let s = null; try { s = JSON.parse(kv.get(`pos:${sid}`) || 'null'); } catch (e_) { s = null; } return s && s.v === 1 ? s : { v: 1, sent: {}, armed: {}, last: {} }; };
-const wSaveState = (kv, sid, s) => {
+export const wLoadState = (kv, sid) => { let s = null; try { s = JSON.parse(kv.get(`pos:${sid}`) || 'null'); } catch (e_) { s = null; } return s && s.v === 1 ? s : { v: 1, sent: {}, armed: {}, last: {} }; };
+export const wSaveState = (kv, sid, s) => {
   const keys = Object.keys(s.sent); if (keys.length > WATCH.keepSent) for (const k of keys.sort((a, b) => s.sent[a].at - s.sent[b].at).slice(0, keys.length - WATCH.keepSent)) delete s.sent[k];
   kv.put(`pos:${sid}`, JSON.stringify(s));
 };
-function wCapCheck(kv, now) {
+export function wCapCheck(kv, now) {
   let c = {}; try { c = JSON.parse(kv.get('cap') || '{}'); } catch (e_) { c = {}; }
   const hour = Math.floor(now / 3600000), day = kstDayOf(now); if (c.h !== hour) { c.h = hour; c.nh = 0; } if (c.d !== day) { c.d = day; c.nd = 0; }
   return { c, ok: c.nh < WATCH.capHour && c.nd < WATCH.capDay, commit: () => { c.nh++; c.nd++; kv.put('cap', JSON.stringify(c)); } };
 }
 
 // 이벤트 한 건 전송 처리(한 번만 · 실패 재시도 · 상한). 결과: 'sent' | 'failed' | 'skipped' | 'capped'
-function wDeliver(env, state, ev, text, now) {
+export function wDeliver(env, state, ev, text, now) {
   const kv = env.kv, rec = state.sent[ev.key];
   if (rec && (rec.st === 'sent' || rec.st === 'pending' || rec.st === 'expired')) return 'skipped';            // 이미 보냈거나(또는 전송 직후 중단된 pending) 만료됨 → 다시 보내지 않는다
   if (rec && rec.st === 'failed' && now < rec.next) return 'skipped';

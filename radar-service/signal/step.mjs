@@ -16,6 +16,7 @@ import { normalizePaper, paperStep, paperSummary } from './paper.mjs';
 import { renderSignalChart, signalCaption } from './chart.mjs';
 import { r9Decorate, r9Caption } from './rich300.mjs';
 import { scaleDecorate, scaleCaption } from './scale-decorate.mjs';
+import { feedEnabled, feedEntryOf, feedInvalidatedOf, feedPush } from './feed.mjs';
 
 export const SETTLE_MS = 20000;            // 15분봉 마감 직후 거래소가 확정할 시간
 export const MAX_ATTEMPTS = 2;             // 같은 메시지를 (전달 여부가 불확실한 채로) 보내 보는 최대 횟수
@@ -184,7 +185,8 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   let sent = 0;
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
-    const out = await deliver(m, key, () => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1; });
+    const out = await deliver(m, key, () => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
+      if (feedEnabled(env)) { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now, sid: m.r9?.sid }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } } });
     if (out === 'deadline') { timedOut = true; break; }
     if (out === 'failed' || out === 'nosave') break;
     sent++;

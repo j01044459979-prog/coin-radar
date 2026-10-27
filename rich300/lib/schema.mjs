@@ -81,6 +81,12 @@ export const ENTITIES = {
     normalize: d => { if (d.dir !== 'LONG' && d.dir !== 'SHORT') bad('dir 값 오류'); return strip({ sid: needStr(d.sid, 'sid', 54), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: d.dir,
       stop: schemaDecString(d.stop, 'stop', { positive: true }), tp1: optDec(d.tp1, 'tp1', { positive: true }), tp2: optDec(d.tp2, 'tp2', { positive: true }), registeredAt: needMs(d.registeredAt, 'registeredAt'), symbolCheck: d.symbolCheck === undefined ? undefined : needEnum(d.symbolCheck, ['ok', 'unverified'], 'symbolCheck') }); },
     display: d => [d.sid, d.symbolId, d.dir, d.stop, (d.tp1 != null ? d.tp1 : ''), (d.tp2 != null ? d.tp2 : '')] },
+  // 추천 전략(COIN RADAR 추천 → RICH300 자동 생성·가상 추적). 사용자의 실제 체결이 아니다 — Fills·ManualPositions 와 섞지 않는다. 상태 전이마다 리비전으로 남는다.
+  strategy: { sheet: 'Strategies', keyOf: d => d.sid, headers: ['sid', 'symbol', 'dir', 'state', 'createdAtKst'],
+    normalize: d => { if (d.dir !== 'LONG' && d.dir !== 'SHORT') bad('dir 값 오류'); if (!d.x || typeof d.x !== 'object' || Array.isArray(d.x) || JSON.stringify(d.x).length > 45000) bad('x 형식 오류');
+      return strip({ sid: needStr(d.sid, 'sid', 54), symbolId: /^[A-Z0-9]{2,20}USDT$/.test((d.symbolId != null ? d.symbolId : '')) ? d.symbolId : bad('symbolId 형식 오류'), dir: d.dir, state: needEnum(d.state, ['CANDIDATE', 'WAIT_ENTRY', 'ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING', 'DONE', 'STOP', 'INVALIDATED', 'EXPIRED', 'CANCELLED'], 'state'),
+        createdAt: needMs(d.createdAt, 'createdAt'), updatedAt: needMs(d.updatedAt, 'updatedAt'), endedAt: d.endedAt === undefined || d.endedAt === null ? undefined : needMs(d.endedAt, 'endedAt'), score: d.score === undefined ? undefined : Math.max(0, Math.min(100, Math.round(Number(d.score)))), entry: schemaDecString(d.entry, 'entry', { positive: true }), stop: schemaDecString(d.stop, 'stop', { positive: true }), x: d.x }); },
+    display: d => [d.sid, d.symbolId, d.dir, d.state, kst(d.createdAt)] },
   tgupdate: { sheet: 'TgUpdates', immutable: true, keyOf: d => `${d.kind}:${d.id}`, headers: ['kind', 'id'],
     normalize: d => ({ kind: needEnum(d.kind, ['u', 'cb'], 'kind'), id: needStr(String(d.id), 'id', 80), at: needMs(d.at, 'at') }), display: d => [d.kind, d.id] },
 };
