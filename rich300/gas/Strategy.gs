@@ -1,6 +1,6 @@
 /**
  * RICH 300 — 추천 전략 자동 추적(COIN RADAR 추천 → RICH300 전략 생성 → 종료까지 가상 추적). 주문·계정 API 없음, 사용자의 수동 등록 불필요.
- *  · 추천 전달: radar(GitHub Actions)가 서명한 피드를 저장소의 rich300-feed 브랜치에 올리고, 이 파일이 공개 주소에서 *가져온다*(읽기 전용 GET). 서명 키(RICH300_FEED_KEY)가 있으면 서명이 맞아야만 받는다.
+ *  · 추천 전달: radar(GitHub Actions)가 서명한 피드를 저장소의 rich300-feed 브랜치에 올리고, 이 파일이 공개 주소에서 *가져온다*(읽기 전용 GET). 서명 키(RICH300_FEED_KEY)가 *필수*이며 서명·출처(main 정기/수동 실행)·신선도·되돌림이 맞아야만 받는다(아니면 새 전략·알림 없음).
  *  · 기본 OFF: 스크립트 속성 RICH300_STRATEGY 가 'on' 일 때만 전략 생성·저장·전송, 'preview' 면 계산만(저장·전송 없음), 없으면 아무것도 하지 않는다(피드 호출 0). 관리 화면(?p=ops)에서만 켜고 끈다.
  *  · 5분 트리거는 위치 감시(rich300WatchTick)와 *같은 트리거*를 쓴다: 그 안에서 위치 감시와 전략 추적이 각각 자기 설정에 따라 실행된다. 이 파일은 트리거를 만들지 않는다.
  *  · 전송은 텔레그램 환경 가드(rich300TgGate_)를 따른다: 운영 승인 전에는 'on' 이어도 미리보기로만 동작한다. 상태는 Script Properties 'w:sg:' 접두(위치 감시 'w:pos:'·텔레그램 'tg:'·COIN RADAR 와 분리).
@@ -24,7 +24,7 @@ function rich300StrategyFeed_() {
 function rich300StrategyEnv_(mode) {
   var base = rich300WatchEnv_(mode), props = PropertiesService.getScriptProperties();
   base.feed = rich300StrategyFeed_;
-  base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k ? String(k) : null; };
+  base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k && String(k).length >= 32 ? String(k) : null; };      // 없거나 약하면 null → 피드 거부(서명 필수)
   base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); };
   base.budgetMs = 150000;
   return base;

@@ -1,37 +1,49 @@
 name: rich300-feed
-run-name: rich300-feed · ${{ github.event_name }}
-# RICH 300 추천 피드 게시: radar 실행이 끝나면, 상태 캐시에서 진입 후보 피드를 읽어 서명한 feed.json 을 rich300-feed 브랜치(단일 커밋, 매번 덮어씀)에 올린다.
-# RICH300(Apps Script)이 공개 주소(raw.githubusercontent.com)에서 읽어 가서 전략을 자동 생성·추적한다. 기존 radar 워크플로와 완전히 분리되어 있다(권한·Secret 을 radar 에 더하지 않는다).
-# 저장소 변수 RADAR_RICH300_FEED 가 'on' 이고 Secret RICH300_FEED_KEY 가 있을 때만 동작한다(기본 off → 아무것도 하지 않음). 주문·계정 API 없음. 로그에는 개수만 남는다.
+run-name: rich300-feed · radar run ${{ github.event.workflow_run.id || '-' }}
+# RICH 300 추천 피드 게시: *성공한 main 브랜치 radar 정기/수동 실행* 이 끝나면, 그 실행이 만든 산출물(rich300-feed-raw)만 받아 서명하고 rich300-feed 브랜치(단일 커밋, 매번 덮어씀)에 올린다.
+# RICH300(Apps Script)이 공개 주소(raw.githubusercontent.com)에서 읽어 가서 전략을 자동 생성·추적한다.
+#  · 이 워크플로 파일이 **기본 브랜치(main)에 있어야** workflow_run 이 실행된다(다른 브랜치의 파일로는 트리거되지 않는다).
+#  · 게시 조건(모두 만족): 저장소 변수 RADAR_RICH300_FEED=on · radar 실행 결론 success · head_branch=main · event=schedule|workflow_dispatch · 산출물 meta.runId == 이 실행 id · 산출물이 20분 이내.
+#    미리보기(preview)·telegram-test·실패한 실행·다른 브랜치·push 실행은 산출물이 없거나 위 조건에 걸려 게시되지 않는다. 임의의 최신 캐시를 읽지 않는다.
+#  · radar.yml 에는 Secret·쓰기 권한을 더하지 않는다: 서명 키(RICH300_FEED_KEY)와 contents: write 는 이 워크플로에만 있다. 주문·계정 API 없음. 로그에는 개수·사유 코드만 남는다.
 on:
   workflow_run:
     workflows: [radar]
     types: [completed]
-  workflow_dispatch:
+    branches: [main]
 permissions:
   contents: write   # rich300-feed 브랜치 갱신에만 사용
-  actions: read
+  actions: read     # 같은 저장소 다른 실행의 artifact 내려받기
 concurrency:
   group: rich300-feed
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.repository == 'j01044459979-prog/coin-radar' && vars.RADAR_RICH300_FEED == 'on'
+    if: github.repository == 'j01044459979-prog/coin-radar' && vars.RADAR_RICH300_FEED == 'on' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Restore radar state (read only)
-        uses: actions/cache/restore@v4
         with:
-          path: .radar-state
-          key: radar-state-feedread-${{ github.run_id }}
-          restore-keys: radar-state-
-      - name: Export signed feed
-        id: export
+          ref: main
+      - name: Download this run's artifact
+        id: dl
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: rich300-feed-raw
+          path: .rich300-feed-in
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Sign feed
+        if: steps.dl.outcome == 'success'
         env:
           RICH300_FEED_KEY: ${{ secrets.RICH300_FEED_KEY }}
-        run: node rich300/client/feed-export.mjs .radar-state/state.json .rich300-feed/feed.json
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+        run: node rich300/client/feed-publish.mjs .rich300-feed-in/feed-raw.json .rich300-feed/feed.json
       - name: Publish feed branch
         if: hashFiles('.rich300-feed/feed.json') != ''
         env:

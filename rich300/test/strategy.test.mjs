@@ -23,7 +23,7 @@ test('위험 한도 초과 전략은 추천하지 않고 CANCELLED 로 기록: �
   assert.equal(sgyBuild(fe(), ctx({ dayPnl: -8.9 })).ok, true);
   const mc = sgyBuild(fe(), ctx({ activeMargin: 89 })); assert.equal(mc.reason, 'margin-cap-total'); assert.equal(sgyBuild(fe(), ctx({ activeCount: 10 })).reason, 'too-many-active');
   const near = sgyBuild(fe({ sid: 'SG-ETH-L-near01', stop: 1999 }), ctx()); assert.equal(near.ok, false); assert.equal(near.reason, 'plan-cost-heavy'); assert.equal(near.s.state, 'CANCELLED');              // 손절폭 대비 비용이 너무 커 계획 불가
-  const late = sgyBuild(fe(), { now: VALID + 1 }); assert.deepEqual([late.reason, late.notify], ['expired-on-arrival', false]);
+  const late = sgyBuild(fe(), { now: VALID + 1 }); assert.deepEqual([late.reason, late.notify], ['expired-on-arrival', true]); assert.equal(sgyBuild(fe(), { now: CLOSE + 4 * 3600000 }).notify, false);       // 늦게 도착: 안내 1건 · 아주 오래된 추천은 조용히 기록만
 });
 test('정상 승리 시나리오: 진입 → TP1(본전 이동 다음 봉부터) → TP2 → 트레일링 → 추적 손절로 종료, 전략 기준 가상 성적 양수', () => {
   let s = live(); const bars = [bar(0, 2010, 2012, 1999, 2005), bar(1, 2005, 2048, 2003, 2046), bar(2, 2046, 2065, 2044, 2062), bar(3, 2062, 2090, 2060, 2088), bar(4, 2088, 2089, 2050, 2052)];

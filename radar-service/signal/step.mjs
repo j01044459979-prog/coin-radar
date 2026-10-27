@@ -185,8 +185,11 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   let sent = 0;
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
-    const out = await deliver(m, key, () => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
-      if (feedEnabled(env)) { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now, sid: m.r9?.sid }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } } });
+    const out = await deliver(m, key, assumed => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
+      if (feedEnabled(env)) {                                                                    // RICH300 피드: Telegram 전달이 *확인된* 알림만. 두 번 시도해도 확정되지 않아 '전달된 것으로 간주'한 경우(assumed)는 자동 추적 대상에서 제외한다.
+        if (assumed) base.feedExcluded = (base.feedExcluded ?? 0) + 1;
+        else { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } }
+      } });
     if (out === 'deadline') { timedOut = true; break; }
     if (out === 'failed' || out === 'nosave') break;
     sent++;

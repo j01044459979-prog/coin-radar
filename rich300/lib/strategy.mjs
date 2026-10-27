@@ -33,9 +33,9 @@ export const sgyRiskPct = score => (Number.isFinite(score) && score >= STRAT.str
 // fe: feedParseEntry 결과(candidate). ctx: { now, activeMargin, dayPnl }. 반환 { ok, s } | { ok:false, reason, notify, s? } — 거절도 CANCELLED 기록으로 남긴다.
 export function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, activeCount = 0 }) {
   const base = { sid: fe.sid, symbolId: fe.symbolId, dir: fe.dir, createdAt: now, updatedAt: now, score: fe.score === null ? undefined : fe.score, entry: String(fe.entry), stop: String(fe.stop) };
-  const x0 = { validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
+  const x0 = { recAt: nullishOr(fe.createdAt, fe.closeT), arrivedAt: now, validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
   const cancel = (reason, notify, plan) => ({ ok: false, reason, notify, s: { ...base, state: 'CANCELLED', endedAt: now, x: { ...x0, reason, ...(plan ? { plan } : {}) } } });
-  if (now > fe.validUntil) return cancel('expired-on-arrival', false);
+  if (now > fe.validUntil) return cancel('expired-on-arrival', now - fe.closeT <= 3 * 3600000);      // 아주 늦게 도착한 오래된 추천은 조용히 기록만
   if (activeCount >= STRAT.maxActive) return cancel('too-many-active', true);
   if (dayPnl <= -STRAT.dayLossPct * STRAT.equity) return cancel('day-loss-limit', true);
   const riskPct = sgyRiskPct(fe.score), plan = splanBuild({ symbol: fe.symbolId, dir: fe.dir, entry: fe.entry, stop: fe.stop, equity: STRAT.equity, params: { riskPct } });
@@ -160,14 +160,20 @@ export function sgyNotes(s, { price, market, now }, ns) {
 // ── 메시지 ──
 const sgyDp = plan => Math.max(splanDecimals(String(plan.entry)), 2);
 const sgyF = (v, plan) => Number(v).toFixed(sgyDp(plan));
-const sgyReasonKo = c => ({ 'day-loss-limit': '일일 가상 손실 한도(−3%) 도달 — 오늘 신규 추천 제외', 'too-many-active': `동시 추적 전략 ${STRAT.maxActive}개 초과`, 'margin-cap-total': `동시 사용 증거금이 평가액의 ${Math.round(STRAT.maxMarginUsage * 100)}%를 넘음`, 'leverage-over-3x': '격리 3배 초과 필요', 'expired-on-arrival': '전달 지연으로 유효시간 경과' }[c] || (String(c).startsWith('plan-') ? splanReasonText(String(c).slice(5)) : c));
+const sgyReasonKo = c => ({ 'day-loss-limit': '일일 가상 손실 한도(−3%) 도달 — 오늘 신규 추천 제외', 'too-many-active': `동시 추적 전략 ${STRAT.maxActive}개 초과`, 'margin-cap-total': `동시 사용 증거금이 평가액의 ${Math.round(STRAT.maxMarginUsage * 100)}%를 넘음`, 'leverage-over-3x': '격리 3배 초과 필요', 'expired-on-arrival': '전달 지연으로 진입 유효시간 경과' }[c] || (String(c).startsWith('plan-') ? splanReasonText(String(c).slice(5)) : c));
 const SGY_FOOT = '※ 전략 기준 가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님 · 판단 보조용';
+const sgyMin = ms => Math.max(0, Math.round(ms / 60000));
+export function sgyTimingLines(x, now) {
+  const delay = sgyMin(now - nullishOr(x.recAt, x.closeT)), left = Math.round((x.validUntil - now) / 60000), L = [`⏱ 추천 시각 ${sgyHm(nullishOr(x.recAt, x.closeT))} KST(COIN RADAR) → RICH300 전달 ${sgyHm(now)} KST · 지연 ${delay}분`];
+  L.push(left > 0 ? `   진입 유효 ~${sgyHm(x.validUntil)} KST (남은 ${left}분${left < 10 ? ' ⚠ 얼마 남지 않음' : ''}) — 그 전에 1차가 안 닿으면 만료` : `   진입 유효시간(${sgyHm(x.validUntil)} KST)이 이미 지났습니다(전략 만료)`);
+  return L;
+}
 export function sgyNewMessage(s, { price, priceAt, source, now }) {
   const x = s.x, plan = x.plan, F = v => sgyF(v, plan), sg = splanSign(s.dir), icon = s.dir === 'LONG' ? '🟢' : '🔴', L = [];
-  L.push(`[RICH300 신규 매매 전략]`, `${icon} ${sgyBase(s.symbolId)} · ${s.dir}${s.score !== undefined ? ` · 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`);
+  L.push(`[RICH300 신규 매매 전략]`, '✅ 실행 가능 전략 — COIN RADAR 관찰 후보가 RICH300 위험 한도 검증을 통과했습니다', `${icon} ${sgyBase(s.symbolId)} · ${s.dir}${s.score !== undefined ? ` · 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`);
   if (x.evidence && x.evidence.length) { L.push('📈 진입 근거'); for (const e of x.evidence) L.push(`• ${e}`); }
   L.push(`💵 현재가 ${F(price)} (${source || '시세'} ${sgyHm(priceAt)} KST) · 추천 기준가 ${F(plan.entry)}`);
-  L.push(`⏱ 진입 유효: ~${sgyKst(x.validUntil)} KST (그 전에 1차가 안 닿으면 만료)`);
+  L.push(...sgyTimingLines(x, now));
   L.push(`🧭 1차 진입 구간 ${F(plan.stages[0].price)}(지정가 기준, 눌림 접근 알림 ${STRAT.nearEntryR}R 이내)`);
   for (const st of plan.stages) L.push(`  ${st.n}차 ${Math.round(st.weight * 100)}% · ${F(st.price)}${st.n > 1 ? ` (−${plan.params.addR[st.n - 2]}R, 구조 유지·TP 전에만)` : ''} · 수량 ${splanQty(st.qty, plan.spec)} · 증거금 ${st.margin.toFixed(2)}`);
   L.push(`🛑 손절 ${F(plan.stop)} (1R=${F(plan.R)}, 고정) · 예상 최대 손실 −${plan.worstLoss.toFixed(2)} USDT (평가액 ${plan.equity} 의 ${(plan.worstLossPct * 100).toFixed(2)}%, 수수료·슬리피지 포함)`);
@@ -179,8 +185,10 @@ export function sgyNewMessage(s, { price, priceAt, source, now }) {
   L.push(`📌 진입 조건 알림이 와도 이는 '전략 기준 가상 진입'입니다. 실제로 진입하려면 Binance 에서 직접 주문하세요.`, SGY_FOOT);
   return L.join('\n');
 }
-export function sgyCancelMessage(s) {
-  return [`[RICH300 추천 제외] ${sgyBase(s.symbolId)} ${s.dir}`, `사유: ${sgyReasonKo(s.x.reason)}`, '위험 한도를 넘어 일반 추천으로 보내지 않습니다(추적·기록만 남김).', SGY_FOOT].join('\n');
+export function sgyCancelMessage(s, now) {
+  const x = s.x, expired = x.reason === 'expired-on-arrival', L = [`[RICH300 실행 불가] ${sgyBase(s.symbolId)} ${s.dir} · 관찰 후보일 뿐 진입 추천이 아닙니다`, `사유: ${sgyReasonKo(x.reason)}`];
+  if (expired) L.push(`추천 시각 ${sgyHm(nullishOr(x.recAt, x.closeT))} KST(COIN RADAR) → RICH300 전달 ${sgyHm(nullishOr(now, x.arrivedAt))} KST · 지연 ${sgyMin(nullishOr(now, x.arrivedAt) - nullishOr(x.recAt, x.closeT))}분 · 진입 유효시간 ${sgyHm(x.validUntil)} KST 경과(전략 만료)`);
+  L.push('COIN RADAR 의 진입 후보 알림이 먼저 왔더라도, 이 후보는 RICH300 의 실행 가능 전략이 아닙니다(전략으로 만들지 않고 기록만 남김).', SGY_FOOT); return L.join('\n');
 }
 const SGY_HEAD = { ENTRY_NEAR: '🧭 진입 구간 접근', ENTRY: '✅ 진입 조건 충족(가상 진입)', ADD: '➕ 추가 진입 조건 충족(가상)', ADD_CANCEL: '✖️ 추가 진입 취소', STOP_NEAR: '⚠️ 손절 접근', STOP: '🛑 손절 조건 충족(가상 손절)', TP1: '🎯 TP1 도달', TP2: '🎯 TP2 도달', BE: '🔼 손절 본전 이동 제안', TRAIL: '🔼 트레일링 기준 변경', WEAK: '⚠️ 추세 약화', TREND_INVALID: '🚫 전략 무효화(4시간 추세 반전)', INVALIDATED: '🚫 전략 무효화', EXPIRED: '⌛ 전략 만료', DONE: '🏁 전량 목표 완료' };
 const SGY_ADD_WHY = { 'after-tp': '익절이 시작되어 추가 진입 취소', structure: '구조 유지 조건(직전 15분 종가) 미충족', window: '추가 진입 허용 시간 경과' };
@@ -241,8 +249,10 @@ export function strategyTick(env) {
   const radarInv = new Set();
   let f = null; try { f = env.feed(); } catch (e_) { f = { ok: false, code: 'exception' }; }
   if (f && f.ok) {
-    const v = feedVerify(env, f.raw, env.feedKey ? env.feedKey() : null);
-    out.feed = v.ok ? { ok: true, signed: v.signed, ageMin: Math.round(v.ageMs / 60000), stale: v.stale, entries: v.entries.length } : { ok: false, code: v.reason };
+    let lastTs = null; try { const r = env.kv.get('sgfeedts'); lastTs = r ? Number(r) : null; } catch (e_) { lastTs = null; }
+    const v = feedVerify(env, f.raw, env.feedKey ? env.feedKey() : null, { lastTs: Number.isSafeInteger(lastTs) ? lastTs : undefined });      // 서명 필수(키 없음·불일치·되돌림·오래됨 → 거부: 전략 생성·알림 없음)
+    out.feed = v.ok ? { ok: true, signed: true, ageMin: Math.round(v.ageMs / 60000), entries: v.entries.length } : { ok: false, code: v.reason };
+    if (v.ok && live && v.ts !== lastTs) { try { env.kv.put('sgfeedts', String(v.ts)); } catch (e_) { /* 기록 실패 시 다음 실행에서 다시 */ } }
     if (v.ok) {
       const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
@@ -267,7 +277,7 @@ export function strategyTick(env) {
     const push = (ev, text, level) => msgs.push({ key: ev.key || `${ev.type}:${s0.sid}${ev.n ? ':' + ev.n : ''}${ev.at ? ':' + ev.at : ''}`, sid: s0.sid, level, text });
     let s = s0;
     if (s0.state === 'CANCELLED') {                                                                   // 위험 한도로 제외된 전략: 안내 1회
-      if (s0.pendingNotice || (live && !ns.sent[`CANCEL:${s0.sid}`] && now - s0.createdAt < STRAT.retryNoteMs && s0.x.reason !== 'expired-on-arrival')) { push({ key: `CANCEL:${s0.sid}`, type: 'CANCEL' }, sgyCancelMessage(s0), 'info'); }
+      if (s0.pendingNotice || (live && !ns.sent[`CANCEL:${s0.sid}`] && now - s0.createdAt < STRAT.retryNoteMs && (s0.x.reason !== 'expired-on-arrival' || now - s0.x.closeT <= 3 * 3600000))) { push({ key: `CANCEL:${s0.sid}`, type: 'CANCEL' }, sgyCancelMessage(s0, now), 'info'); }
     } else if (sgyIsActive(s0.state)) {
       out.tracked++;
       const m = getMarket(s0.symbolId);

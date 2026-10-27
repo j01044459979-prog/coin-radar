@@ -11,12 +11,15 @@
 
 ## 2. 새 구조
 ```
-radar(Actions) 후보 알림 전달 확인 ─▶ state.signal.feed (RADAR_RICH300_FEED=on 일 때만)
-rich300-feed.yml(radar 완료 후) ─▶ 캐시 상태 읽기 ─▶ 서명(HMAC-SHA256) ─▶ rich300-feed 브랜치 feed.json
-RICH300 5분 트리거(rich300WatchTick) ─▶ 피드 가져오기(GET) ─▶ 검증 ─▶ 전략 생성(Strategies 시트) ─▶ 가상 추적 ─▶ Telegram
+radar(main, 정기/수동 once 실행) 후보 알림 전달 *확인* ─▶ state.signal.feed ─▶ 이 실행의 artifact(rich300-feed-raw, 서명 전·Secret 없음)
+rich300-feed.yml(workflow_run: 성공한 main radar 실행) ─▶ 그 실행의 artifact 만 내려받기 ─▶ 실행 id·브랜치·이벤트·신선도 확인 ─▶ HMAC 서명 ─▶ rich300-feed 브랜치 feed.json
+RICH300 5분 트리거(rich300WatchTick) ─▶ 피드 가져오기(GET) ─▶ 서명·출처·신선도·되돌림 검증 ─▶ 전략 생성(Strategies 시트) ─▶ 가상 추적 ─▶ Telegram
 ```
-- **pull 방식**: 수신 서버·새 배포·새 URL 이 필요 없다. 피드 봉투·정규화·HMAC 은 기존 요청 인증(`auth.mjs`)을 재사용한다. 서명 키가 Script Properties 에 있으면 서명이 맞아야만 받는다(`RICH300_FEED_KEY`, 없으면 '미서명'으로 받되 점검 화면이 경고).
-- 지연: 공개 주소 캐시(최대 약 5분) + 5분 트리거 → 추천 후 보통 5~10분 안에 전략 메시지. 유효시간(45분) 안에 도착해야 한다(지나면 `expired-on-arrival` 로 기록만).
+- **서명 필수(fail-closed)**: `RICH300_FEED_KEY`(32자 이상)가 Script Properties 에 없거나 짧으면 피드를 무조건 거부한다. 서명 누락·불일치·변조, 출처(meta: main · once · schedule/workflow_dispatch) 불일치, 게시 또는 radar 산출물이 30분 넘음(stale), 이미 받은 것보다 오래된 ts(replay)도 거부한다. 거부되면 **전략 생성도 Telegram 알림도 없다**(오류 코드만 `strategy:last`에 기록). 이미 만든 전략의 가상 추적과 실제 보유 포지션 감시는 영향받지 않는다.
+- **전달 확인된 추천만**: radar 의 Telegram 전송이 성공으로 *확인된* 후보만 피드에 들어간다. 두 번 시도해도 확정되지 않아 '전달된 것으로 간주'한 경우와 전송 실패는 제외된다(자동 추적 대상 아님). 전략 ID 는 radar 신호 ID 와 같아 중복 생성되지 않는다.
+- **임의의 캐시를 읽지 않는다**: 게시 워크플로는 `workflow_run` 으로 *성공한 main 정기/수동 radar 실행* 하나가 만든 artifact 만 받는다(실행 id 일치 확인). 실패한 실행·preview·telegram-test·다른 브랜치·push 실행은 artifact 자체가 없거나 조건에서 걸러져 게시되지 않는다. radar.yml 에는 Secret·쓰기 권한이 없다(키와 `contents: write` 는 rich300-feed.yml 에만).
+- 지연: 공개 주소 캐시(최대 약 5분) + 5분 트리거 → 추천 후 보통 5~10분. Telegram 메시지에 **COIN RADAR 추천 시각 → RICH300 전달 시각 · 지연 분 · 남은 유효시간**을 표시하고, 10분 미만이면 경고, 이미 지났으면 "실행 불가(전략 만료)" 안내 1건과 기록.
+- **관찰 후보 vs 실행 가능 전략**: COIN RADAR 의 후보 알림은 관찰 후보다. RICH300 위험 한도 검증을 통과해야만 "[RICH300 신규 매매 전략] ✅ 실행 가능 전략"으로 안내한다. 통과하지 못하면 "[RICH300 실행 불가] … 관찰 후보일 뿐 진입 추천이 아닙니다"만 보내고 전략으로 만들지 않는다.
 - **기존 위치 감시는 그대로**: 같은 5분 트리거 안에서 위치 감시(실제 보유)와 전략 추적이 각자의 설정(`RICH300_WATCH_ALERTS`, `RICH300_STRATEGY`)으로 따로 실행되고, 상태 접두어도 `w:pos:` / `w:sg:` 로 분리된다. 한쪽 실패가 다른 쪽을 막지 않는다.
 
 ## 3. 전략 생성 규칙
@@ -36,5 +39,6 @@ RICH300 5분 트리거(rich300WatchTick) ─▶ 피드 가져오기(GET) ─▶ 
 - 추천 전략(가상): `Strategies` 시트 · `?p=strat` 의 "가상 성적". 실제 체결(`Fills`)·수동 포지션(`ManualPositions`)·일지/성적/자산과 **섞지 않는다**.
 - 실제 보유 포지션 등록은 선택 기능으로 유지(`?p=pos`).
 
-## 6. 켜는 순서 (모두 별도 승인·기본 꺼짐)
-1. 배포(이 빌드). 2. GitHub: 저장소 변수 `RADAR_RICH300_FEED=on` + Secret `RICH300_FEED_KEY`(32자 이상 임의 문자열) — `rich300-feed` 브랜치는 첫 실행이 만든다. 3. `?p=ops` 4번 구역에서 같은 키 저장(선택) → 사전 점검 → `전략 추적 시작`. 4. 중지는 같은 화면의 `전략 추적 중지`.
+## 6. main 반영과 켜는 순서 (모두 별도 승인·기본 꺼짐)
+`workflow_run` 은 **기본 브랜치(main)에 있는 워크플로 파일**로만 실행되고, 피드는 main 의 `radar.yml` 이 만든다. 따라서 radar 쪽 변경이 main 에 먼저 들어가야 한다. PR #47 은 다른 PR 위에 쌓여 있어(main 대비 26개 커밋) 통째로 병합하면 R9·분할 계획 등 무관한 운영 코드가 같이 들어간다 → **radar 쪽 최소 변경만 담은 별도 브랜치(`feat/rich300-feed-radar`, main 기준)** 를 먼저 반영한다. 파일: `radar-service/signal/{feed,feed-artifact}.mjs`, `step.mjs` 훅, `radar.yml`(변수 1줄 + artifact 2단계), `.github/workflows/rich300-feed.yml`, `rich300/lib/{auth,dedupe,feed}.mjs`, `rich300/client/feed-publish.mjs`, 테스트. 플래그가 꺼져 있으면 radar 동작은 기존과 같다.
+순서: ① 최소 브랜치 PR 병합(별도 승인) → ② GitHub 변수 `RADAR_RICH300_FEED=on` + Secret `RICH300_FEED_KEY` → ③ radar 정기 실행 뒤 `rich300-feed` 브랜치·Actions 실행 확인(`workflow_dispatch` 로 radar 를 한 번 수동 실행해 확인 가능) → ④ RICH300 배포(버전 11) → ⑤ `?p=ops` 4번 구역에서 같은 키 저장 → 사전 점검 → `전략 추적 시작`. 중지는 같은 화면의 `전략 추적 중지`.

@@ -11,7 +11,7 @@ globalThis.fetch = async url => { throw new Error(`테스트에서 실제 네트
 const M = 900000, H = 3600000, NOW0 = 1790000000000, CLOSE = Math.floor((NOW0 - 300000) / M) * M, KEY = 'f'.repeat(40), PHRASE = '전략 추적 시작';
 const j = v => JSON.parse(JSON.stringify(v)), strip = h => h.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<script>[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ');
 const entry = (o = {}) => ({ sid: 'SG-ETH-L-abc123', symbol: 'ETHUSDT', dir: 'LONG', entry: '2000', stop: '1970', closeT: String(CLOSE), triggerT: String(CLOSE - M), validUntil: String(CLOSE + 45 * 60000), score: '70', rr1: '1.9', evidence: ['4H 상승 · 1H 지지 눌림'], volRel: '1.5', btcAlign: '동행', costPct: '0.15', createdAt: String(CLOSE + 30000), ...o });
-const signFeed = (entries, ts) => { const body = { entries }, nonce = 'n'.repeat(20); return JSON.stringify({ v: 1, ts, nonce, body, sig: createHmac('sha256', KEY).update(authSignedString(1, ts, nonce, body), 'utf8').digest('hex') }); };
+const signFeed = (entries, ts, meta = {}) => { const body = { entries, meta: { runId: '9001', attempt: '1', ref: 'refs/heads/main', sha: 'a'.repeat(40), event: 'schedule', mode: 'once', at: String(ts - 30000), ...meta } }, nonce = 'n'.repeat(20); return JSON.stringify({ v: 1, ts, nonce, body, sig: createHmac('sha256', KEY).update(authSignedString(1, ts, nonce, body), 'utf8').digest('hex') }); };
 const okxBars = (n, now, { start, drift, step }) => ({ code: '0', data: Array.from({ length: n }, (_, i) => { const idx = n - 1 - i, c = start * (1 + drift * idx), t = Math.floor(now / step) * step - (i + 1) * step + step; return [String(t), String(c), String(c * 1.002), String(c * 0.998), String(c), '100', '0', '0', '1']; }) });
 function world({ approved = true, key = true } = {}) {
   const g = loadProd({ props: { RICH300_PROD_APPROVED: 'yes' } }); seed(g, 3); const inst = g.ctx.rich300Install(); g.tele.say(OWNER, `/start ${inst.pairLink.split('=')[1]}`); g.ctx.rich300TgPoll();
@@ -104,4 +104,21 @@ test('위치 감시 중지는 전략 추적이 켜져 있으면 트리거를 지
 });
 test('허용 목록: 전략 설정은 STRATEGY(on/off)와 FEED_KEY(전용 함수)뿐 · 다른 속성/값 거부', () => {
   const w = world(), c = w.g.ctx; for (const [n, v] of [['RICH300_STRATEGY', 'preview'], ['RICH300_STRATEGY', 'yes'], ['RICH300_FEED_KEY', 'short'], [TOK, 'x']]) assert.throws(() => c.rich300OpsSet_(n, v), /ops-/, n + '=' + v); assert.doesNotThrow(() => c.rich300OpsSet_('RICH300_STRATEGY', 'off'));
+});
+test('서명 키가 없거나 약하거나 틀리면 피드 거부: 전략 0 · 텔레그램 0 · 사전 점검 실패 · 시작 불가', () => {
+  for (const setup of [w0 => {}, w0 => w0.g.P.setProperty('RICH300_FEED_KEY', 'short'), w0 => w0.g.P.setProperty('RICH300_FEED_KEY', 'g'.repeat(40))]) {
+    const w = world({ key: false }); setup(w); w.g.P.setProperty('RICH300_STRATEGY', 'on'); w.at(5); w.at(10);
+    const last = JSON.parse(w.g.P.getProperty('strategy:last')); assert.equal(last.feed.ok, false); assert.match(last.feed.code, /^(no-key|bad-signature)$/); assert.equal(w.g.rows('strategy').length, 0); assert.equal(w.sent().length, 0);
+    const pre = j(w.g.ctx.rich300OpsStratPrecheck()); assert.equal(pre.pass, false); assert.ok(pre.items.some(i => i.id === 'signed' && !i.ok && i.must)); assert.equal(j(w.g.ctx.rich300OpsStratEnable(PHRASE)).code, 'precheck-required');
+  }
+});
+test('서명 오류·되돌림·오래된 피드가 기존 보유 포지션 감시를 방해하지 않는다(위치 감시 알림은 정상)', () => {
+  const w = world({ key: false }); w.g.P.setProperty('RICH300_STRATEGY', 'on'); w.g.P.setProperty('RICH300_WATCH_ALERTS', 'on');
+  w.price = 1968; w.g.ctx.rich300ManualRegister({ formId: 'p1', symbol: 'ETH', dir: 'LONG', entry: '2000', qty: '0.1', leverage: '3', stop: '1970', tp1: '', tp2: '', at: '' }); w.g.tele.sent.length = 0; w.g.cache.evictAll();
+  const out = w.at(5); assert.equal(out.status, 'ok'); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'no-key'); assert.ok(w.sent().some(t => /ETH LONG · 🛑 손절가 이탈/.test(t))); assert.equal(w.sent().filter(t => /신규 매매 전략|실행 불가/.test(t)).length, 0);
+});
+test('피드 되돌림(replay)·오래됨은 GAS 경로에서도 거부', () => {
+  const w = world(); w.g.P.setProperty('RICH300_STRATEGY', 'on'); w.at(5); assert.equal(w.g.rows('strategy').length, 1); const ts0 = Number(w.g.P.getProperty('w:sgfeedts')); assert.ok(ts0 > 0);
+  w.entries = [entry({ sid: 'SG-ETH-L-new999' })]; w.g.spy.feedHandler = () => ({ status: 200, body: signFeed(w.entries, ts0 - 60000) }); w.at(10); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'replay'); assert.equal(w.g.rows('strategy').length, 1);
+  w.g.spy.feedHandler = () => ({ status: 200, body: signFeed(w.entries, w.g.spy.now - 40 * 60000 + 600000, { at: String(w.g.spy.now - 50 * 60000) }) }); w.g.P.deleteProperty('w:sgfeedts'); w.at(15); assert.equal(JSON.parse(w.g.P.getProperty('strategy:last')).feed.code, 'stale');
 });
