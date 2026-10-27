@@ -3018,7 +3018,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'a0d860a846a5';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'f15a32572596';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -3733,7 +3733,7 @@ function rich300TgTestAck(received) {
  *  · 실패 코드: forbidden(소유자 아님) · busy/lock-error · already-set · bad-format(+detail) · storage-error · storage-verify-failed · token-rejected(getMe 거절 → 저장 취소)
  */
 function rich300TgTokenShape_(raw) {
-  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(\d{6,12}):([A-Za-z0-9_-]{30,80})/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
+  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(?:^|[^A-Za-z0-9_:-])(?:bot)?(\d{6,12}):([A-Za-z0-9_-]{30,80})(?![A-Za-z0-9_:-])/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
   return { token: m ? m[1] + ':' + m[2] : null, detail: { len: text.length, hasColon: i >= 0, idDigits: before, secretLen: after } };
 }
 function rich300TgTokenLog_(code, detail) { try { PropertiesService.getScriptProperties().setProperty('tgdiag:tokenlast', JSON.stringify({ at: Date.now(), code: code, d: detail || null })); } catch (err) { /* 기록 실패는 무시 */ } }

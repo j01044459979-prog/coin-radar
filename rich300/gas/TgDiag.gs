@@ -71,7 +71,7 @@ function rich300TgTestAck(received) {
  *  · 실패 코드: forbidden(소유자 아님) · busy/lock-error · already-set · bad-format(+detail) · storage-error · storage-verify-failed · token-rejected(getMe 거절 → 저장 취소)
  */
 function rich300TgTokenShape_(raw) {
-  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(\d{6,12}):([A-Za-z0-9_-]{30,80})/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
+  var text = String(raw === null || raw === undefined ? '' : raw).replace(/[\u200B-\u200D\u2060\uFEFF\u00A0]/g, ' '), m = /(?:^|[^A-Za-z0-9_:-])(?:bot)?(\d{6,12}):([A-Za-z0-9_-]{30,80})(?![A-Za-z0-9_:-])/.exec(text), i = text.indexOf(':'), before = i >= 0 ? /(\d*)\s*$/.exec(text.slice(0, i))[1].length : 0, after = i >= 0 ? (/^\s*([A-Za-z0-9_-]*)/.exec(text.slice(i + 1))[1] || '').length : 0;
   return { token: m ? m[1] + ':' + m[2] : null, detail: { len: text.length, hasColon: i >= 0, idDigits: before, secretLen: after } };
 }
 function rich300TgTokenLog_(code, detail) { try { PropertiesService.getScriptProperties().setProperty('tgdiag:tokenlast', JSON.stringify({ at: Date.now(), code: code, d: detail || null })); } catch (err) { /* 기록 실패는 무시 */ } }

@@ -78,3 +78,10 @@ test('운영 승인 게이트는 토큰 저장을 막지 않는다(PROD_APPROVED
   const g = world(); assert.ok(!g.P.getProperty('RICH300_PROD_APPROVED')); assert.equal(j(g.ctx.rich300TgSetToken(TOKEN)).ok, true); assert.ok(!g.P.getProperty('RICH300_PROD_APPROVED'));
   const o = world({ email: 'other@example.com' }); assert.equal(j(o.ctx.rich300TgSetToken(TOKEN)).code, 'forbidden'); assert.equal(o.P.getProperty('RICH300_TG_TOKEN'), '');
 });
+
+test('토큰 추출은 긴 문자열의 일부를 토큰으로 오인하지 않는다 · 토큰 원문은 오류 상세·진단 기록에 남지 않는다', () => {
+  const body = 'A'.repeat(35), bads = [`9999${TOKEN}`, `${'1'.repeat(13)}:${body}`, `xx${TOKEN}`, `${TOKEN}:extra`, `1234567890:${'A'.repeat(81)}`, `${'1'.repeat(6)}:${'a'.repeat(29)}`];
+  for (const b of bads) { const g = world(); const r = j(g.ctx.rich300TgSetToken(b)); assert.equal(r.code, 'bad-format', b); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), '');
+    const rec = String(g.P.getProperty('tgdiag:tokenlast')); assert.ok(!rec.includes(body) && !JSON.stringify(r).includes(body) && !JSON.stringify(g.spy.logs).includes(body)); assert.ok(!strip(page(g)).includes(body)); }
+  for (const ok of [TOKEN, `bot${TOKEN}`, `토큰=${TOKEN}.`, `"${TOKEN}"`, `\n${TOKEN}\r\n`]) { const g = world(); assert.equal(j(g.ctx.rich300TgSetToken(ok)).ok, true, ok); assert.equal(g.P.getProperty('RICH300_TG_TOKEN'), TOKEN); }
+});
