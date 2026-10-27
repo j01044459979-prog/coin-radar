@@ -45,5 +45,5 @@ test('상태 표시: 켜짐/꺼짐·트리거 수·마지막 실행·포지션 0
     const t = await p.textContent('main'); assert.match(t, /실제 동작: 전송 중\(실전 감시 켜짐\)/); assert.match(t, /5분 감시 트리거: 1개/); assert.match(t, /마지막 감시 실행: 3분 전 · ok · on · 포지션 2/); assert.match(t, /마지막 관리 동작: 4분 전 · enable · ok/);
     const r = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, small: [...document.querySelectorAll('button,input')].filter(e => e.offsetParent && e.getBoundingClientRect().height < 40).map(e => e.id) })); assert.ok(r.sw <= r.cw); assert.deepEqual(r.small, []);
   }, { w, m: on });
-  await withPage(async (p) => { assert.match(await p.textContent('main'), /0건이면 정상 대기/); assert.match(await p.textContent('main'), /실제 동작: 아무것도 하지 않음\(꺼짐\)/); });
+  await withPage(async (p) => { assert.match(await p.textContent('#off').then(() => p.textContent('main')), /최대 1회 실행 ?은 끝까지 진행될 수 있습니다/); assert.match(await p.textContent('main'), /감시 설정이 off 이면 감시 전송은 차단/); assert.match(await p.textContent('main'), /0건이면 정상 대기/); assert.match(await p.textContent('main'), /실제 동작: 아무것도 하지 않음\(꺼짐\)/); });
 });

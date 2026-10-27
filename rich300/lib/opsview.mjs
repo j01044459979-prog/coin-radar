@@ -45,7 +45,7 @@ export function opsRenderHtml({ m, appUrl = '', build = 'dev' } = {}) {
 <section class="card"><div class="k">2. 실전 감시 시작</div><div class="sub">사전 점검에 통과해야 시작할 수 있습니다. 시작하면 운영 승인(<code>RICH300_PROD_APPROVED=yes</code>)과 <code>RICH300_WATCH_ALERTS=on</code> 을 설정하고 5분 감시 트리거를 1개만 설치한 뒤, 실제 값을 다시 조회해 확인합니다. 실패하면 모두 되돌립니다. 손절·익절 알림이 Telegram 으로 전송됩니다(자동 주문은 없습니다).</div>
 <label for="phrase">확인 문구: <strong>${dashEsc(OPS_PHRASE)}</strong> 를 입력</label><input id="phrase" autocomplete="off" placeholder="${dashEsc(OPS_PHRASE)}">
 <button id="on" class="go" type="button" disabled>실전 감시 시작</button><div id="onMsg" class="msg" role="status" aria-live="polite"></div></section>
-<section class="card"><div class="k">3. 감시 중지</div><div class="sub">즉시 <code>RICH300_WATCH_ALERTS=off</code> 로 바꾸고 5분 트리거를 제거합니다. 운영 승인 플래그와 시트·Telegram 연결 정보는 그대로 둡니다.</div>
+<section class="card"><div class="k">3. 감시 중지</div><div class="sub">즉시 <code>RICH300_WATCH_ALERTS=off</code> 로 바꾸고 5분 트리거를 제거합니다. 운영 승인 플래그와 시트·Telegram 연결 정보는 그대로 둡니다. 운영 승인이 남아 있어도 감시 설정이 off 이면 감시 전송은 차단됩니다.<br><strong>주의:</strong> 중지를 누르는 순간 이미 실행 중이던 감시가 있으면 그 <strong>최대 1회 실행</strong>은 끝까지 진행될 수 있습니다(그 실행에서 알림이 나갈 수 있음). 그다음 실행부터는 전송되지 않습니다.</div>
 <button id="off" class="go stop" type="button">감시 중지</button><div id="offMsg" class="msg" role="status" aria-live="polite"></div></section>
 <section class="card"><a id="reload" class="cta" hidden target="_top"${self ? ` href="${dashEsc(self)}"` : ''}>새로고침</a>${watchUrl ? ` <a class="cta" target="_top" href="${dashEsc(watchUrl)}">감시 점검 화면</a>` : ''}${posUrl ? ` <a class="cta" target="_top" href="${dashEsc(posUrl)}">포지션 등록</a>` : ''}
 <div class="sub">이 화면은 열기만 해서는 아무것도 바꾸지 않습니다. 임의의 설정은 바꿀 수 없고(허용 목록: 운영 승인·감시 설정), 소유자만 실행됩니다. 기록 전용 · 자동 주문 없음.</div></section>`;

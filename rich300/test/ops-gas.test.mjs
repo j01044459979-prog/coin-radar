@@ -115,3 +115,11 @@ test('활성화가 COIN RADAR 설정·Telegram 폴링/마감/백업 트리거·�
   const r0 = rows(); w.g.ctx.rich300OpsPrecheck(); w.g.ctx.rich300OpsEnable(PHRASE); w.g.ctx.rich300OpsDisable();
   assert.equal(rows(), r0); assert.deepEqual(w.g.spy.triggers.filter(t => !t.deleted).map(t => t.fn).sort(), trig0); assert.ok(!w.g.P.getKeys().some(k => /RADAR|radar/.test(k)));
 });
+
+test('중지 후 운영 승인(yes)이 남아도 감시 설정이 off 이면 전송 0 · 사전 점검만으로는 실전 알림이 켜지지 않는다 · 화면에 최대 1회 실행 안내', () => {
+  const w = world({ positions: true }); w.price = 134; w.g.cache.evictAll();
+  w.g.ctx.rich300OpsPrecheck(); assert.ok(!w.g.P.getProperty('RICH300_WATCH_ALERTS') && !w.g.P.getProperty('RICH300_PROD_APPROVED')); assert.deepEqual(j(w.g.ctx.rich300WatchTick()), { status: 'off' }); assert.equal(sentWatch(w.g).length, 0);     // 점검만: 전송 없음
+  w.g.ctx.rich300OpsEnable(PHRASE); w.g.ctx.rich300OpsDisable(); assert.equal(w.g.P.getProperty('RICH300_PROD_APPROVED'), 'yes');
+  assert.deepEqual(j(w.g.ctx.rich300WatchTick()), { status: 'off' }); assert.equal(w.g.ctx.rich300WatchState_().effective, 'nothing'); assert.equal(sentWatch(w.g).length, 0); assert.equal(w.g.tele.sent.length, 0);
+  assert.match(strip(w.g.ctx.doGet({ parameter: { p: 'ops' } }).html), /최대 1회 실행 ?은 끝까지 진행될 수 있습니다/);
+});
