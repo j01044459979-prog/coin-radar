@@ -50,6 +50,7 @@
   function mode(m) { kind = m; $('mEntry').setAttribute('aria-pressed', String(m === 'entry')); $('mExit').setAttribute('aria-pressed', String(m === 'exit')); $('entryFields').hidden = m !== 'entry'; $('exitFields').hidden = m !== 'exit'; $('noteBox').hidden = m !== 'exit'; }
   [].forEach.call(document.querySelectorAll('[data-q]'), function (b) { b.onclick = function () { $('xqty').value = b.getAttribute('data-q'); }; });
   $('mEntry').onclick = function () { mode('entry'); }; $('mExit').onclick = function () { mode('exit'); };
+  if (preset.mode === 'exit') mode('exit');       // 수동 등록 목록의 [청산 기록] 링크
   function say(t, cls) { var m = $('msg'); m.textContent = t; m.className = cls || ''; }
   // 저장 중 상태: 즉시 '저장 중' 표시 + 경과 초. 응답이 없으면(20초) 같은 내용으로 다시 눌러도 되는 상태로 풀어 준다(formId 가 같아 중복 저장되지 않음).
   var inflight = false, timer = null, watchdog = null, t0 = 0, SLOW_MS = 20000;

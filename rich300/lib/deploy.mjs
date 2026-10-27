@@ -5,9 +5,18 @@
 import { StoreError, META_SHEET } from './schema.mjs';
 
 export const DEPLOY_ENVS = Object.freeze(['test', 'prod']);
-export function deployGate(p, method) {                    // 허용이면 null, 차단이면 사유 문자열
+export function deployGate(p, method, purpose) {            // 허용이면 null, 차단이면 사유 문자열
   if (p.env !== 'test' && p.env !== 'prod') return 'env-unset';
-  if (p.env === 'prod') return p.prodApproved === 'yes' || (p.readOnlyOk === 'yes' && (method === 'getMe' || method === 'getWebhookInfo')) ? null : 'prod-not-approved';       // 읽기 전용 점검(RICH300_TG_READONLY_OK=yes)은 getMe·getWebhookInfo 두 호출만 허용(메시지·수신·설정 변경 없음)
+  if (p.env === 'prod') {
+    if (p.prodApproved === 'yes') return null;
+    const readOnly = method === 'getMe' || method === 'getWebhookInfo';
+    if ((p.readOnlyOk === 'yes' || p.tgTestOk === 'yes') && readOnly) return null;                         // 읽기 점검(RICH300_TG_READONLY_OK 또는 RICH300_TG_TEST_OK=yes): getMe·getWebhookInfo 두 호출만(메시지·수신·설정 변경 없음)
+    // 테스트 전송 허용(RICH300_TG_TEST_OK=yes) — 운영 승인과 *분리*된 좁은 허용. 화면의 명시적 동작이 목적(purpose)을 지정한 호출만 통과한다:
+    //   'pair-poll'(getUpdates, 페어링 확인 1회 · 답장 없음) 과 'test-send'(sendMessage, 테스트 메시지 1건). 그 밖의 모든 호출(감시 알림·폴링 트리거·버튼 처리·마감 알림)은 운영 승인 전까지 계속 차단된다.
+    if (p.tgTestOk === 'yes' && method === 'getUpdates' && purpose === 'pair-poll') return null;
+    if (p.tgTestOk === 'yes' && method === 'sendMessage' && purpose === 'test-send') return null;
+    return 'prod-not-approved';
+  }
   return p.testTgAllow === 'yes' ? null : 'test-tg-off';
 }
 export function deployMarkEnv(se, name) {                   // 최초 1회만 기록(이미 있으면 같은 값인지 확인)

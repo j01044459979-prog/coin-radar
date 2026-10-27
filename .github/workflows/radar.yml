@@ -57,6 +57,7 @@ jobs:
       RADAR_SIGNAL_PAPER: ${{ vars.RADAR_SIGNAL_PAPER || 'off' }}   # 모의매매 성과 추적(전송 없음, state.signal.paper에만 기록). RADAR_SIGNAL이 preview|on일 때만 동작
       RADAR_RICH300_BUTTONS: ${{ vars.RADAR_RICH300_BUTTONS || 'off' }}   # RICH 300 연동: on이면 진입 후보 메시지에 [진입했어][관망했어][놓쳤어] 버튼과 고유 ID를 붙인다(기본 off = 기존 메시지와 동일). 주문 기능 없음
       RADAR_SCALE_PLAN: ${{ vars.RADAR_SCALE_PLAN || 'off' }}   # 분할 진입·익절 계획(계산 참고용): on이면 진입 후보 메시지에 계획 블록을 붙인다(기본 off = 기존 메시지 그대로, 주문 기능 없음)
+      RADAR_RICH300_FEED: ${{ vars.RADAR_RICH300_FEED || 'off' }}   # RICH 300 추천 전달: on이면 전달 확인된 진입 후보를 상태(state.signal.feed)에 남긴다(기본 off = 기존 동작과 동일). 게시는 별도 워크플로(rich300-feed.yml)가 한다. 주문 기능 없음
       RADAR_PLAN_EQUITY: ${{ vars.RADAR_PLAN_EQUITY || '300' }}   # 계획 계산에 쓰는 가정 평가액(USDT)
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +120,21 @@ jobs:
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
+      # RICH 300 추천 피드 산출물(서명 전): 플래그 RADAR_RICH300_FEED=on · MODE=once · main 의 정기/수동 실행일 때만 *이 실행의* 상태에서 피드 항목을 꺼내 artifact 로 넘긴다(Secret·쓰기 권한 없음). 실패해도 레이더에는 영향이 없다.
+      - name: RICH300 feed artifact
+        id: feedart
+        if: always() && steps.gate.outputs.run == 'true' && env.MODE == 'once' && env.RADAR_RICH300_FEED == 'on' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: node radar-service/signal/feed-artifact.mjs .radar-state/state.json .rich300-feed/feed-raw.json
+      - name: Upload RICH300 feed artifact
+        if: always() && steps.feedart.outcome == 'success' && hashFiles('.rich300-feed/feed-raw.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rich300-feed-raw
+          path: .rich300-feed/feed-raw.json
+          retention-days: 1
+          if-no-files-found: ignore
       # 캐시 저장이 실제로 반영됐는지 확인한다. 실패하면 이 실행을 성공으로 표시하지 않는다.
       - name: Verify state saved
         id: verify

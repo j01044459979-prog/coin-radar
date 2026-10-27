@@ -10,7 +10,7 @@ import { buildEngine } from '../build.mjs';
 import { checkGasSyntax } from './gas-compat.mjs';
 
 const here = p => new URL(p, import.meta.url);
-export const BUNDLE_GAS_ORDER = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Install.gs'];
+export const BUNDLE_GAS_ORDER = ['Adapters.gs', 'Api.gs', 'Telegram.gs', 'Dashboard.gs', 'Journal.gs', 'Backup.gs', 'Deploy.gs', 'Verify.gs', 'Health.gs', 'Watch.gs', 'Manual.gs', 'Ops.gs', 'Strategy.gs', 'TgDiag.gs', 'Install.gs'];
 const TEST_ONLY_GAS = [];   // (예약) 테스트 전용 파일 이름. 현재 없음. 있는 것만 포함, 나머지 *.gs 는 알파벳 순으로 뒤에
 export function makeBundle({ env = 'prod' } = {}) {
   if (env !== 'test' && env !== 'prod') throw new Error('env 는 test 또는 prod');

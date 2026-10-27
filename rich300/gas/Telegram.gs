@@ -68,7 +68,7 @@ function rich300TgPairCode() {
 /** 모바일 입력 화면(?p=fill). 소유자만(라우터가 확인). 값은 서버가 JSON으로 주입한다. */
 function rich300PageFill_(e) {
   var t = HtmlService.createTemplateFromFile('Fill'), p = (e && e.parameter) || {};
-  var pre = { sid: String(p.sid || ''), dir: p.dir === 'SHORT' ? 'SHORT' : p.dir === 'LONG' ? 'LONG' : '', entry: String(p.entry || ''), stop: String(p.stop || '') };
+  var pre = { sid: String(p.sid || ''), dir: p.dir === 'SHORT' ? 'SHORT' : p.dir === 'LONG' ? 'LONG' : '', entry: String(p.entry || ''), stop: String(p.stop || ''), mode: p.mode === 'exit' ? 'exit' : '' };
   t.preset = JSON.stringify(pre).replace(/</g, '\\u003c');
   return t.evaluate().setTitle('RICH300 입력').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }

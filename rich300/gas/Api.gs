@@ -11,7 +11,7 @@
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
 var RICH300_BUILD = '__RICH300_BUILD__';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_' };
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -34,11 +34,11 @@ function rich300Html_(html, title) { return HtmlService.createHtmlOutput(html).s
  *  · 페이지 함수가 예외를 던지면 오류 코드와 '다시 시도' 버튼이 있는 화면. 처리 시간은 최근 기록(?p=health)에 남긴다.
  */
 function doGet(e) {
-  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'dash', out;
+  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'strat', out;
   if (name === 'ping') return rich300Ping_();
   try {
     if (rich300UiWho_() !== 'owner') return rich300Html_(RICH300_ENGINE.shellRenderDenied({ appUrl: rich300AppUrl_() }), '접근 제한');
-    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'dash';
+    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'strat';
     var fn = globalThis[RICH300_PAGES_[page]];
     if (typeof fn !== 'function') throw new Error('page-missing');
     out = fn(e);

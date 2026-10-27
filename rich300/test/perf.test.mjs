@@ -75,3 +75,12 @@ test('입력 화면: 저장 중 즉시 상태·경과 초·중복 클릭 차단�
   const html = readFileSync(new URL('../gas/Fill.html', import.meta.url), 'utf8');
   for (const re of [/저장 중… 0초/, /if \(inflight\) return;/, /SLOW_MS = 20000/, /응답이 늦습니다/, /중복 저장되지 않습니다/, /aria-busy/, /formId: formId/]) assert.match(html, re, String(re));
 });
+
+test('포지션 등록 화면·저장 예산(60일 이력 위에서): 화면은 시트만 읽고 가볍게, 등록 저장은 락·flush 한 번, 같은 폼 재전송은 가볍다', () => {
+  const { g } = world(); g.spy.marketHandler = url => ({ status: 200, body: /okx/.test(url) ? { code: '0', data: [{ last: '150', ts: String(Date.now()) }] } : { retCode: 0, result: { list: [] }, time: 1 } });
+  const empty0 = measure(g, () => g.ctx.doGet({ parameter: { p: 'pos' } })), empty = measure(g, () => g.ctx.doGet({ parameter: { p: 'pos' } })), form = { formId: 'pf1', symbol: 'SOL', dir: 'LONG', entry: '140', qty: '1', leverage: '3', stop: '135', tp1: '148', tp2: '', at: '' };
+  const save = measure(g, () => g.ctx.rich300ManualRegister(form)), dup = measure(g, () => g.ctx.rich300ManualRegister(form)), after = measure(g, () => g.ctx.doGet({ parameter: { p: 'pos' } }));
+  assert.ok(empty0.calls <= 110 && empty0.ms <= 3000, `포지션 화면(초기) ${empty0.calls}회 ${empty0.ms}ms`); assert.ok(empty.calls <= 60 && empty.ms <= 1500, `포지션 화면 ${empty.calls}회 ${empty.ms}ms`); assert.equal(save.r.status, 'added'); assert.ok(save.calls <= 60 && save.ms <= 2600, `포지션 저장 ${save.calls}회 ${save.ms}ms`);
+  assert.ok(save.by.lock <= 2 && save.by.flush <= 1, `락 ${save.by.lock} flush ${save.by.flush}`); assert.equal(dup.r.status, 'duplicate'); assert.ok(dup.calls <= 20, `재전송 ${dup.calls}회`);
+  assert.ok(after.calls <= 60 && after.ms <= 1500, `등록 뒤 화면 ${after.calls}회`); assert.match(after.r.html, /SOL/);
+});

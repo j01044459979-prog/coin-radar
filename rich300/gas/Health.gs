@@ -46,6 +46,13 @@ function rich300PageHealth_(e) {
     var ms = Date.now(), jenv = rich300JournalEnv_(); E.journalBuild(jenv, { now: Date.now(), limit: 40 }); var t = Date.now() - ms;
     return { status: t < 2000 ? 'PASS' : 'WAIT', text: '기록 조회(최근 40건) 생성 ' + t + 'ms — 목표 2000ms' };
   });
+  step('H11', '보유 포지션 감시 상태', function () {      // 속성·트리거·가드 상태만 읽는다(시세·시트·텔레그램 호출 없음)
+    var st = rich300WatchState_(), age = st.last ? Math.round((Date.now() - st.last.at) / 60000) : null;
+    var propText = { unset: '속성 없음', off: 'off', preview: 'preview', on: 'on', invalid: '인식 불가 값(길이 ' + st.invalidLen + ')' }[st.prop];
+    var eff = { nothing: '실제 동작: 아무것도 하지 않음(꺼짐)', 'preview-only': '실제 동작: 계산만, 전송 없음', sends: '실제 동작: 전송 가능' }[st.effective];
+    var base = '보유 포지션 감시 — 속성 ' + propText + ' · ' + eff + ' · 트리거 ' + (st.triggers ? st.triggers + '개' : '없음') + ' · 전송 가드 ' + (st.gateBlocked ? '막힘' : '통과') + '/연결 ' + (st.paired ? '됨' : '안 됨') + (st.last ? ' · 마지막 실행 ' + age + '분 전 ' + st.last.status : ' · 실행 기록 없음');
+    return { status: st.effective === 'nothing' ? 'WAIT' : (st.triggers && st.last && age <= 15 && st.last.status !== 'exception' ? 'PASS' : 'WAIT'), text: base };
+  });
   var html = E.shellRenderHealth({ steps: steps, build: RICH300_BUILD, appUrl: rich300AppUrl_(), totalMs: Date.now() - t0, perf: { recent: rich300PerfRecent_() } });
   return rich300Html_(html, 'RICH300 상태 점검');
 }

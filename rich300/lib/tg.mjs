@@ -126,7 +126,7 @@ export function tgParseAt(raw, now) {
 }
 const tgAtMs = (env, p) => (p.atMs === undefined || p.atMs === null || p.atMs === '' ? undefined : (Number.isSafeInteger(+p.atMs) && +p.atMs > 0 ? +p.atMs : (() => { throw tgUserErr('시각 값이 올바르지 않습니다'); })()));
 function tgNote(raw) { const t = String((raw != null ? raw : '')).replace(/\s+/g, ' ').trim(); if (!t) return undefined; if (t.length > 300) throw tgUserErr('메모는 300자까지입니다'); return t; }
-function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
+export function tgAmount(raw, name) {                         // "0.12" 입력, "~0.12" 추정, 비우면 미입력
   if (raw === undefined || raw === '') return { state: 'missing' };
   const est = raw.startsWith('~'), v = est ? raw.slice(1) : raw;
   return { state: est ? 'estimated' : 'entered', amount: schemaDecString(v, name) };
@@ -136,18 +136,36 @@ const tgUserErr = (msg) => new StoreError('USER', msg);
 // ── 페어링 ──
 export function tgPairCreate(env) {                    // UI(소유자 로그인)에서 호출: 10분·1회용 코드. 해시만 저장한다.
   const code = Array.from({ length: 8 }, () => TG_PAIR_ALPHABET[env.randomInt(TG_PAIR_ALPHABET.length)]).join('');
-  tgKvPut(env, 'pair', { hash: env.sha256(`rich300-pair|${code}`) }, TG_PAIR_TTL_SEC); tgKvPut(env, 'pairfail', { n: 0 }, TG_PAIR_TTL_SEC);
+  tgKvPut(env, 'pair', { hash: env.sha256(`rich300-pair|${code}`), createdAt: env.now() }, TG_PAIR_TTL_SEC); tgKvPut(env, 'pairfail', { n: 0 }, TG_PAIR_TTL_SEC);
   return { code, expiresAt: env.now() + TG_PAIR_TTL_SEC * 1000 };
 }
 export const tgPairedUser = env => tgKvGet(env, 'paired');
-function tgPairAttempt(env, ev, code) {                // 실패는 무응답(봇 존재·코드 유무를 알려 주지 않음). 5회 실패 시 코드 폐기.
+function tgPairAttempt(env, ev, code, { reply = true } = {}) {                // 실패는 무응답(봇 존재·코드 유무를 알려 주지 않음). 5회 실패 시 코드 폐기.
   const rec = tgKvGet(env, 'pair'), fails = nullishOr(tgKvGet(env, 'pairfail'), { n: 0 });
   if (!rec || fails.n >= TG_PAIR_MAX_FAILS || ev.chatType !== 'private' || ev.isBot) return { status: 'ignored', action: 'pair-rejected' };
   const ok = authTimingSafeEqual(rec.hash, env.sha256(`rich300-pair|${String((code != null ? code : '')).toUpperCase()}`));
   if (!ok) { fails.n++; tgKvPut(env, 'pairfail', fails, TG_PAIR_TTL_SEC); if (fails.n >= TG_PAIR_MAX_FAILS) env.kv.del('pair'); return { status: 'ignored', action: 'pair-rejected' }; }
   env.kv.del('pair'); env.kv.del('pairfail'); tgKvPut(env, 'paired', { userId: ev.fromId, chatId: ev.chatId, at: env.now() });
+  if (!reply) return { status: 'handled', action: 'paired', replyFailed: false };           // 화면에서 하는 페어링 확인(1회 폴링)은 메시지를 보내지 않는다
   const s = tgSend(env, ev.chatId, 'RICH300 연결 완료. 이 계정만 응답합니다. /help');
   return { status: 'handled', action: 'paired', replyFailed: !s.ok };
+}
+
+// 페어링 확인 1회 폴링(화면의 버튼): getUpdates 한 번 → 코드 생성 *이후*에 온 `/start <코드>` 개인 메시지만 확인한다. 다른 업데이트는 처리하지 않고(주문·체결·버튼 처리 없음), 답장도 보내지 않는다.
+//  페어링이 되면 그 업데이트까지만 확인 처리(offset)하고 멈춘다 — 뒤에 쌓인 업데이트는 건드리지 않는다.
+export function tgPairPoll(env) {
+  const rec = tgKvGet(env, 'pair'); if (tgPairedUser(env)) return { status: 'already-paired' };
+  if (!rec) return { status: 'no-code' };
+  const off = Number(nullishOr(tgKvGet(env, 'offset'), 0)), r = tgCall(env, 'getUpdates', { ...(off ? { offset: off } : {}), limit: 50, timeout: 0, allowed_updates: ['message'] });
+  if (!r.ok) return { status: 'error', code: r.code };
+  const list = (Array.isArray(r.result) ? r.result : []).filter(u => Number.isSafeInteger((u == null ? undefined : u.update_id))).sort((a, b) => a.update_id - b.update_id), since = (nullishOr(rec.createdAt, 0)) - 60000;
+  for (const u of list) {
+    const ev = tgParseUpdate(u); if (!ev || ev.kind !== 'message' || !Number.isFinite(ev.dateMs) || ev.dateMs < since) continue;
+    const cmd = tgParseCommand(ev.text); if (!cmd || cmd.cmd !== 'start' || !cmd.pos.length) continue;
+    const x = tgPairAttempt(env, ev, cmd.pos[0], { reply: false });
+    if (x.action === 'paired') { tgKvPut(env, 'offset', u.update_id + 1); return { status: 'paired' }; }
+  }
+  return { status: 'waiting', seen: list.length };
 }
 
 // ── 메시지·버튼 만들기 ──
@@ -186,11 +204,11 @@ function tgRiskEquityMicro(env) {                      // 경고용: 오늘 시�
 // ── 분할 진입·익절 계획(계산·경고 전용, 주문 없음) ──
 // 저장: 첫 진입 체결 때 입력(평가액·1차 진입가·손절·배율·단계 수)을 'plan'(불변)에 한 번 남긴다. 계획은 이 입력에서 결정적으로 다시 만든다.
 // 규칙 위반(무계획 추가 진입 등)은 기본 차단, 명령 끝 force=1 이면 기록하되 요약에 경고를 남긴다.
-const tgEquityNow = env => { const m = tgRiskEquityMicro(env); return m === null || m === undefined ? null : (Number(m) / 1e6).toFixed(2); };
+export const tgEquityNow = env => { const m = tgRiskEquityMicro(env); return m === null || m === undefined ? null : (Number(m) / 1e6).toFixed(2); };
 function tgPlanBuild(se, sid, sg, inp) {
   return splanBuild({ symbol: sg.symbolId, dir: sg.dir, entry: Number(inp.entry), stop: Number(inp.stop), equity: Number(inp.equity), ...(inp.lev ? { lev: inp.lev } : {}), ...(inp.stages ? { params: { maxStages: inp.stages } } : {}) });
 }
-function tgPlanOf(se, sid) {
+export function tgPlanOf(se, sid) {
   const r = storeGet(se, 'plan', sid), sg = storeGet(se, 'signal', sid); if (!r || r.void || !sg || sg.void) return null;
   const plan = tgPlanBuild(se, sid, sg.data, r.data); return plan.status === 'ok' ? plan : null;
 }
@@ -321,7 +339,7 @@ export function tgSubmitFillForm(env, form, { actor = 'ui:form' } = {}) {
     const built = isExit ? tgBuildExit(env, { sid, price: String((form.price != null ? form.price : '')), qty: form.qty === undefined || form.qty === '' ? undefined : String(form.qty), ...common })
       : tgBuildEntry(env, { sid, margin: String((form.margin != null ? form.margin : '')), leverage: String((form.leverage != null ? form.leverage : '')), entry: String((form.entry != null ? form.entry : '')), stop: form.stop ? String(form.stop) : undefined, qty: form.qty ? String(form.qty) : undefined, ...common });
     const r = tgCommitFill(env, { ...built, fillId }, actor); const out = { ok: true, status: r.status, kind: built.fill.kind, summary: built.summary };
-    if (built.fill.kind === 'close') { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
+    if (built.fill.kind === 'close' && !sid.startsWith('M-')) { const p = tgPairedUser(env); if (p) out.reviewPrompt = tgSendReviewPromptIfNeeded(env, p.chatId, sid); }
     return out;
   } catch (e) { if (e instanceof StoreError && (e.code === 'USER' || e.code === 'VALIDATION')) return { ok: false, error: 'invalid', message: String(e.message).slice(0, 160) }; if (e instanceof StoreError && e.code === 'LOCK') return { ok: false, error: 'busy', retry: true }; return { ok: false, error: 'server' }; }
 }

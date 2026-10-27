@@ -77,3 +77,13 @@ test('Apps Script V8 호환 보수 점검: ES2021 이후 API(Object.hasOwn·repl
   for (const [re, why] of [[/Object\.hasOwn\b/, 'Object.hasOwn(ES2022)'], [/\.replaceAll\(/, 'replaceAll(ES2021)'], [/\.at\(-?\d/, 'Array/String.at(ES2022)'], [/\.(findLast|findLastIndex|toSorted|toReversed|toSpliced)\(/, 'ES2023 배열 메서드'], [/\bstructuredClone\b/, 'structuredClone'], [/\bIntl\.Segmenter\b/, 'Intl.Segmenter'], [/\brequire\(|\bprocess\.|\bBuffer\b|\bsetTimeout\b|\bqueueMicrotask\b|\bTextEncoder\b|\bAbortController\b/, 'Node·브라우저 전용 API'], [/\bawait\b|\basync\s+function\b/, 'async/await(트리거 환경 불필요)']])
     assert.ok(!re.test(code), `금지: ${why}`);
 });
+
+test('Telegram 가드 분리: 테스트 전송 허용(RICH300_TG_TEST_OK)은 읽기 점검·pair-poll(getUpdates)·test-send(sendMessage)만 통과, 운영 승인은 전부', () => {
+  const g = (p, m, purpose) => deployGate({ env: 'prod', ...p }, m, purpose), T = { tgTestOk: 'yes' };
+  assert.equal(g({}, 'getMe'), 'prod-not-approved'); assert.equal(g(T, 'getMe'), null); assert.equal(g(T, 'getWebhookInfo'), null);
+  assert.equal(g(T, 'getUpdates'), 'prod-not-approved'); assert.equal(g(T, 'getUpdates', 'pair-poll'), null); assert.equal(g(T, 'getUpdates', 'test-send'), 'prod-not-approved');
+  assert.equal(g(T, 'sendMessage'), 'prod-not-approved'); assert.equal(g(T, 'sendMessage', 'pair-poll'), 'prod-not-approved'); assert.equal(g(T, 'sendMessage', 'test-send'), null);
+  for (const m of ['answerCallbackQuery', 'editMessageText', 'deleteWebhook', 'setWebhook']) assert.equal(g(T, m, 'test-send'), 'prod-not-approved', m);
+  assert.equal(g({ tgTestOk: 'no' }, 'sendMessage', 'test-send'), 'prod-not-approved'); assert.equal(g({ prodApproved: 'yes' }, 'sendMessage'), null); assert.equal(g({ prodApproved: 'yes' }, 'getUpdates'), null);
+  assert.equal(deployGate({ env: 'test', tgTestOk: 'yes' }, 'sendMessage', 'test-send'), 'test-tg-off');          // 테스트 환경 규칙은 그대로
+});

@@ -4,9 +4,10 @@
  *  · Telegram 호출 가드(rich300TgGate_): 운영은 RICH300_PROD_APPROVED=yes, 테스트는 RICH300_TEST_TG_ALLOW=yes 일 때만 허용. 그 전에는 어떤 메시지도 나가지 않는다.
  *  · 점검·설정 함수의 출력에는 값이 아니라 상태(존재 여부)만 담는다. 토큰·키·이메일·시트 ID를 출력하지 않는다.
  */
+var RICH300_GATE_PURPOSE_ = '';      // 화면의 명시적 동작(rich300TgTestSend·rich300TgPairCheck)이 실행하는 동안에만 설정된다(실행마다 초기화). 트리거·폴링·감시는 설정하지 않는다.
 function rich300TgGate_(method) {
   var p = PropertiesService.getScriptProperties();
-  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), readOnlyOk: p.getProperty('RICH300_TG_READONLY_OK'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW') }, method);
+  return RICH300_ENGINE.deployGate({ env: p.getProperty('RICH300_ENV'), prodApproved: p.getProperty('RICH300_PROD_APPROVED'), readOnlyOk: p.getProperty('RICH300_TG_READONLY_OK'), testTgAllow: p.getProperty('RICH300_TEST_TG_ALLOW'), tgTestOk: p.getProperty('RICH300_TG_TEST_OK') }, method, RICH300_GATE_PURPOSE_);
 }
 /** 초기 설정(멱등): 환경 이름·소유자 이메일 기록, 시트가 없으면 새로 만들고 저장소 초기화·환경 표식. 트리거·승인 플래그는 건드리지 않는다. */
 function rich300SetupTest() { return rich300Setup_('test'); }
