@@ -136,18 +136,36 @@ const tgUserErr = (msg) => new StoreError('USER', msg);
 // ── 페어링 ──
 export function tgPairCreate(env) {                    // UI(소유자 로그인)에서 호출: 10분·1회용 코드. 해시만 저장한다.
   const code = Array.from({ length: 8 }, () => TG_PAIR_ALPHABET[env.randomInt(TG_PAIR_ALPHABET.length)]).join('');
-  tgKvPut(env, 'pair', { hash: env.sha256(`rich300-pair|${code}`) }, TG_PAIR_TTL_SEC); tgKvPut(env, 'pairfail', { n: 0 }, TG_PAIR_TTL_SEC);
+  tgKvPut(env, 'pair', { hash: env.sha256(`rich300-pair|${code}`), createdAt: env.now() }, TG_PAIR_TTL_SEC); tgKvPut(env, 'pairfail', { n: 0 }, TG_PAIR_TTL_SEC);
   return { code, expiresAt: env.now() + TG_PAIR_TTL_SEC * 1000 };
 }
 export const tgPairedUser = env => tgKvGet(env, 'paired');
-function tgPairAttempt(env, ev, code) {                // 실패는 무응답(봇 존재·코드 유무를 알려 주지 않음). 5회 실패 시 코드 폐기.
+function tgPairAttempt(env, ev, code, { reply = true } = {}) {                // 실패는 무응답(봇 존재·코드 유무를 알려 주지 않음). 5회 실패 시 코드 폐기.
   const rec = tgKvGet(env, 'pair'), fails = nullishOr(tgKvGet(env, 'pairfail'), { n: 0 });
   if (!rec || fails.n >= TG_PAIR_MAX_FAILS || ev.chatType !== 'private' || ev.isBot) return { status: 'ignored', action: 'pair-rejected' };
   const ok = authTimingSafeEqual(rec.hash, env.sha256(`rich300-pair|${String((code != null ? code : '')).toUpperCase()}`));
   if (!ok) { fails.n++; tgKvPut(env, 'pairfail', fails, TG_PAIR_TTL_SEC); if (fails.n >= TG_PAIR_MAX_FAILS) env.kv.del('pair'); return { status: 'ignored', action: 'pair-rejected' }; }
   env.kv.del('pair'); env.kv.del('pairfail'); tgKvPut(env, 'paired', { userId: ev.fromId, chatId: ev.chatId, at: env.now() });
+  if (!reply) return { status: 'handled', action: 'paired', replyFailed: false };           // 화면에서 하는 페어링 확인(1회 폴링)은 메시지를 보내지 않는다
   const s = tgSend(env, ev.chatId, 'RICH300 연결 완료. 이 계정만 응답합니다. /help');
   return { status: 'handled', action: 'paired', replyFailed: !s.ok };
+}
+
+// 페어링 확인 1회 폴링(화면의 버튼): getUpdates 한 번 → 코드 생성 *이후*에 온 `/start <코드>` 개인 메시지만 확인한다. 다른 업데이트는 처리하지 않고(주문·체결·버튼 처리 없음), 답장도 보내지 않는다.
+//  페어링이 되면 그 업데이트까지만 확인 처리(offset)하고 멈춘다 — 뒤에 쌓인 업데이트는 건드리지 않는다.
+export function tgPairPoll(env) {
+  const rec = tgKvGet(env, 'pair'); if (tgPairedUser(env)) return { status: 'already-paired' };
+  if (!rec) return { status: 'no-code' };
+  const off = Number(nullishOr(tgKvGet(env, 'offset'), 0)), r = tgCall(env, 'getUpdates', { ...(off ? { offset: off } : {}), limit: 50, timeout: 0, allowed_updates: ['message'] });
+  if (!r.ok) return { status: 'error', code: r.code };
+  const list = (Array.isArray(r.result) ? r.result : []).filter(u => Number.isSafeInteger((u == null ? undefined : u.update_id))).sort((a, b) => a.update_id - b.update_id), since = (nullishOr(rec.createdAt, 0)) - 60000;
+  for (const u of list) {
+    const ev = tgParseUpdate(u); if (!ev || ev.kind !== 'message' || !Number.isFinite(ev.dateMs) || ev.dateMs < since) continue;
+    const cmd = tgParseCommand(ev.text); if (!cmd || cmd.cmd !== 'start' || !cmd.pos.length) continue;
+    const x = tgPairAttempt(env, ev, cmd.pos[0], { reply: false });
+    if (x.action === 'paired') { tgKvPut(env, 'offset', u.update_id + 1); return { status: 'paired' }; }
+  }
+  return { status: 'waiting', seen: list.length };
 }
 
 // ── 메시지·버튼 만들기 ──

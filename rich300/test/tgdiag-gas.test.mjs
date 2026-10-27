@@ -16,7 +16,7 @@ const testMsgs = g => g.tele.sent.filter(m => /\[RICH300 TEST\]/.test(m.text));
 
 test('진단 화면: 존재 여부·가드·트리거만 표시, 토큰·채팅 ID·봇 이름 비노출, 네트워크(텔레그램) 호출 0', () => {
   const g = world(); const html = g.ctx.doGet({ parameter: { p: 'tg' } }).html, t = strip(html);
-  assert.match(t, /봇 토큰 속성: 있음/); assert.match(t, /메시지 전송 가드: 통과/); assert.match(t, /수신 계정 연결\(페어링\): 됨/); assert.match(t, /테스트 메시지: 아직 보낸 적 없음/);
+  assert.match(t, /봇 토큰 속성: 있음/); assert.match(t, /메시지 전송 가드\(일반\): 통과/); assert.match(t, /수신 계정 연결\(페어링\): 됨/); assert.match(t, /테스트 메시지: 아직 보낸 적 없음/);
   for (const secret of [FAKE_TOKEN, String(OWNER), 'rich300_test_bot']) assert.ok(!html.includes(secret), `비노출: ${secret}`);
   assert.equal(g.tele.calls.length, 0);
 });
@@ -51,7 +51,7 @@ test('API 전송 실패: failed 기록, 60초 안에는 재시도 거부, 그 �
   g.ctx.doGet({ parameter: { p: 'tg' } }); assert.equal(g.ctx.rich300TgTestSend(nonceOf(g)).ok, true); assert.equal(testMsgs(g).length, 1);
 });
 test('가드: 운영 승인 전이거나 연결 전이면 전송 불가(0건)·버튼/nonce 없음 · 안내 문구', () => {
-  const a = world({ approved: false }); const html = a.ctx.doGet({ parameter: { p: 'tg' } }).html; assert.ok(!/id="sendTest"/.test(html)); assert.match(strip(html), /메시지 전송 가드: 막힘\(prod-not-approved\)/); assert.equal(a.P.getProperty('tgdiag:nonce'), null);
+  const a = world({ approved: false }); const html = a.ctx.doGet({ parameter: { p: 'tg' } }).html; assert.ok(!/id="sendTest"/.test(html)); assert.match(strip(html), /메시지 전송 가드\(일반\): 막힘\(prod-not-approved\)/); assert.equal(a.P.getProperty('tgdiag:nonce'), null);
   a.P.setProperty('tgdiag:nonce', JSON.stringify({ n: 'q', at: Date.now() })); assert.match(a.ctx.rich300TgTestSend('q').code, /^blocked:/); assert.equal(a.tele.sent.length, 0); assert.equal(a.tele.calls.length, 0);
   const b = world({ paired: false }); b.P.setProperty('RICH300_PROD_APPROVED', 'yes'); b.ctx.doGet({ parameter: { p: 'tg' } }); b.P.setProperty('tgdiag:nonce', JSON.stringify({ n: 'q', at: Date.now() })); assert.equal(b.ctx.rich300TgTestSend('q').code, 'not-paired'); assert.equal(b.tele.sent.length, 0);
 });
