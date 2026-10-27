@@ -28,6 +28,7 @@ export const ENGINE_MODULES = [
   'tg',
   'manual',
   'manualview',
+  'opsview',
   'watch',
   'close',
   'analytics',
