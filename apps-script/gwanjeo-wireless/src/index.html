@@ -1166,7 +1166,7 @@
             <option value="post">후불</option>
             <option value="mnp">MNP</option>
             <option value="choice">스초</option>
-            <option value="house">가구초</option>
+            <option value="house">디초</option>
             <option value="second">세컨</option>
             <option value="card">카드</option>
           </select>
@@ -1981,7 +1981,7 @@ function renderEmployees(){
             <th>개통</th>
             <th>MNP</th>
             <th>스초</th>
-            <th>가구초</th>
+            <th>디초</th>
             <th>세컨</th>
             <th>카드</th>
           </tr>
@@ -3039,7 +3039,7 @@ function previewManager(){
         `추지 기기값: ${money(d.useDevice)}${d.useDevice?' → AA열 (추지)기기값':''}`,
         '',
         '총 사용금액(Z) = 장표 행 수식으로 합산',
-        '스초/디초·가구초 = 요금제로 실적 판정',
+        '스초·디초 = 요금제로 실적 판정',
         '2ND·확보금액·그 외 사용금액 = 장표에서 직접 입력'
       ];
       if(d.warnings&&d.warnings.length) lines.push('','[확인 필요]',...d.warnings);

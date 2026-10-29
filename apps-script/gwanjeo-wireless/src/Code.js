@@ -40,6 +40,14 @@ function norm(v){
   .toUpperCase();
 }
 
+/* 셀에 실제 입력값이 있는지: 빈칸·공백만·빈 문자열(수식 결과 포함)은 없음, 그 외 문자·숫자는 있음 */
+var EMPLOYEE_ORDER_=['전명석','박영빈','김소명','유병규'];
+
+function hasEntry_(v){
+  if(v===null||v===undefined||v===false) return false;
+  return String(v).trim()!=='';
+}
+
 function phone(v){
   var s=String(v==null?'':v)
   .replace(/\D/g,'');
@@ -865,9 +873,13 @@ function readCases_(
             amount(r[28]);
 
 
-          var secondRaw=
-            norm(r[20])||
-            norm(r[30]);
+          /*
+           * 세컨: U열(2ND 확보) 또는 AE열(2nd 사용)에 실제 입력값이 하나라도 있으면 1건
+           * (문자·숫자·메모 종류 무관, 빈칸·공백·빈 문자열 수식 결과는 0, 한 행 최대 1건)
+           */
+          var secondHas=
+            hasEntry_(r[20])||
+            hasEntry_(r[30]);
 
           var cardRaw=
             norm(r[37]);
@@ -970,22 +982,20 @@ function readCases_(
                 ?1
                 :0,
 
+            /*
+             * 디초(기존 '가구초' 항목): 요금제에 '더블디초'가 포함된 건만 1건
+             * (띄어쓰기 무시, 스초 기준은 그대로라 더블디초는 스초·디초 각각 1건)
+             */
+
             house:
               planN.indexOf(
-                '가구초'
+                '더블디초'
               )>=0
                 ?1
                 :0,
 
             second:
-              secondRaw&&
-              ![
-                '0',
-                'X',
-                '-'
-              ].includes(
-                secondRaw
-              )
+              secondHas
                 ?1
                 :0,
 
@@ -3281,6 +3291,28 @@ function getDashboardData(
     }
   );
 
+  /*
+   * 직원별 실적 표시 순서 고정 (모든 월 동일): 전명석 → 박영빈 → 김소명 → 유병규
+   * 실적이 없는 달에도 4명은 0건으로 표시, 그 외 이름(미지정 등)은 뒤에 가나다순
+   */
+  EMPLOYEE_ORDER_.forEach(
+    function(name){
+
+      if(!employees[name]){
+
+        employees[name]={
+          staff:name,
+          post:0,
+          mnp:0,
+          choice:0,
+          house:0,
+          second:0,
+          card:0
+        };
+      }
+    }
+  );
+
   var employeeStats=
     Object.keys(
       employees
@@ -3294,14 +3326,14 @@ function getDashboardData(
     .sort(
       function(a,b){
 
-        if(
-          b.post!==a.post
-        ){
+        var ia=EMPLOYEE_ORDER_.indexOf(a.staff);
+        var ib=EMPLOYEE_ORDER_.indexOf(b.staff);
 
-          return(
-            b.post-
-            a.post
-          );
+        if(ia<0) ia=EMPLOYEE_ORDER_.length;
+        if(ib<0) ib=EMPLOYEE_ORDER_.length;
+
+        if(ia!==ib){
+          return ia-ib;
         }
 
         return a.staff
