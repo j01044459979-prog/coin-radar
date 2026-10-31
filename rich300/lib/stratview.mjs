@@ -19,12 +19,12 @@ function svCard(r, now) {
   if (r.state === 'CANDIDATE' || r.state === 'WAIT_ENTRY') lines.push(`진입 유효 ~${svKst(x.validUntil)} KST · 1차 지정가 ${plan ? F(plan.stages[0].price) : '—'}`);
   else if (sgyIsActive(r.state)) lines.push(`가상 진입 ${filled}단계 체결 · 가상 청산 ${legs}회${x.fills && x.fills.length ? ` · 시작 ${svKst(x.entryAt)} KST` : ''}`);
   if (plan && sgyIsActive(r.state)) lines.push(`위험 ${(plan.riskPct * 100).toFixed(1)}% · 격리 ${plan.lev}배 · 증거금 ${plan.totalMargin.toFixed(1)} USDT`);
-  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span><strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> ${state}${r.score !== undefined ? `<span class="sub"> · 점수 ${r.score}</span>` : ''}</div><div class="sub">${dashEsc(svKst(r.createdAt))} KST</div></div>${lines.map(l => `<div class="sub">${dashEsc(l)}</div>`).join('')}<div class="sub">전략 기준 가상 추적 · 실제 체결 아님</div></div>`;
+  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span>${r.x && r.x.grade === 'B' ? '<span class="pill">B급 공격형</span>' : ''}<strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> ${state}${r.score !== undefined ? `<span class="sub"> · 점수 ${r.score}</span>` : ''}</div><div class="sub">${dashEsc(svKst(r.createdAt))} KST</div></div>${lines.map(l => `<div class="sub">${dashEsc(l)}</div>`).join('')}<div class="sub">전략 기준 가상 추적 · 실제 체결 아님</div></div>`;
 }
 function svEnded(r) {
   const x = r.x, res = x.result, p = r.entry;
   const out = res ? `<span class="${res.usdt >= 0 ? 'pos' : 'neg'}">${res.usdt >= 0 ? '▲' : '▼'} ${svSign(res.usdt)} USDT (${svSign(res.r)}R)</span>` : '<span class="zero">■ 진입 없음</span>';
-  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span><strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> <span class="badge">${dashEsc(SV_END[r.state] || r.state)}</span></div><div>${out}</div></div><div class="sub">${dashEsc(svKst(r.createdAt))} → ${dashEsc(svKst(r.endedAt))} KST · ${dashEsc(SV_REASON[x.reason] || x.reason || '')}${res ? ` · 평균 진입 ${dashEsc(svNum(res.avgEntry, p))}` : ''}${r.score !== undefined ? ` · 점수 ${r.score}` : ''}</div></div>`;
+  return `<div class="pc"><div class="row"><div><span class="pill">${dashEsc(r.dir)}</span>${r.x && r.x.grade === 'B' ? '<span class="pill">B급 공격형</span>' : ''}<strong>${dashEsc(r.symbolId.replace(/USDT$/, ''))}</strong> <span class="badge">${dashEsc(SV_END[r.state] || r.state)}</span></div><div>${out}</div></div><div class="sub">${dashEsc(svKst(r.createdAt))} → ${dashEsc(svKst(r.endedAt))} KST · ${dashEsc(SV_REASON[x.reason] || x.reason || '')}${res ? ` · 평균 진입 ${dashEsc(svNum(res.avgEntry, p))}` : ''}${r.score !== undefined ? ` · 점수 ${r.score}` : ''}</div></div>`;
 }
 // m: { rows:[strategy…], now, feed?:{…}, mode:'off'|'preview'|'on', lastRun? }
 export function stratRenderHtml({ m, appUrl = '', build = 'dev' } = {}) {

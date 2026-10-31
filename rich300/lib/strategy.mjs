@@ -16,6 +16,7 @@ import { WATCH, watchAssessMarket, watchTrend, watchVolRatio, wDeliver, wLoadSta
 export const STRAT = Object.freeze({
   equity: 300, riskBase: 0.01, riskStrong: 0.015, strongScore: 80, dayLossPct: 0.03, maxMarginUsage: 0.3, maxActive: 10, maxNewPerTick: 3,
   nearEntryR: 0.3, stopNearR: 0.25, stopNearRearmR: 0.5, trailStepR: 0.25, weakStopR: 0.6, weakVol: 1.2, weakCooldownMs: 3600000,
+  gradeB: Object.freeze({ riskUsdt: 1.5, dayLossUsdt: 9, minNetRR: 2, maxLev: 3 }),   // B급 공격형: 거래당 손실 한도 1.5 USDT · 하루 누적 손실 9 USDT · 비용 반영 1차 손익비 ≥ 2R · 격리 3배 이하
   maxTrackMs: 72 * 3600000, barMs: 900000, keepKvMs: 3 * 86400000, retryNoteMs: 6 * 3600000,
 });
 export const STRAT_ACTIVE = Object.freeze(['CANDIDATE', 'WAIT_ENTRY', 'ENTRY_TRIGGERED', 'TRACKING', 'TP1', 'TP2', 'TRAILING']);
@@ -28,27 +29,45 @@ const sgyAvgExec = x => { const q = sgyEnteredOf(x); return q > 0 ? x.fills.redu
 const sgyKst = ms => new Date(ms + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
 const sgyHm = ms => new Date(ms + 9 * 3600000).toISOString().slice(11, 16);
 const sgyBase = sym => String(sym).replace(/USDT$/, '');
+export const sgyGrade = s => (s && ((s.x && s.x.grade === 'B') || s.grade === 'B') ? 'B' : 'A');     // 시트 스키마는 최상위 필드를 걸러내므로 등급은 x(본문)에 저장한다
+export const SGY_GRADE_TAG = Object.freeze({ A: '[A급 확정형]', B: '[B급 공격형]' });
 export const sgyRiskPct = score => (Number.isFinite(score) && score >= STRAT.strongScore ? STRAT.riskStrong : STRAT.riskBase);
 
 // ── 생성 ──
 // fe: feedParseEntry 결과(candidate). ctx: { now, activeMargin, dayPnl }. 반환 { ok, s } | { ok:false, reason, notify, s? } — 거절도 CANCELLED 기록으로 남긴다.
-export function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, activeCount = 0, stage = null }) {
-  const base = { sid: fe.sid, symbolId: fe.symbolId, dir: fe.dir, createdAt: now, updatedAt: now, score: fe.score === null ? undefined : fe.score, entry: String(fe.entry), stop: String(fe.stop) };
-  const x0 = { recAt: nullishOr(fe.createdAt, fe.closeT), arrivedAt: now, validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
+export function sgyBuild(fe, { now, activeMargin = 0, dayPnl = 0, dayPnlB = 0, activeCount = 0, stage = null }) {
+  const grade = fe.grade === 'B' ? 'B' : 'A', GB = STRAT.gradeB;
+  const base = { ...(grade === 'B' ? { grade: 'B' } : {}), sid: fe.sid, symbolId: fe.symbolId, dir: fe.dir, createdAt: now, updatedAt: now, score: fe.score === null ? undefined : fe.score, entry: String(fe.entry), stop: String(fe.stop) };
+  const x0 = { ...(grade === 'B' ? { grade: 'B' } : {}), recAt: nullishOr(fe.createdAt, fe.closeT), arrivedAt: now, validUntil: fe.validUntil, closeT: fe.closeT, triggerT: fe.triggerT, startT: 0, lastBarT: 0, fills: [], legs: [], events: [], stopPrice: fe.stop, stopKind: 'initial', rr1: fe.rr1, ref1: fe.ref1, ref2: fe.ref2, evidence: fe.evidence, volRel: fe.volRel, btcAlign: fe.btcAlign, costPct: fe.costPct, kind: 'virtual' };
   const cancel = (reason, notify, plan) => ({ ok: false, reason, notify, s: { ...base, state: 'CANCELLED', endedAt: now, x: { ...x0, reason, ...(plan ? { plan } : {}) } } });
   if (now > fe.validUntil) return cancel('expired-on-arrival', now - fe.closeT <= 3 * 3600000);      // 아주 늦게 도착한 오래된 추천은 조용히 기록만
   if (activeCount >= STRAT.maxActive) return cancel('too-many-active', true);
   if (dayPnl <= -STRAT.dayLossPct * STRAT.equity) return cancel('day-loss-limit', true);
-  const riskPct = sgyRiskPct(fe.score), params = { riskPct };
+  if (grade === 'B') {
+    if (dayPnlB <= -GB.dayLossUsdt) return cancel('b-day-loss-limit', true);                                   // B급 하루 누적 손실 한도(전체 −3%와 별도로 B급만)
+    if (!(Number.isFinite(fe.rr1) && fe.rr1 >= GB.minNetRR)) return cancel('b-rr-below-2', true);               // 비용 반영 1차 손익비 2R 미만은 B급 전략으로 만들지 않는다
+  }
+  const riskPct = grade === 'B' ? GB.riskUsdt / STRAT.equity : sgyRiskPct(fe.score), params = { riskPct };
+  if (grade === 'B' && stage && stage.ok && Number.isFinite(fe.swing) && stage.addR.length) {                // B급: 구조 유지선(눌림 저점·반등 고점)에 닿거나 그 바깥인 추가 진입 가격은 만들지 않는다(구조가 무너진 자리에 추가매수 금지)
+    const R0 = Math.abs(fe.entry - fe.stop), sg0 = fe.dir === 'LONG' ? 1 : -1, keep = [];
+    for (const r of stage.addR) { if (((fe.entry - sg0 * r * R0) - fe.swing) * sg0 > 0.05 * R0) keep.push(r); else break; }
+    if (keep.length < stage.addR.length) stage = { ...stage, addR: keep, stages: stage.stages.slice(0, keep.length), notes: [...(stage.notes || []), `B급: 구조 유지선 ${fe.swing} ${sg0 > 0 ? '아래' : '위'}에 놓이는 추가 진입 ${stage.addR.length - keep.length}개 제외`] };
+  }
   // 분할 가격: 시장 구조에서 찾은 값(stage)을 쓴다. 구조 정보가 없으면(시험·구버전) 고정 −0.3R/−0.6R(기본값)을 쓰고 그렇게 표시한다. 찾지 못한 단계는 만들지 않는다(1차 단독 또는 2차까지).
   if (stage && stage.ok) { params.addR = stage.addR; params.maxStages = 1 + stage.addR.length; if (stage.addR.length) params.structureR = Math.max(0.1, Math.min(0.25, 1 - stage.addR[stage.addR.length - 1] - 0.05)); }
+  if (grade === 'B' && !(stage && stage.ok) && Number.isFinite(fe.swing)) {                                      // 구조 정보가 없어 고정 간격을 쓰는 경우에도 구조 유지선 안쪽 가격만 남긴다
+    const R0 = Math.abs(fe.entry - fe.stop), sg0 = fe.dir === 'LONG' ? 1 : -1, keep = [0.3, 0.6].filter(r => ((fe.entry - sg0 * r * R0) - fe.swing) * sg0 > 0.05 * R0);
+    params.addR = keep.filter((r, i) => keep.slice(0, i + 1).length === i + 1); params.maxStages = 1 + params.addR.length;
+  }
+  // B급: 추가 진입 구조 유지선 = 눌림 저점(반등 고점). 15분 종가가 이 선을 넘으면 남은 지정가를 모두 취소한다(손절은 이 선 바깥 0.25ATR에 고정 — 위험 예산을 키우려고 손절을 옮기지 않는다).
+  if (grade === 'B' && Number.isFinite(fe.swing)) { const R0 = Math.abs(fe.entry - fe.stop); if (R0 > 0) params.structureR = Math.max(0.05, Math.min(0.9, Math.abs(fe.swing - fe.stop) / R0)); }
   const plan = splanBuild({ symbol: fe.symbolId, dir: fe.dir, entry: fe.entry, stop: fe.stop, equity: STRAT.equity, params });
   if (plan.status !== 'ok') return cancel(`plan-${plan.reason}`, true);
-  if (plan.lev > 3) return cancel('leverage-over-3x', true);
+  if (plan.lev > (grade === 'B' ? GB.maxLev : 3)) return cancel('leverage-over-3x', true);
   if (!(plan.worstLoss <= plan.riskBudget * 1.000001)) return cancel('risk-over-budget', true, plan);           // 모든 분할이 체결된 뒤 손절돼도 위험 예산 이내여야 한다(검증)
   if (activeMargin + plan.totalMargin > STRAT.maxMarginUsage * STRAT.equity + 1e-9) return cancel('margin-cap-total', true, plan);
   const stageInfo = stage && stage.ok ? { source: 'structure', stages: stage.stages.slice(0, plan.stagesCount - 1), notes: stage.notes, trends: stage.trends, atr: stage.atr, requested: stage.stages.length } : { source: 'fixed', stages: [], notes: ['구조 정보 없음 — 고정 간격(−0.3R/−0.6R)'], trends: null, atr: null, requested: 0 };
-  return { ok: true, s: { ...base, state: 'CANDIDATE', x: { ...x0, plan, stageInfo, riskLabel: riskPct === STRAT.riskStrong ? 'strong' : 'base', riskPct } } };
+  return { ok: true, s: { ...base, state: 'CANDIDATE', x: { ...x0, plan, stageInfo, riskLabel: grade === 'B' ? 'b' : riskPct === STRAT.riskStrong ? 'strong' : 'base', riskPct, ...(grade === 'B' ? { swing: fe.swing } : {}) } } };
 }
 // 체결 단계별 시나리오: k 단계까지만 체결된 뒤 최초 손절가에서 청산될 때의 평균 진입가·수량·손실(수수료·슬리피지 포함). k=전체 단계면 plan.worstLoss 와 같다.
 export function sgyScenarios(plan) {
@@ -182,7 +201,7 @@ export function sgyNotes(s, { price, market, now }, ns) {
 // ── 메시지 ──
 const sgyDp = plan => Math.max(splanDecimals(String(plan.entry)), 2);
 const sgyF = (v, plan) => Number(v).toFixed(sgyDp(plan));
-const sgyReasonKo = c => ({ 'day-loss-limit': '일일 가상 손실 한도(−3%) 도달 — 오늘 신규 추천 제외', 'too-many-active': `동시 추적 전략 ${STRAT.maxActive}개 초과`, 'margin-cap-total': `동시 사용 증거금이 평가액의 ${Math.round(STRAT.maxMarginUsage * 100)}%를 넘음`, 'leverage-over-3x': '격리 3배 초과 필요', 'expired-on-arrival': '전달 지연으로 진입 유효시간 경과' }[c] || (String(c).startsWith('plan-') ? splanReasonText(String(c).slice(5)) : c));
+const sgyReasonKo = c => ({ 'day-loss-limit': '일일 가상 손실 한도(−3%) 도달 — 오늘 신규 추천 제외', 'too-many-active': `동시 추적 전략 ${STRAT.maxActive}개 초과`, 'margin-cap-total': `동시 사용 증거금이 평가액의 ${Math.round(STRAT.maxMarginUsage * 100)}%를 넘음`, 'leverage-over-3x': '격리 3배 초과 필요', 'b-day-loss-limit': `B급 공격형 하루 누적 손실 한도(−${STRAT.gradeB.dayLossUsdt} USDT) 도달 — 오늘 B급 신규 추천 제외`, 'b-rr-below-2': 'B급 공격형은 비용 반영 1차 손익비 2R 이상만 허용(미달)', 'expired-on-arrival': '전달 지연으로 진입 유효시간 경과' }[c] || (String(c).startsWith('plan-') ? splanReasonText(String(c).slice(5)) : c));
 const SGY_FOOT = '※ 전략 기준 가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님 · 판단 보조용';
 const sgyMin = ms => Math.max(0, Math.round(ms / 60000));
 export function sgyTimingLines(x, now) {
@@ -210,7 +229,7 @@ export function sgyStageLines(s, now) {
 export function sgyNewMessage(s, { price, priceAt, source, now }) {
   const x = s.x, plan = x.plan, F = v => sgyF(v, plan), icon = s.dir === 'LONG' ? '🟢' : '🔴', L = s.dir === 'LONG', side = L ? '매수' : '매도', info = x.stageInfo || { stages: [], notes: [], trends: null }, addUntil = x.closeT + plan.add.window * STRAT.barMs;
   const sc = sgyScenarios(plan), all = sc[sc.length - 1], out = [];
-  out.push('[RICH300 매매 전략]', `${icon} ${sgyBase(s.symbolId)} / ${s.dir}${s.score !== undefined ? ` / 추천 점수 ${s.score}` : ''}${x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`, '✅ 신규 · 실행 가능 전략 — COIN RADAR 관찰 후보가 RICH300 위험 한도 검증을 통과했습니다', '');
+  out.push(`[RICH300 매매 전략] ${SGY_GRADE_TAG[sgyGrade(s)]}`, `${icon} ${sgyBase(s.symbolId)} / ${s.dir}${s.score !== undefined ? ` / 추천 점수 ${s.score}` : ''}${x.riskLabel === 'b' ? ` (B급: 거래당 손실 한도 ${STRAT.gradeB.riskUsdt} USDT · 비용 반영 2R↑ · 격리 ${STRAT.gradeB.maxLev}배 이하)` : x.riskLabel === 'strong' ? ' (강한 조건: 위험 1.5%)' : ' (기본 위험 1%)'}`, '✅ 신규 · 실행 가능 전략 — COIN RADAR 관찰 후보가 RICH300 위험 한도 검증을 통과했습니다', '');
   out.push(...sgyStageLines(s, now), '');
   out.push(`최초 손절가: ${F(plan.stop)} (1R=${F(plan.R)}, 고정 · 체결된 수량 전체에 거는 손절)`);
   out.push(`1차 익절가: ${F(plan.tps[0].price)} (+${plan.tps[0].r}R) · 보유 ${Math.round(plan.tps[0].w * 100)}% 청산 후 손절을 본전으로`);
@@ -235,7 +254,7 @@ export function sgyNewMessage(s, { price, priceAt, source, now }) {
   return out.join('\n');
 }
 export function sgyCancelMessage(s, now) {
-  const x = s.x, expired = x.reason === 'expired-on-arrival', L = [`[RICH300 실행 불가] ${sgyBase(s.symbolId)} ${s.dir} · 관찰 후보일 뿐 진입 추천이 아닙니다`, `사유: ${sgyReasonKo(x.reason)}`];
+  const x = s.x, expired = x.reason === 'expired-on-arrival', L = [`[RICH300 실행 불가] ${SGY_GRADE_TAG[sgyGrade(s)]} ${sgyBase(s.symbolId)} ${s.dir} · 관찰 후보일 뿐 진입 추천이 아닙니다`, `사유: ${sgyReasonKo(x.reason)}`];
   if (expired) L.push(`추천 시각 ${sgyHm(nullishOr(x.recAt, x.closeT))} KST(COIN RADAR) → RICH300 전달 ${sgyHm(nullishOr(now, x.arrivedAt))} KST · 지연 ${sgyMin(nullishOr(now, x.arrivedAt) - nullishOr(x.recAt, x.closeT))}분 · 진입 유효시간 ${sgyHm(x.validUntil)} KST 경과(전략 만료)`);
   L.push('COIN RADAR 의 진입 후보 알림이 먼저 왔더라도, 이 후보는 RICH300 의 실행 가능 전략이 아닙니다(전략으로 만들지 않고 기록만 남김).', SGY_FOOT); return L.join('\n');
 }
@@ -255,7 +274,7 @@ export function sgyResultLines(s) {
   return [`최종 가상 성적: ${r.usdt >= 0 ? '+' : '−'}${Math.abs(r.usdt).toFixed(2)} USDT (${r.pct >= 0 ? '+' : '−'}${Math.abs(r.pct * 100).toFixed(2)}% · ${r.r >= 0 ? '+' : '−'}${Math.abs(r.r).toFixed(2)}R) · 평균 진입 ${sgyF(r.avgEntry, plan)} · 수수료·슬리피지 반영`];
 }
 export function sgyEventMessage(s, ev, { price, now, snap }) {
-  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), L = [`[RICH300 전략] ${sgyBase(s.symbolId)} ${s.dir} · ${SGY_HEAD[ev.type] || ev.type}${ev.coarse ? ' (시세 공백 구간: 1시간봉 기준)' : ''}`];
+  const x = s.x, plan = x.plan, F = v => sgyF(v, plan), L = [`[RICH300 전략] ${SGY_GRADE_TAG[sgyGrade(s)]} ${sgyBase(s.symbolId)} ${s.dir} · ${SGY_HEAD[ev.type] || ev.type}${ev.coarse ? ' (시세 공백 구간: 1시간봉 기준)' : ''}`];
   const sg = splanSign(s.dir), open = sgyOpenOf(x), avg = sgyAvgExec(x);
   switch (ev.type) {
     case 'ENTRY_NEAR': L.push(`현재가 ${F(price)} → 1차 진입가 ${F(plan.stages[0].price)} 근처(유효 ~${sgyHm(x.validUntil)} KST)`); break;
@@ -319,6 +338,7 @@ export function strategyTick(env) {
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
       const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
       let dayPnl = [...rows.values()].filter(r => STRAT_ENDED.includes(r.state) && r.x.result && kstDayOf(r.endedAt) === day).reduce((a, r) => a + r.x.result.usdt, 0);
+      let dayPnlB = [...rows.values()].filter(r => sgyGrade(r) === 'B' && STRAT_ENDED.includes(r.state) && r.x.result && kstDayOf(r.endedAt) === day).reduce((a, r) => a + r.x.result.usdt, 0);
       for (const fe of cands) {
         if (rows.has(fe.sid)) continue; if (out.created + out.cancelled >= STRAT.maxNewPerTick) break;
         const margin = activeRows.reduce((a, r) => a + (r.x.plan ? r.x.plan.totalMargin : 0), 0), expiredNow = now > fe.validUntil;
@@ -327,7 +347,7 @@ export function strategyTick(env) {
           const m = getMarket(fe.symbolId); if (!m) { out.deferred = (out.deferred || 0) + 1; continue; }
           stage = stgPlan({ dir: fe.dir, entry: fe.entry, stop: fe.stop, atr1: fe.atr, zone: Number.isFinite(fe.zlo) && Number.isFinite(fe.zhi) ? { lo: fe.zlo, hi: fe.zhi } : null, level: fe.lvl, bars1h: m.bars1h, bars4h: m.bars4h, bars15m: m.bars15m });
         }
-        const res = sgyBuild(fe, { now, activeMargin: margin, dayPnl, activeCount: activeRows.length, stage });
+        const res = sgyBuild(fe, { now, activeMargin: margin, dayPnl, dayPnlB, activeCount: activeRows.length, stage });
         try { if (live) sgyPersist(se, null, res.s); } catch (e_) { out.persistError = (out.persistError || 0) + 1; continue; }      // 저장하지 못하면 만들지 않는다(다음 실행에서 다시)
         if (res.ok) { out.created++; rows.set(res.s.sid, res.s); activeRows.push(res.s); }
         else { out.cancelled++; rows.set(res.s.sid, res.s); if (res.notify) res.s.pendingNotice = true; }
