@@ -1,0 +1,35 @@
+name: signal-test-alert
+# 새 A급 사진 알림 형식 점검용 '테스트 신호' 1건 전송(일회용, 점검 전용 브랜치에서만 실행·main에 병합하지 않음).
+# 가상 데이터만 쓰고 상태 캐시·피드·장부·운영 변수를 읽거나 쓰지 않는다. 사진 띠와 캡션에 '테스트 · 가상 데이터 · 매매 금지'가 표시된다. 주문 기능 없음.
+on:
+  push:
+    branches: ['test/signal-test-alert']
+    paths: [.github/workflows/signal-test-alert.yml]
+permissions:
+  contents: read
+concurrency:
+  group: signal-test-alert
+  cancel-in-progress: false
+jobs:
+  send:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install chart dependency
+        run: npm ci --prefix radar-service --no-audit --no-fund
+      - name: Tests (image + signal)
+        run: node --test radar-service/test/signal-image.test.mjs radar-service/test/signal.test.mjs
+      - name: Dry run (format check, nothing sent)
+        env:
+          DRY_RUN: '1'
+        run: node radar-service/signal/send-test-alert.mjs
+      - name: Send ONE test signal photo
+        run: node radar-service/signal/send-test-alert.mjs
