@@ -146,7 +146,9 @@ test('후보 알림: 사진 캡션과 텍스트에 유효 종료 날짜·남은 
   }
   assert.match(signalCaption('ETHUSDT', v, { now: v.validUntil + 1 }), /유효시간 경과 · 신규 진입 금지/);
   assert.doesNotMatch(signalCaption('ETHUSDT', v), /남은 [0-9]+분/, '시점 미제공 시 잔여시간을 지어내지 않는다');
-  assert.ok(signalCaption('ETHUSDT', v, { now: NOW }).length < 1024, 'Telegram 사진 캡션 길이 제한');
+  const caption = signalCaption('ETHUSDT', v, { now: NOW });
+  assert.ok(caption.length < 1024, 'Telegram 사진 캡션 길이 제한');
+  for (const line of caption.split('\n')) assert.ok(displayWidth(line) <= 44, `사진 캡션 줄 폭 ${displayWidth(line)}: ${line}`);
 });
 
 // ── 설정 ──
