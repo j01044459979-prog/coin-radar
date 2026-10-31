@@ -1,0 +1,29 @@
+name: radar-slot-report
+# radar 5분 슬롯 운영 상태 보고(읽기 전용, 수동 실행): 최근 N시간의 실행 수·성공/실패/취소·게이트 건너뜀·중복·간격·지연·피드 게시를 집계해 Job Summary에 남긴다.
+# 비밀값·쓰기 권한·Telegram·Cloudflare 접근이 없다. GitHub가 기록한 실행 이력만 읽는다.
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: '집계 기간(시간, 1~168)'
+        default: '24'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: radar-slot-report
+  cancel-in-progress: true
+jobs:
+  report:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Slot report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scheduler/slot-report.mjs --hours "${{ inputs.hours }}"
