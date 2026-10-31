@@ -1,0 +1,53 @@
+name: toggle-dispatcher
+# Cloudflare 디스패처(coin-radar-dispatcher)의 DISPATCH_ENABLED 를 켜거나 끈다. 수동 실행 전용, main에서만, 확인 문구 필요.
+#  · 처음 배포는 deploy-dispatcher(꺼진 상태)로 한다. 이 워크플로는 이미 배포·Secret 등록이 끝난 디스패처의 킬 스위치만 바꾼다.
+#  · 켜기 전에 반드시: 저장소 변수 RADAR_SCHEDULER=cloudflare 로 바꿀 것(github 상태에서는 Cloudflare 디스패치를 게이트가 무시한다).
+#  · 롤백: state=disabled 로 실행하거나, 저장소 변수 RADAR_SCHEDULER 를 github 로 되돌리면 즉시 GitHub schedule만 동작한다.
+#  · GITHUB_DISPATCH_TOKEN Secret 은 건드리지 않는다(wrangler deploy 는 기존 Secret 을 유지). Telegram·웹사이트 Worker 는 건드리지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: 'enabled(켜기) 또는 disabled(끄기)'
+        required: true
+        type: choice
+        options: [disabled, enabled]
+      confirm:
+        description: '켜기: dispatch-on · 끄기: dispatch-off 를 입력'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: toggle-dispatcher
+  cancel-in-progress: false
+jobs:
+  toggle:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && ((github.event.inputs.state == 'enabled' && github.event.inputs.confirm == 'dispatch-on') || (github.event.inputs.state == 'disabled' && github.event.inputs.confirm == 'dispatch-off'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: 'false'
+      DISPATCH_STATE: ${{ github.event.inputs.state }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check required secret
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::error title=GitHub Secret 누락::CLOUDFLARE_API_TOKEN 이 등록되지 않았습니다 (값은 출력하지 않습니다)"; exit 1; fi
+      - name: Resolve Cloudflare account
+        run: node scheduler/resolve-account.mjs
+      - name: Scheduler tests
+        run: node --test scheduler/test/*.test.mjs
+      - name: Record website Worker state (read-only)
+        run: node scheduler/verify-deploy.mjs snapshot
+      - name: Deploy dispatcher (set DISPATCH_ENABLED)
+        working-directory: scheduler
+        run: |
+          if [ "$DISPATCH_STATE" = "enabled" ]; then npx --yes wrangler@4.146.0 deploy --name coin-radar-dispatcher --var DISPATCH_ENABLED:true; else npx --yes wrangler@4.146.0 deploy --name coin-radar-dispatcher --var DISPATCH_ENABLED:false; fi
+      - name: Verify deployment (read-only)
+        run: node scheduler/verify-deploy.mjs verify "$DISPATCH_STATE"
