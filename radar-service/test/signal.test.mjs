@@ -137,7 +137,7 @@ test('메시지: 무효화 메시지와 외부 문자열 이스케이프', () =>
 // ── 설정 ──
 test('설정: 기본 off·잘못된 값은 안전한 기본값, 범위 검사', () => {
   assert.equal(signalMode({}), 'off'); assert.equal(signalMode({ RADAR_SIGNAL: 'ON' }), 'on'); assert.equal(signalMode({ RADAR_SIGNAL: 'true' }), 'off'); assert.equal(signalMode({ RADAR_SIGNAL: 'preview' }), 'preview');
-  assert.deepEqual(signalSettings({}), { mode: 'off', ...SIGNAL_DEFAULTS, paper: false }); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'ON' }).paper, true); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'true' }).paper, false);
+  assert.deepEqual(signalSettings({}), { mode: 'off', ...SIGNAL_DEFAULTS, paper: false, gradeB: 'off' }); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'ON' }).paper, true); assert.equal(signalSettings({ RADAR_SIGNAL_PAPER: 'true' }).paper, false);
   const s = signalSettings({ RADAR_SIGNAL: 'on', RADAR_SIGNAL_VALID_MIN: '30', RADAR_SIGNAL_MIN_RR: '2.5', RADAR_SIGNAL_MAX_PER_DAY: '5' }); assert.deepEqual([s.validMin, s.minRR, s.maxPerDay], [30, 2.5, 5]);
   const bad = signalSettings({ RADAR_SIGNAL_VALID_MIN: '5', RADAR_SIGNAL_MIN_RR: '0.5', RADAR_SIGNAL_MAX_PER_DAY: '999' }); assert.deepEqual([bad.validMin, bad.minRR, bad.maxPerDay], [45, 1.5, 20]);
   assert.equal(signalSettings({ RADAR_SIGNAL_VALID_MIN: '45abc' }).validMin, 45);

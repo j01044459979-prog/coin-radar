@@ -23,6 +23,7 @@ export function feedEntryOf(symbol, ev, { now, sid = feedSid(symbol, ev) } = {})
   if (ev.btcAlign) e.btcAlign = String(ev.btcAlign).slice(0, 10);
   if (ev.stageLabel) e.stageLabel = String(ev.stageLabel).slice(0, 30);
   if (Number.isFinite(ev.costPct) && ev.costPct > 0) e.costPct = num(ev.costPct);
+  if (ev.grade === 'B') { e.grade = 'B'; if (num(ev.swing)) e.swing = num(ev.swing); }          // B급 공격형 표시(A급 항목은 이전과 바이트 단위로 같다)
   // 분할 진입 가격 산출용 구조 정보(RICH300 이 2·3차 지정가를 시장 구조에서 찾을 때 쓴다): 1H 지지·저항 구간, 돌파 기준선, 1H ATR
   if (ev.zone && num(ev.zone.lo) && num(ev.zone.hi)) { e.zlo = num(ev.zone.lo); e.zhi = num(ev.zone.hi); }
   if (num(ev.level)) e.lvl = num(ev.level);

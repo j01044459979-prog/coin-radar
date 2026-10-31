@@ -20,7 +20,7 @@ export function signalTransition(prev0, ev, { symbol, a, c15, now, cooldownMs })
     const inv = invalidation(prev, { a, c15 });
     if (inv) {
       const closed = { ...next, status: 'closed', closedAt: now, closeReason: 'invalidated' };
-      return { next, event: { type: 'invalidated', id: prev.id, dir: prev.dir, reason: inv.reason, price: inv.price, entry: prev.entry, stop: prev.stop, triggerT: prev.triggerT, validUntil: prev.validUntil }, committed: closed };
+      return { next, event: { type: 'invalidated', ...(prev.grade === 'B' ? { grade: 'B' } : {}), id: prev.id, dir: prev.dir, reason: inv.reason, price: inv.price, entry: prev.entry, stop: prev.stop, triggerT: prev.triggerT, validUntil: prev.validUntil }, committed: closed };
     }
     return { next, event: null, committed: next };                                              // 유효시간 안: 같은 신호는 다시 알리지 않는다
   }
@@ -28,6 +28,6 @@ export function signalTransition(prev0, ev, { symbol, a, c15, now, cooldownMs })
   if (ev.triggerT <= prev.lastBar15 && prev.triggerT === ev.triggerT) return { next, event: null, committed: next };                        // 이미 처리한 트리거 봉
   if (prev.status === 'closed' && prev.zoneKey === ev.zoneKey && prev.dir === ev.dir && now - prev.closedAt < cooldownMs) return { next, event: null, committed: next };   // 같은 구간 재알림 금지
   const id = signalId(symbol, ev);
-  const active = { status: 'active', id, dir: ev.dir, zoneKey: ev.zoneKey, triggerT: ev.triggerT, validUntil: ev.validUntil, entry: ev.entry, stop: ev.stop, t1: ev.t1?.price ?? null, t2: ev.t2?.price ?? null, alertedAt: now, closedAt: 0, closeReason: null, lastBar15: Math.max(prev.lastBar15, lastBar) };
+  const active = { status: 'active', ...(ev.grade === 'B' ? { grade: 'B' } : {}), id, dir: ev.dir, zoneKey: ev.zoneKey, triggerT: ev.triggerT, validUntil: ev.validUntil, entry: ev.entry, stop: ev.stop, t1: ev.t1?.price ?? null, t2: ev.t2?.price ?? null, alertedAt: now, closedAt: 0, closeReason: null, lastBar15: Math.max(prev.lastBar15, lastBar) };
   return { next, event: { type: 'candidate', id, ev }, committed: active };
 }

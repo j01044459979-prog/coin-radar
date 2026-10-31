@@ -28,6 +28,7 @@ export function signalCaption(symbol, ev, opts = {}) {
   const dec = priceDecimals(ev.entry), f = v => fmtPrice(v, dec);
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
+    ...(opts.gradeLabel ? [opts.gradeLabel] : []),
     `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} 진입 후보 · 15분봉 확정`,
     `진입 ${f(ev.entry)} · 손절 ${f(ev.stop)} · 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
     `손익비 ${ev.t1.net.toFixed(2)}R(비용 반영) · 유효 ~${kst(ev.validUntil)} KST · 미검증·주문 권고 아님`,

@@ -10,7 +10,8 @@ import { H1 } from '../opportunity/indicators.mjs';
 import { signalSettings } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
-import { candidateMessage, invalidatedMessage, summaryLine } from './message.mjs';
+import { evaluateB } from './gradeb.mjs';
+import { candidateMessage, invalidatedMessage, summaryLine, GRADE_LABEL, gradeOf } from './message.mjs';
 import { signalTransition } from './transition.mjs';
 import { normalizePaper, paperStep, paperSummary } from './paper.mjs';
 import { renderSignalChart, signalCaption } from './chart.mjs';
@@ -38,7 +39,7 @@ export function normalizeSignal(input) {
   return out;
 }
 const dayKey = now => new Date(now).toISOString().slice(0, 10);
-const dayRec = (sg, now) => (sg.daily[dayKey(now)] ||= { candidates: 0, invalidated: 0, failures: 0, assumed: 0 });
+const dayRec = (sg, now) => (sg.daily[dayKey(now)] ||= { candidates: 0, invalidated: 0, failures: 0, assumed: 0 });   // candidatesB(B급 공격형 일일 후보 수)는 B급이 켜졌을 때만 생긴다
 const instOf = symbol => symbol.replace(/USDT$/, '-USDT-SWAP');
 
 // 관찰 후보 목록: 기회 레이더가 저장한 2단계 이상 코인 + 활성 신호가 있는 코인
@@ -71,7 +72,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const watch = scanAll ? null : watchlist(state, sg, now, paper);
   if (!scanAll && !watch.length) return { mode, skipped: 'no-watchlist' };
 
-  const base = { mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0, calls: 0, sendError: null, saveError: null, sentMessages: 0, held: 0, timedOut: false };
+  const gb = cfg.gradeB, base = { ...(gb !== 'off' ? { gradeB: { mode: gb, analyzed: 0, observing: 0, candidates: 0, previewOnly: 0 } } : {}), mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0, calls: 0, sendError: null, saveError: null, sentMessages: 0, held: 0, timedOut: false };
   const hourData = await collectHour({ fetcher, now, ids: watch ? watch.map(instOf) : null, topN, budgetMs, gapMs, shouldStop: () => clock() > deadline });
   if (expired('afterCollect')) return { mode, timedOut: true };
   base.calls += hourData.calls ?? 0;
@@ -108,9 +109,15 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       }
       continue;
     }
-    const ev = evaluateSignal({ a: r.a, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin });
+    const evA = evaluateSignal({ a: r.a, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin });
+    let ev = evA;
+    if (gb !== 'off') {                                                                          // B급 공격형: A급 후보가 없을 때만 평가 결과를 쓴다(같은 봉이면 A급 우선, 한 코인에 활성 신호는 하나)
+      const evB = evaluateB({ a: r.a, c15: c.c15, now }, { validMin: cfg.validMin });
+      base.gradeB.analyzed++; if (evB.status === 'OBSERVE') base.gradeB.observing++;
+      if (evB.status === 'CANDIDATE') { base.gradeB.candidates++; if (evA.status !== 'CANDIDATE') { if (gb === 'on') ev = evB; else { base.gradeB.previewOnly++; lines.push(`[B 미리보기] ${summaryLine(r.symbol, evB)}`); } } }
+    }
     lines.push(summaryLine(r.symbol, ev));
-    evaluations.push({ symbol: r.symbol, ev, a: r.a, c15: c.c15 }); barsMap[r.symbol] = c.c15;
+    evaluations.push({ symbol: r.symbol, ev: evA, a: r.a, c15: c.c15 }); barsMap[r.symbol] = c.c15;                 // 모의매매 추적은 A급만(통계 혼합 방지)
     if (ev.status === 'OBSERVE') base.observing++;
     const tr = signalTransition(prev, ev, { symbol: r.symbol, a: r.a, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
     if (tr.event) items.push({ symbol: r.symbol, event: tr.event, committed: tr.committed, score: ev.score ?? 0, rr: ev.t1?.net ?? 0 });
@@ -120,9 +127,12 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const dy = dayRec(sg, now);
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
-  const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
+  const candA = cand.filter(i => gradeOf(i.event.ev) !== 'B'), candB = cand.filter(i => gradeOf(i.event.ev) === 'B');
+  const room = Math.max(0, cfg.maxPerDay - dy.candidates), roomB = Math.max(0, cfg.maxPerDayB - (dy.candidatesB || 0));
+  const picked = new Set([...candA.slice(0, room), ...candB.slice(0, roomB)]), toSend = [...inv, ...cand.filter(i => picked.has(i))].slice(0, MAX_MESSAGES_PER_RUN);
   base.invalidated = inv.length; base.candidates = cand.length; base.held = items.length - toSend.length;
-  const msgs = toSend.map(i => ({ i, m: i.event.type === 'candidate' ? candidateMessage(i.symbol, i.event.ev, { now }) : invalidatedMessage(i.symbol, i.event, { now }) }));
+  const label = gb !== 'off';                                                                  // A급·B급 구분 표시는 B급이 켜졌을 때만(꺼져 있으면 기존 메시지와 같다)
+  const msgs = toSend.map(i => ({ i, m: i.event.type === 'candidate' ? candidateMessage(i.symbol, i.event.ev, { now, gradeLabel: label }) : invalidatedMessage(i.symbol, i.event, { now, gradeLabel: label }) }));
   // 모의매매 추적: 실제 신호 경로와 완전히 격리한다(예외는 삼키고, 전송하지 않으며, state.signal.paper에만 쓴다).
   let paperChanged = false;
   if (paperOn) {
@@ -142,7 +152,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     for (const x of msgs) {
       if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
       let timer;
-      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev) }; }
+      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev, label ? { gradeLabel: GRADE_LABEL[gradeOf(x.i.event.ev)] } : {}) }; }
       catch (error) { x.m.chartError = String(error.message).slice(0, 80); base.chartFailed = (base.chartFailed ?? 0) + 1; }
       finally { clearTimeout(timer); }
     }
@@ -182,7 +192,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   let sent = 0;
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
-    const out = await deliver(m, key, assumed => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
+    const out = await deliver(m, key, assumed => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') { if (gradeOf(i.event.ev) === 'B') dy.candidatesB = (dy.candidatesB || 0) + 1; else dy.candidates += 1; } else dy.invalidated += 1;
       if (feedEnabled(env)) {                                                                    // RICH300 피드: Telegram 전달이 *확인된* 알림만. 두 번 시도해도 확정되지 않아 '전달된 것으로 간주'한 경우(assumed)는 자동 추적 대상에서 제외한다.
         if (assumed) base.feedExcluded = (base.feedExcluded ?? 0) + 1;
         else { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } }
@@ -199,7 +209,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const k of Object.keys(sg.daily)) if (!Array.from({ length: 14 }, (_, d) => dayKey(now - d * 86400000)).includes(k)) delete sg.daily[k];
   sg.health = { at: now, analyzed: base.analyzed, candidates: base.candidates, calls: base.calls };
   await safeSave();
-  const summary = { ...base, sentMessages: sent, sendError: sendFail ? String(sendFail.message).slice(0, 80) : null, saveError, dailySent: dy.candidates };
+  const summary = { ...base, sentMessages: sent, sendError: sendFail ? String(sendFail.message).slice(0, 80) : null, saveError, dailySent: dy.candidates, ...(gb !== 'off' ? { dailySentB: dy.candidatesB || 0 } : {}) };
   log(JSON.stringify({ signal: summary }));
   return summary;
 }
