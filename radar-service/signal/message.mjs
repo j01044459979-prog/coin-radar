@@ -10,12 +10,26 @@ const kst = t => new Date(t + 9 * 3600000).toISOString().slice(11, 16);
 const pct = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
 const icon = dir => (dir === 'LONG' ? '🟢' : '🔴');
 
+/** 후보 신호 종료 날짜와 분석 시각 기준 잔여시간(표시 전용). */
+export function signalDeadline(ev, now) {
+  const until = Number(ev.validUntil);
+  const end = new Date(until + 9 * 3600000).toISOString().slice(5, 16).replace('T', ' ');
+  const left = Number.isFinite(now) ? Math.ceil((until - now) / 60000) : null;
+  return {
+    deadlineLine: `📅 유효 종료 ${end} KST`,
+    remainingLine: left === null ? null : left > 0 ? `⏳ 남은 ${left}분 (분석 시점)` : '⛔ 유효시간 경과 · 신규 진입 금지',
+  };
+}
+
 // 진입 후보 메시지. 레버리지는 권하지 않고, 손절폭 대비 증거금 손실만 사실로 보여 준다.
 export function candidateMessage(symbol, ev, { now } = {}) {
   const L = ev.dir === 'LONG', lines = [];
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold('진입 후보')}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
   lines.push(`⏱ 생성 ${kst(ev.triggerCloseT)} KST (15분봉 확정)`, `   유효 ${kst(ev.triggerCloseT)}~${kst(ev.validUntil)} KST`);
+  const timing = signalDeadline(ev, now);
+  lines.push(timing.deadlineLine);
+  if (timing.remainingLine) lines.push(timing.remainingLine);
   lines.push('', `💰 진입 관심가 ${fmtPrice(ev.entry)}`, `🛑 손절 기준 ${fmtPrice(ev.stop)} (${pct(-ev.riskPct * (L ? 1 : -1))})`);
   lines.push(`🎯 1차 ${fmtPrice(ev.t1.price)} (${pct(ev.t1.pct)})`);
   lines.push(ev.t2 ? `🎯 2차 ${fmtPrice(ev.t2.price)} (${pct(ev.t2.pct)})` : '🎯 2차 산정 불가');
@@ -26,7 +40,7 @@ export function candidateMessage(symbol, ev, { now } = {}) {
   lines.push('', `⚠️ 손절폭 ${ev.riskPct.toFixed(2)}%`, '   레버리지 시 증거금 손실', `   ${lev}`, '   고배율은 손절 전 청산 가능');
   if (ev.btcAlign === '역방향') lines.push('⚠️ BTC 4H 방향과 반대');
   lines.push('', '🚫 무효화 조건', `   15분 종가 ${fmtPrice(ev.stop)} ${L ? '하향' : '상향'} 이탈`, '   또는 유효시간 경과');
-  lines.push('', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
+  lines.push('', '⚠️ 관심가는 신호 당시 종가', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
   const text = lines.join('\n');
   return { text, plain: htmlToPlain(text), html: true, kind: 'candidate' };
 }

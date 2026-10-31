@@ -142,7 +142,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     for (const x of msgs) {
       if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
       let timer;
-      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev) }; }
+      try { x.m.photo = { png: await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]), caption: signalCaption(x.i.symbol, x.i.event.ev, { now }) }; }
       catch (error) { x.m.chartError = String(error.message).slice(0, 80); base.chartFailed = (base.chartFailed ?? 0) + 1; }
       finally { clearTimeout(timer); }
     }

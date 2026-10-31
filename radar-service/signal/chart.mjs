@@ -3,7 +3,7 @@
 // 가격·거래량은 입력(확정 15분봉과 evaluateSignal 결과)만 쓴다. 값이 없으면 그리지 않으며 임의 값을 만들지 않는다. 렌더링 실패는 호출자가 텍스트 알림으로 대체한다.
 import { C, esc, renderPng, textW } from '../chart.mjs';
 import { fmtPrice, priceDecimals } from '../format.mjs';
-import { baseName } from './message.mjs';
+import { baseName, signalDeadline } from './message.mjs';
 
 export const SIGNAL_CHART = Object.freeze({ W: 1080, H: 1560, BARS: 56 });
 const { W, H, BARS } = SIGNAL_CHART;
@@ -26,14 +26,22 @@ export function reasonRows(ev) {
 // 텔레그램 사진 아래에 붙는 짧은 설명(2~3줄). 주문 권고·확률 표현 없음.
 export function signalCaption(symbol, ev, opts = {}) {
   const dec = priceDecimals(ev.entry), f = v => fmtPrice(v, dec);
+  const timing = signalDeadline(ev, opts.now);
+  const score = Number.isFinite(ev.score) ? ` · 점수 ${Math.round(ev.score)}` : '';
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
-    `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} 진입 후보 · 15분봉 확정`,
-    `진입 ${f(ev.entry)} · 손절 ${f(ev.stop)} · 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
-    `손익비 ${ev.t1.net.toFixed(2)}R(비용 반영) · 유효 ~${kst(ev.validUntil)} KST · 미검증·주문 권고 아님`,
+    `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
+    `💰 진입 관심가 ${f(ev.entry)}`,
+    `🛑 손절 기준 ${f(ev.stop)} · 손절폭 ${ev.riskPct.toFixed(2)}%`,
+    `🎯 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
+    `⚖️ 1차 순손익비 ${ev.t1.net.toFixed(2)}R(비용 후)${score}`,
+    timing.deadlineLine,
+    ...(timing.remainingLine ? [timing.remainingLine] : []),
+    '⚠️ 기준가는 확정봉 종가 · 현시세 아님',
+    '※ 미검증 · 주문 권고 아님',
+    `※ 왕복 비용 ${ev.costPct.toFixed(2)}% 가정`,
   ].join('\n');
 }
-
 export function validateInputs(symbol, ev, c15) {
   if (!symbol || !ev || ev.status !== 'CANDIDATE' || !ev.t1) throw new Error('신호 이미지 입력 없음');
   if (!Array.isArray(c15) || c15.length < 20) throw new Error('15분봉 부족');
