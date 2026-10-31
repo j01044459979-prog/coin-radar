@@ -1,0 +1,29 @@
+name: top30-perf
+# RADAR_OPPORTUNITY_TOP 20 vs 30 읽기 전용 성능 측정: 공개 OKX 시세만 읽어 소요 시간·호출 수·제한 응답·후보 수를 출력한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시·운영 변수 접근이 없고 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다. 진단 전용 브랜치에서만 실행되며 main에 병합하지 않는다.
+on:
+  push:
+    branches: ['diag/top30-perf']
+    paths: [.github/workflows/top30-perf.yml, radar-service/perf/**]
+permissions:
+  contents: read
+concurrency:
+  group: top30-perf
+  cancel-in-progress: true
+jobs:
+  perf:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/top-perf-stats.test.mjs radar-service/test/opportunity.test.mjs
+      - name: Measure TOP 20 vs TOP 30 (public OKX data, no Telegram)
+        run: node radar-service/perf/top-perf-cli.mjs --rounds 8 --spacing 60 | tee "$RUNNER_TEMP/top30.txt"
+      - name: Summary
+        run: |
+          { echo '### TOP 20 vs TOP 30 (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/top30.txt"; } >> "$GITHUB_STEP_SUMMARY"
