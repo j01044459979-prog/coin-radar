@@ -38,7 +38,8 @@ export function signalCaption(symbol, ev, opts = {}) {
     timing.deadlineLine,
     ...(timing.remainingLine ? [timing.remainingLine] : []),
     '⚠️ 기준가는 확정봉 종가 · 현시세 아님',
-    `※ 미검증·주문 권고 아님 · 왕복 비용 ${ev.costPct.toFixed(2)}% 가정`,
+    '※ 미검증 · 주문 권고 아님',
+    `※ 왕복 비용 ${ev.costPct.toFixed(2)}% 가정`,
   ].join('\n');
 }
 export function validateInputs(symbol, ev, c15) {
