@@ -5,6 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { evaluateSignal, invalidation, SIG, M15 } from '../signal/evaluate.mjs';
 import { signalTransition, blank } from '../signal/transition.mjs';
 import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER, displayWidth } from '../signal/message.mjs';
+import { signalCaption } from '../signal/chart.mjs';
 import { signalSettings, signalMode, SIGNAL_DEFAULTS } from '../signal/config.mjs';
 import { signalStep, runSignalSafe, normalizeSignal, watchlist, MAX_ATTEMPTS } from '../signal/step.mjs';
 import { runSignalAfterCycle } from '../signal/integrate.mjs';
@@ -132,6 +133,20 @@ test('메시지: 무효화 메시지와 외부 문자열 이스케이프', () =>
   for (const need of ['무효화', 'ETH', 'LONG', '사유', '97.40', '신호 생성 21:15 KST', '더 이상 유효하지 않습니다']) assert.ok(t.includes(need), need);
   for (const line of invalidatedMessage('ETHUSDT', { dir: 'LONG', reason: '15분 종가 97.400가 손절 97.500 하향 이탈', price: 97.4, stop: 97.5, triggerT: T }).plain.split('\n')) assert.ok(displayWidth(line) <= 44, `무효화 메시지 줄 폭 ${displayWidth(line)}: ${line}`);
   const html = invalidatedMessage('ETHUSDT', { dir: 'LONG', reason: '<script>', price: 1, stop: 1, triggerT: T }).text; assert.ok(!html.includes('<script>') && html.includes('&lt;script&gt;'));
+});
+
+
+test('후보 알림: 사진 캡션과 텍스트에 유효 종료 날짜·남은 시간·현재가 아님 표시', () => {
+  const v = ev();
+  for (const s of [candidateMessage('ETHUSDT', v, { now: NOW }).plain, signalCaption('ETHUSDT', v, { now: NOW })]) {
+    assert.ok(s.includes('유효 종료 06-01 22:00 KST'));
+    assert.ok(s.includes('남은 44분 (분석 시점)'));
+    for (const price of ['100.15', '97.50', '105.00']) assert.ok(s.includes(price), price);
+    assert.match(s, /시세|현시세/);
+  }
+  assert.match(signalCaption('ETHUSDT', v, { now: v.validUntil + 1 }), /유효시간 경과 · 신규 진입 금지/);
+  assert.doesNotMatch(signalCaption('ETHUSDT', v), /남은 [0-9]+분/, '시점 미제공 시 잔여시간을 지어내지 않는다');
+  assert.ok(signalCaption('ETHUSDT', v, { now: NOW }).length < 1024, 'Telegram 사진 캡션 길이 제한');
 });
 
 // ── 설정 ──
