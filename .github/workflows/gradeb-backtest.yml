@@ -1,0 +1,34 @@
+name: gradeb-backtest
+# A급(확정형) vs B급(공격형) 과거 데이터 비교(읽기 전용): 공개 OKX 시세로 계산해 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시·주문이 없고 운영 radar 워크플로, 스케줄, Cloudflare와 무관하다. 개발 브랜치에서만 실행되며 main에 병합하지 않는다.
+on:
+  push:
+    branches: ['feat/radar-grade-b']
+    paths: [.github/workflows/gradeb-backtest.yml, radar-service/signal/gradeb*.mjs]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gradeb-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        top: [20, 30]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/gradeb.test.mjs radar-service/test/signal-backtest.test.mjs radar-service/test/signal.test.mjs
+      - name: Backtest (public OKX data, no Telegram)
+        run: node radar-service/signal/gradeb-backtest-cli.mjs --top "${{ matrix.top }}" --days 120 | tee "$RUNNER_TEMP/gradeb.txt"
+      - name: Summary
+        run: |
+          { echo "### A급 vs B급 · top ${{ matrix.top }} (read-only)"; grep -v '^JSON ' "$RUNNER_TEMP/gradeb.txt"; } >> "$GITHUB_STEP_SUMMARY"
