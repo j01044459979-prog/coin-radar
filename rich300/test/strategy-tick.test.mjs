@@ -47,7 +47,7 @@ test('피드 검증(서명 필수): 키 없음·짧은 키·서명 누락/불일
 });
 test('새 추천 → 전략 생성 → "[RICH300 신규 매매 전략]" 메시지 1건(모든 항목 포함) → 진입 대기 · 같은 피드를 다시 읽어도 중복 생성·전송 없음', () => {
   const w = world(); const r = w.at(5); assert.equal(r.status, 'ok'); assert.deepEqual([r.created, r.sent, r.feed.ok, r.feed.signed], [1, 1, true, true]);
-  const t = w.texts()[0]; assert.match(t, /^\[RICH300 매매 전략\]\n🟢 ETH \/ LONG \/ 추천 점수 70/); for (const re of [/✅ 신규 · 실행 가능 전략/, /추천 시각 \d\d:\d\d KST\(COIN RADAR\) → RICH300 전달 \d\d:\d\d KST · 지연 \d+분/, /남은 \d+분/, /진입 근거/, /4H 상승/,
+  const t = w.texts()[0]; assert.match(t, /^\[RICH300 매매 전략\] \[A급 확정형\]\n🟢 ETH \/ LONG \/ 추천 점수 70/); for (const re of [/✅ 신규 · 실행 가능 전략/, /추천 시각 \d\d:\d\d KST\(COIN RADAR\) → RICH300 전달 \d\d:\d\d KST · 지연 \d+분/, /남은 \d+분/, /진입 근거/, /4H 상승/,
     /1차 진입: 2000\.00 \/ 50% \/ 수량 [\d.]+ \/ 증거금 [\d.]+ USDT/, /2차 진입: 1990\.90 \/ 3\d% \/ 수량/, /3차 진입: 1980\.90 \/ [12]\d% \/ 수량/, /근거: 1H 지지 구간 상단 1990\.00/, /근거: 1H 지지 구간 하단 1980\.00/, /조건: 1차 체결 뒤 매수 지정가 1990\.90 · 직전 15분 종가 1977\.50 위 · 유효 ~/,
     /최초 손절가: 1970\.00/, /1차 익절가: 2045\.00 \(\+1\.5R\)/, /2차 익절가: 2060\.00 \(\+2R\)/, /잔여 물량 추적손절: 20%/, /세 분할 모두 체결 시 예상 평균가: 1994\.\d\d/, /체결 단계별 손절 시 손실: 1차만 평균/, /전체 예상 최대 손실: −\d+\.\d\d USDT/, /추가 진입 무효화 조건: TP1 도달/, /추천 유효시간: 1차 ~\d\d:\d\d KST/, /시장 구조: 15분/, /매수 지정가\(Limit\)로 직접 설정/, /가상 추적 · 실제 Binance 체결 아님 · 자동 주문 아님/]) assert.match(t, re);
   const row = w.rows()[0]; assert.equal(row.state, 'WAIT_ENTRY'); assert.equal(row.x.startT, CLOSE + 15 * 60000);

@@ -62,7 +62,7 @@ test('플랜: 구조 가격이 그대로 splan 의 단계 가격이 되고, 세 
 });
 test('메시지: 요구 항목 전부(1~3차 가격/비중/수량/증거금·근거·조건·유효기간 · 손절·익절·추적·평균가·최대 손실·무효화·유효시간) + 지정가 안내 + 가상 체결 주의', () => {
   const s = live(stgPlan(LONGIN({ zone: { lo: 1980, hi: 1990 }, level: 1996 }))), t = sgyNewMessage(s, { price: 2005, priceAt: CLOSE + 2 * 60000, source: 'OKX', now: CLOSE + 5 * 60000 }), plan = s.x.plan;
-  assert.ok(t.length < 3900, `길이 ${t.length}`); assert.match(t, /^\[RICH300 매매 전략\]\n🟢 ETH \/ LONG \/ 추천 점수 70/);
+  assert.ok(t.length < 3900, `길이 ${t.length}`); assert.match(t, /^\[RICH300 매매 전략\] \[A급 확정형\]\n🟢 ETH \/ LONG \/ 추천 점수 70/);
   for (const st of plan.stages) assert.match(t, new RegExp(`${st.n}차 진입: ${st.price.toFixed(2).replace('.', '\\.')} / ${Math.round(st.weight * 100)}% / 수량 ${st.qty.toFixed(3).replace('.', '\\.')} / 증거금 ${st.margin.toFixed(2).replace('.', '\\.')} USDT`));
   for (const re of [/근거: 추천 기준가/, /근거: 1H 지지 구간 상단 1990\.00 \(1차 대비 −0\.\d+R\)/, /조건: 매수 지정가 2000\.00 · 유효 ~12:45 KST/, /조건: 1차 체결 뒤 매수 지정가 1990\.90 · 직전 15분 종가 [\d.]+ 위 · 유효 ~16:00 KST/, /최초 손절가: 1970\.00/, /1차 익절가: 2045\.00 \(\+1\.5R\)/, /2차 익절가: 2060\.00 \(\+2R\)/, /잔여 물량 추적손절: 20%/,
     /세 분할 모두 체결 시 예상 평균가: 1994\.\d\d \(총 수량 0\.\d+ · 증거금 [\d.]+ USDT · 격리 3배\)/, /전체 예상 최대 손실: −2\.\d\d USDT \(평가액 300 의 0\.\d+% · 위험 예산 3\.00 이내/, /추가 진입 무효화 조건: TP1 도달 · 15분 종가가 [\d.]+ 아래 · 신호 후 240분/, /추천 유효시간: 1차 ~12:45 KST\(남은 40분\) · 2·3차 ~16:00 KST/, /시장 구조: 15분 .+ 1시간 상승 · 4시간 상승 · 1H ATR/, /매수 지정가\(Limit\)로 직접 설정/, /수량 단위 0\.001/, /실제 체결은 Binance 주문 내역에서 직접 확인/, /실제 Binance 체결 아님 · 자동 주문 아님/]) assert.match(t, re);
