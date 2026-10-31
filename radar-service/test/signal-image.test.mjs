@@ -41,12 +41,15 @@ test('신호 이미지 입력 검증: 후보가 아니거나 봉이 부족·불�
   assert.throws(() => buildSignalSvg('ETHUSDT', ev, bars.map((c, i) => (i === bars.length - 5 ? { ...c, h: NaN } : c))), /값 오류/);
   assert.throws(() => buildSignalSvg('ETHUSDT', { ...ev, entry: NaN }, bars), /가격 값 오류/);
 });
-test('캡션: 2~3줄, 1024자 이하, 핵심 가격·유효시간 포함, 금지 표현 없음', () => {
+test('캡션: A급 상세(진입가·손절·1·2차 목표·손익비·유효 종료·남은 시간), 1024자 이하, 모바일 폭, 금지 표현 없음', () => {
   for (const ev of [evalL(), evalS()]) {
-    const cap = signalCaption('ETHUSDT', ev), lines = cap.split('\n');
-    assert.ok(lines.length >= 2 && lines.length <= 3); assert.ok(cap.length <= 1024); lines.forEach(l => assert.ok(displayWidth(l) <= 66, l));
+    const now = ev.validUntil - 30 * 60000, cap = signalCaption('ETHUSDT', ev, { now }), lines = cap.split('\n');
+    assert.ok(lines.length >= 8 && lines.length <= 13, `줄 수 ${lines.length}`); assert.ok(cap.length <= 1024); lines.forEach(l => assert.ok(displayWidth(l) <= 66, l));
     for (const v of [ev.entry, ev.stop, ev.t1.price]) assert.ok(cap.includes(v.toFixed(2)));
-    assert.ok(cap.includes('KST') && cap.includes('미검증')); assert.ok(!FORBID.test(cap.replace('주문 권고 아님', '')));
+    assert.match(cap, /A급 진입 후보/); assert.match(cap, /진입 관심가/); assert.match(cap, /손절 기준/); assert.match(cap, /1차/); assert.match(cap, /순손익비/);
+    assert.match(cap, /유효 종료 \d\d-\d\d \d\d:\d\d KST/); assert.match(cap, /남은 30분/); assert.match(cap, /현시세 아님/);
+    assert.ok(cap.includes('미검증')); assert.ok(!FORBID.test(cap.replace('주문 권고 아님', '')));
+    assert.doesNotMatch(signalCaption('ETHUSDT', ev, { now: ev.validUntil + 60000 }), /남은 \d+분/); assert.match(signalCaption('ETHUSDT', ev, { now: ev.validUntil + 60000 }), /유효시간 경과 · 신규 진입 금지/);   // 유효시간이 지났으면 남은 시간 대신 진입 금지 표시
   }
   assert.equal(reasonRows(evalL()).length, 3);
 });
@@ -67,7 +70,7 @@ test('진입 후보: 사진 1장(캡션 포함)만 보내고 텍스트는 보내
   const ph = photoSender(), r = mk({ sendPhoto: ph.fn, renderChart: fakePng });
   const out = await signalStep(r.args);
   assert.equal(out.candidates, 1); assert.equal(out.sentMessages, 1); assert.equal(out.photoSent, 1); assert.equal(r.sd.sent.length, 0); assert.equal(ph.sent.length, 1);
-  assert.match(ph.sent[0].caption, /ETH LONG 진입 후보/); assert.equal(r.st.signal.coins.ETHUSDT.status, 'active'); assert.equal(r.st.signal.inflight, null);
+  assert.match(ph.sent[0].caption, /ETH LONG · A급 진입 후보/); assert.match(ph.sent[0].caption, /남은 \d+분/); assert.match(ph.sent[0].caption, /유효 종료/); assert.equal(r.st.signal.coins.ETHUSDT.status, 'active'); assert.equal(r.st.signal.inflight, null);
   const day = Object.values(r.st.signal.daily)[0]; assert.equal(day.candidates, 1);
   assert.equal((await signalStep({ ...r.args, now: NOW + 15 * 60000 + 60000 })).candidates, 0);               // 중복 방지(같은 신호 재전송 없음)
   assert.equal(ph.sent.length, 1);
