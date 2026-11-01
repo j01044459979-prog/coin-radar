@@ -57,9 +57,9 @@ export function createCollector(fetcher = fetch) {
 export function telegramSender(token, chatId, fetcher = fetch) {
   if (!token || !/^[1-9]\d*$/.test(chatId || '')) throw new Error('개인 Telegram token/chat ID 설정 필요');
   // html=true이면 parse_mode HTML(<b>, <a href>만 사용). 동적 문자열은 호출 쪽에서 이스케이프한다.
-  return async (text, { html = false } = {}) => {
+  return async (text, { html = false, markup = null } = {}) => {
     if (text.length > 4000) throw new Error('Telegram 메시지 길이 초과');
-    const body = { chat_id: chatId, text, link_preview_options: { is_disabled: true }, ...(html ? { parse_mode: 'HTML' } : {}) };
+    const body = { chat_id: chatId, text, link_preview_options: { is_disabled: true }, ...(html ? { parse_mode: 'HTML' } : {}), ...(markup ? { reply_markup: markup } : {}) };
     const result = await jsonRequest(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     }, fetcher);
@@ -70,20 +70,22 @@ export function telegramSender(token, chatId, fetcher = fetch) {
 // HTML 본문 전송. Telegram이 서식을 거부(HTTP 400)하면 같은 내용을 일반 텍스트로 다시 보내 데이터가 사라지지 않게 한다.
 // 400 이외의 오류(네트워크·429·5xx)는 그대로 던져 기존 재시도·중복 방지 경로를 따른다.
 export async function sendText(send, part) {
-  if (!part.html) return send(part.text);
-  try { return await send(part.text, { html: true }); }
-  catch (error) { if (error.status === 400 && part.plain) return send(part.plain); throw error; }
+  const extra = part.markup ? { markup: part.markup } : null;
+  if (!part.html) return extra ? send(part.text, extra) : send(part.text);
+  try { return await send(part.text, extra ? { html: true, ...extra } : { html: true }); }
+  catch (error) { if (error.status === 400 && part.plain) return extra ? send(part.plain, extra) : send(part.plain); throw error; }
 }
 
 // sendPhoto: 차트 PNG 업로드. 성공(message_id) 확인 후에만 true 취급. 토큰은 오류 메시지에 노출되지 않는다.
 export function telegramPhotoSender(token, chatId, fetcher = fetch) {
   if (!token || !/^[1-9]\d*$/.test(chatId || '')) throw new Error('개인 Telegram token/chat ID 설정 필요');
-  return async (png, caption = '') => {
+  return async (png, caption = '', { markup = null } = {}) => {
     if (!png?.length) throw new Error('이미지 없음');
     if (caption.length > 1024) throw new Error('Telegram 캡션 길이 초과');
     const form = new FormData();
     form.append('chat_id', chatId);
     form.append('caption', caption);
+    if (markup) form.append('reply_markup', JSON.stringify(markup));
     form.append('photo', new Blob([png], { type: 'image/png' }), 'chart.png');
     const result = await jsonRequest(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form, timeoutMs: 20000 }, fetcher);
     if (!result.ok || !result.result?.message_id) throw new Error('Telegram 사진 전송 미확인');
