@@ -3915,7 +3915,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'b88a8e41b246';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '3fe7968ecc07';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -3967,7 +3967,7 @@ function rich300ApiEnv_() {
   var props = PropertiesService.getScriptProperties(), cache = CacheService.getScriptCache(), store = null;
   return {
     now: function () { return Date.now(); },
-    hmacSha256: function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); },
+    hmacSha256: function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); },
     getKeys: function () { return [props.getProperty('RICH300_INGEST_KEY'), props.getProperty('RICH300_INGEST_KEY_PREV')].filter(function (k) { return k; }); },
     nonces: { has: function (n) { return cache.get('n:' + n) !== null; }, put: function (n, ttlSec) { cache.put('n:' + n, '1', ttlSec); } },
     counter: function (name) { var k = 'c:' + name, v = Number(cache.get(k) || 0) + 1; cache.put(k, String(v), 21600); },
@@ -4309,7 +4309,7 @@ function rich300VerifyPorts_() {
   var base = rich300TgEnv_(), stamp = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace(/[-:T]/g, ''), scratchDrive = rich300BackupDrive_('RICH300-VERIFY-SCRATCH');
   return {
     now: function () { return Date.now(); },
-    hmacSha256: function (key, msg) { return rich300Hex_(Utilities.computeHmacSha256Signature(msg, key)); },
+    hmacSha256: function (key, msg) { return rich300Hex_(Utilities.computeHmacSha256Signature(msg, key, Utilities.Charset.UTF_8)); },
     sha256: base.sha256,
     tz: function () { return Session.getScriptTimeZone(); },
     formatKst: function (ms) { return Utilities.formatDate(new Date(ms), 'Asia/Seoul', 'yyyy-MM-dd HH:mm'); },
@@ -4808,7 +4808,7 @@ function rich300StrategyEnv_(mode) {
   var base = rich300WatchEnv_(mode), props = PropertiesService.getScriptProperties();
   base.feed = rich300StrategyFeed_;
   base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k && String(k).length >= 32 ? String(k) : null; };      // 없거나 약하면 null → 피드 거부(서명 필수)
-  base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); };
+  base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); };
   base.budgetMs = 150000;
   return base;
 }

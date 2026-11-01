@@ -11,7 +11,7 @@ function rich300VerifyPorts_() {
   var base = rich300TgEnv_(), stamp = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace(/[-:T]/g, ''), scratchDrive = rich300BackupDrive_('RICH300-VERIFY-SCRATCH');
   return {
     now: function () { return Date.now(); },
-    hmacSha256: function (key, msg) { return rich300Hex_(Utilities.computeHmacSha256Signature(msg, key)); },
+    hmacSha256: function (key, msg) { return rich300Hex_(Utilities.computeHmacSha256Signature(msg, key, Utilities.Charset.UTF_8)); },
     sha256: base.sha256,
     tz: function () { return Session.getScriptTimeZone(); },
     formatKst: function (ms) { return Utilities.formatDate(new Date(ms), 'Asia/Seoul', 'yyyy-MM-dd HH:mm'); },
