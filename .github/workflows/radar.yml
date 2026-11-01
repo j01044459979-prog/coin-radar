@@ -53,6 +53,7 @@ jobs:
       RADAR_SIGNAL_MIN_RR: ${{ vars.RADAR_SIGNAL_MIN_RR || '1.5' }}
       RADAR_SIGNAL_MAX_PER_DAY: ${{ vars.RADAR_SIGNAL_MAX_PER_DAY || '20' }}
       RADAR_SIGNAL_PAPER: ${{ vars.RADAR_SIGNAL_PAPER || 'off' }}   # 모의매매 성과 추적(전송 없음, state.signal.paper에만 기록). RADAR_SIGNAL이 preview|on일 때만 동작
+      RADAR_TELEGRAM_QUIET: ${{ vars.RADAR_TELEGRAM_QUIET || 'off' }}  # on이면 일반 후보(OPPORTUNITY)·정기 보고·사이클 긴급 알림의 Telegram 전송만 끈다(분석·상태·A급 신호·장애 알림은 유지). 기본 off = 기존 동작
       RADAR_RICH300_BUTTONS: ${{ vars.RADAR_RICH300_BUTTONS || 'off' }}  # 앱용 [진입했어][관망했어][놓쳤어] 버튼. 기본 off; 자동 주문 없음
       RADAR_RICH300_FEED: ${{ vars.RADAR_RICH300_FEED || 'off' }}   # RICH 300 추천 전달: on이면 전달 확인된 진입 후보를 상태(state.signal.feed)에 남긴다(기본 off = 기존 동작과 동일). 게시는 별도 워크플로(rich300-feed.yml)가 한다. 주문 기능 없음
     steps:

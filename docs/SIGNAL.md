@@ -87,3 +87,8 @@
 
 ## 7. 주문 기능 없음
 `signal/` 디렉터리에는 거래·계정·자산 API, 서명, 키, POST 요청이 없다(테스트 `주문·계정 API 흔적이 없다`가 소스를 검사한다).
+
+## Telegram 조용한 모드 (RADAR_TELEGRAM_QUIET)
+- 기본 `off` = 기존 동작. `on` 으로 바꾸면 **일반 후보(OPPORTUNITY)·정기(시간별) 보고·차트·주기 긴급 알림의 Telegram 전송만** 멈춘다.
+- 계속 동작: Cloudflare 5분 감시, TOP 분석과 `state.opportunity.coins` 갱신(A급 watchlist 근거), 상태 저장, RICH300 피드, **A급 진입 후보·무효화 알림**, 수집 장애 알림, 연속성 경고.
+- 롤백: 저장소 변수 `RADAR_TELEGRAM_QUIET` 를 `off` 로 되돌리거나 삭제하면 다음 슬롯부터 기존 알림이 돌아온다.

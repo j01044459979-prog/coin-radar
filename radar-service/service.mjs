@@ -127,7 +127,7 @@ async function safeNews(news, state, now) {
   finally { clearTimeout(timer); }
 }
 
-export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000 }) {
+export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000, quietReports = false }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now, { rotation: state.rotation }); }
@@ -164,7 +164,14 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     await save(state);
     return { ok: true, quiet: state.quiet.reason, analyzed: rows.length, failed: failures.length };
   }
-  if (hourly) {
+  if (hourly && quietReports) {
+    // 조용한 모드: 정기 보고·차트는 보내지 않는다. 시간대 기록·뉴스 갱신·강한 신호 쿨다운 상태는 평소와 동일하게 남긴다.
+    await safeNews(news, state, now);
+    delete state.partial; state.reportHour = hour;
+    for (const row of top) state.sent[`${row.symbol}:${row.direction}`] = now;
+    state.reportMuted = { at: now, hour, strong: top.length };
+    await save(state);
+  } else if (hourly) {
     await safeNews(news, state, now);
     // 차트 렌더링은 부가 기능: 실패해도 텍스트 보고는 그대로 전송한다. 파트 순서(요약 → 1순위 차트 → 2순위 차트)는 항상 같다.
     const items = render && chartData ? await Promise.all(chartPlan(rows, chartData).slice(0, MAX_CHARTS).map(spec => buildChart(spec, render, chartTimeoutMs))) : [];
@@ -184,7 +191,7 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     state.reportHour = hour;
     for (const row of top) state.sent[`${row.symbol}:${row.direction}`] = now;
     await save(state);
-  } else {
+  } else if (!quietReports) {
     for (const row of top) {
       const key = `${row.symbol}:${row.direction}`;
       if (now - (state.sent[key] || 0) < 3600000) continue;

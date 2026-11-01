@@ -9,6 +9,7 @@ import { refreshNews } from './news.mjs';
 import { modeOf } from './opportunity/config.mjs';           // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
 import { runAfterCycle } from './opportunity/integrate.mjs';
 import { runSignalAfterCycle } from './signal/integrate.mjs';   // 실시간 신호(feature flag RADAR_SIGNAL, default off)
+import { quietMode, mutedSender } from './quiet.mjs';          // P1: RADAR_TELEGRAM_QUIET(기본 off)
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
 const args = new Set(process.argv.slice(2));
@@ -35,7 +36,8 @@ const collect = process.env.RADAR_SOURCE === 'binance' ? createCollector() : cre
 const news = (st, now) => refreshNews(st, now);
 const tokenConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
 // Opportunity radar runs after the regular cycle and never throws; it is a no-op unless RADAR_OPPORTUNITY=preview|on.
-const opportunity = options => runAfterCycle({ state, save, env: process.env, ...options }).catch(() => null);
+const quiet = quietMode(process.env), muted = mutedSender();   // 조용한 모드: OPPORTUNITY 는 분석·상태 갱신을 그대로 하고 Telegram 전송만 무음 처리한다
+const opportunity = options => runAfterCycle({ state, save, env: process.env, ...options, ...(quiet ? { send: muted.send } : {}) }).catch(() => null);
 // Signal (15m trigger) runs after the opportunity radar and never throws; it is a no-op unless RADAR_SIGNAL=preview|on.
 const signal = options => runSignalAfterCycle({ state, save, env: process.env, ...options }).catch(() => null);
 
@@ -116,9 +118,10 @@ if (args.has('--gate')) {
     const slot = Number(process.env.RADAR_SLOT);
     state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
     await save(state);
-    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto })));
+    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render: quiet ? null : render, sendPhoto, quietReports: quiet })));
     await opportunity({ send });
-    await signal({ send, sendPhoto });
+    await signal({ send, sendPhoto });                                      // A급 신호·무효화는 항상 그대로 전송
+    if (quiet) console.log('QUIET ' + JSON.stringify({ mode: 'on', mutedOpportunityMessages: muted.stat.count, reportMuted: state.reportMuted ?? null }));
   } else {
     let stopped = false;
     let timer;
