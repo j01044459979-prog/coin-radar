@@ -1,0 +1,27 @@
+name: radar-pr-check
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'radar-service/**'
+      - 'scheduler/**'
+      - '.github/workflows/radar.yml'
+      - '.github/workflows/radar-pr-check.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: radar-service/package-lock.json
+      - name: Install chart dependency
+        run: npm ci --prefix radar-service --no-audit --no-fund
+      - name: Unit tests (blocking)
+        run: node --test radar-service/test/*.test.mjs scheduler/test/*.test.mjs
