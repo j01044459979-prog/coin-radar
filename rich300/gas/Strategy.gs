@@ -25,7 +25,7 @@ function rich300StrategyEnv_(mode) {
   var base = rich300WatchEnv_(mode), props = PropertiesService.getScriptProperties();
   base.feed = rich300StrategyFeed_;
   base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k && String(k).length >= 32 ? String(k) : null; };      // 없거나 약하면 null → 피드 거부(서명 필수)
-  base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); };
+  base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); };
   base.budgetMs = 150000;
   return base;
 }

@@ -62,7 +62,7 @@ function rich300ApiEnv_() {
   var props = PropertiesService.getScriptProperties(), cache = CacheService.getScriptCache(), store = null;
   return {
     now: function () { return Date.now(); },
-    hmacSha256: function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key)); },
+    hmacSha256: function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); },
     getKeys: function () { return [props.getProperty('RICH300_INGEST_KEY'), props.getProperty('RICH300_INGEST_KEY_PREV')].filter(function (k) { return k; }); },
     nonces: { has: function (n) { return cache.get('n:' + n) !== null; }, put: function (n, ttlSec) { cache.put('n:' + n, '1', ttlSec); } },
     counter: function (name) { var k = 'c:' + name, v = Number(cache.get(k) || 0) + 1; cache.put(k, String(v), 21600); },
