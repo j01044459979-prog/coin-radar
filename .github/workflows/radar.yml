@@ -2,6 +2,7 @@ name: radar
 run-name: radar · ${{ github.event_name }} · ${{ inputs.source || '-' }} · slot ${{ inputs.slot || '-' }}
 # 리치 선물 레이더: OKX 공개 API 수집 → 분석 → Telegram. 키/주문 없음. 공개 저장소 표준 러너(무료).
 # 스케줄은 GitHub 사정으로 수 분~수십 분 지연되거나 일부 건너뛸 수 있다(정확한 5분/정시 보장 없음).
+# push 트리거 없음: 브랜치 push 가 concurrency 그룹 radar 를 점유해 운영 슬롯을 취소·지연시킨 전례가 있어 제거했다. 변경 검증은 radar-pr-check(PR)만 사용한다.
 # 외부 스케줄러(Cloudflare 디스패처, scheduler/)가 5분마다 workflow_dispatch(source=cloudflare)로 시작할 수 있다.
 # 저장소 변수 RADAR_SCHEDULER: 'github'(기본, GitHub schedule만) | 'cloudflare'(디스패처 우선, GitHub schedule은 15분 넘게 공백일 때만 대신 실행).
 # 어느 쪽이든 Gate 단계가 직전 시도 시각으로 같은 슬롯의 중복 실행을 막는다. 롤백: 변수를 'github'로 바꾸면 즉시 원복.
@@ -23,9 +24,6 @@ on:
         type: choice
         options: [once, telegram-test, preview]
         default: once
-  push:
-    branches: [claude/coin-radar-auto-alerts-fzsnyl, 'feature/**']
-    paths: [.github/workflows/radar.yml, radar-service/**, scheduler/**, assets/futures-engine.js, worker/src/intel/**, radar-service/package-lock.json]
 permissions:
   contents: read
   actions: read   # 상태 캐시 최신성 확인(캐시 목록 조회)에만 사용
