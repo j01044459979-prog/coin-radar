@@ -13,5 +13,5 @@ export function signalMode(env = process.env) {
   return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
 }
 export function fibMode(env = process.env) {\n  const v = String(env?.RADAR_FIB_PULLBACK ?? '').trim().toLowerCase();\n  return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';\n}\nexport function signalSettings(env = process.env) {
-  return { mode: signalMode(env), fibMode: fibMode(env), validMin: int(env?.RADAR_SIGNAL_VALID_MIN, 15, 120, SIGNAL_DEFAULTS.validMin), minRR: num(env?.RADAR_SIGNAL_MIN_RR, 1, 5, SIGNAL_DEFAULTS.minRR), maxPerDay: int(env?.RADAR_SIGNAL_MAX_PER_DAY, 1, 50, SIGNAL_DEFAULTS.maxPerDay), paper: String(env?.RADAR_SIGNAL_PAPER ?? '').trim().toLowerCase() === 'on' };
+  return { mode: signalMode(env), validMin: int(env?.RADAR_SIGNAL_VALID_MIN, 15, 120, SIGNAL_DEFAULTS.validMin), minRR: num(env?.RADAR_SIGNAL_MIN_RR, 1, 5, SIGNAL_DEFAULTS.minRR), maxPerDay: int(env?.RADAR_SIGNAL_MAX_PER_DAY, 1, 50, SIGNAL_DEFAULTS.maxPerDay), paper: String(env?.RADAR_SIGNAL_PAPER ?? '').trim().toLowerCase() === 'on' };
 }
