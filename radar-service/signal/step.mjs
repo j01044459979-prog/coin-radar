@@ -7,7 +7,7 @@ import { RESTRICTED, sendText, waitMs } from '../service.mjs';
 import { analyzeCoin } from '../opportunity/analysis.mjs';
 import { collectOpportunity } from '../opportunity/collect.mjs';
 import { H1 } from '../opportunity/indicators.mjs';
-import { signalSettings } from './config.mjs';
+import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';\nimport { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
 import { candidateMessage, invalidatedMessage, summaryLine } from './message.mjs';
@@ -53,7 +53,7 @@ export function watchlist(state, sg, now, paper = null) {
 }
 
 export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
-  const cfg = signalSettings(env), mode = cfg.mode;
+  const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env);
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
   const hour = Math.floor(now / H1), slot = Math.floor(now / M15) * M15;
@@ -86,7 +86,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const [instId, entry] of Object.entries(hourData.coins)) {
     const symbol = entry.symbol;
     if (entry.status !== 'fresh') { rows.push({ symbol, instId, why: entry.reason ?? entry.status, pending: entry.status === 'pending' }); continue; }
-    rows.push({ symbol, instId, a: analyze(entry.c1h, entry.c4h, hourData.btc4h), ...(cfg.fibMode !== 'off' ? { c1h: entry.c1h, c4h: entry.c4h } : {}) });
+    rows.push({ symbol, instId, a: analyze(entry.c1h, entry.c4h, hourData.btc4h), ...(fibSetting !== 'off' ? { c1h: entry.c1h, c4h: entry.c4h } : {}) });
   }
   const need = rows.filter(r => r.a?.status === 'ok' && (r.a.stage >= 2 || sg.coins[r.symbol]?.status === 'active' || paper?.open.some(t => t.symbol === r.symbol) || paper?.coins[r.symbol]?.status === 'active'));
   const m15 = need.length ? await collectM15({ fetcher, now, ids: need.map(r => r.instId), gapMs, budgetMs: Math.max(5000, budgetMs / 2), shouldStop: () => clock() > deadline }) : { coins: {}, calls: 0, stopped: null };
@@ -111,12 +111,12 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     }
     const legacy = evaluateSignal({ a: r.a, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin });
     let fib = null;
-    if (cfg.fibMode !== 'off' && ['CANDIDATE', 'OBSERVE'].includes(legacy.status)) {
+    if (fibSetting !== 'off' && ['CANDIDATE', 'OBSERVE'].includes(legacy.status)) {
       try { fib = evaluateFibPullback({ a: r.a, c1h: r.c1h, c4h: r.c4h, c15: c.c15 }); }
       catch { fib = { ok: false, reasons: ['피보나치 계산 오류'], fib: null }; } // 기능 격리: 거래소/Telegram 오류 전파 금지
-      lines.push(r.symbol.replace(/USDT$/, '') + ': FIB ' + (fib.ok ? '충족' : '미충족') + ' [' + cfg.fibMode + '] ' + (fib.reasons.join(' / ') || fib.evidence) + (fib.context ? ' / ' + fib.context : ''));
+      lines.push(r.symbol.replace(/USDT$/, '') + ': FIB ' + (fib.ok ? '충족' : '미충족') + ' [' + fibSetting + '] ' + (fib.reasons.join(' / ') || fib.evidence) + (fib.context ? ' / ' + fib.context : ''));
     }
-    const ev = applyFibGate(legacy, fib, cfg.fibMode);
+    const ev = applyFibGate(legacy, fib, fibSetting);
     lines.push(summaryLine(r.symbol, ev));
     evaluations.push({ symbol: r.symbol, ev, a: r.a, c15: c.c15 }); barsMap[r.symbol] = c.c15;
     if (ev.status === 'OBSERVE') base.observing++;
