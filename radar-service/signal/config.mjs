@@ -4,7 +4,8 @@
 //  RADAR_SIGNAL_MIN_RR        1차 목표까지 비용 반영 최소 손익비(1~5, 기본 1.5)
 //  RADAR_SIGNAL_MAX_PER_DAY   하루(UTC) 최대 '진입 후보' 알림 수(1~50, 기본 20). 무효화 알림은 상한에 포함하지 않는다
 //  RADAR_SIGNAL_PAPER         on 이면 모의매매 성과 추적(paper.mjs)을 켠다(기본 off). 전송 없이 state.signal.paper에만 기록하며 RADAR_SIGNAL이 preview|on일 때만 동작
-// RADAR_FIB_PULLBACK           off(기본) | preview(기존 신호 변경 없이 FIB 로그) | on(기존 SIGNAL 진입 후보에 추가 확인 게이트)\n// 이 기능은 주문을 내지 않는다. 실제 주문 API·계정 API는 어디에도 연결되어 있지 않다.
+// RADAR_FIB_PULLBACK           off(기본) | preview(기존 신호 변경 없이 FIB 로그) | on(기존 SIGNAL 진입 후보에 추가 확인 게이트)
+// 이 기능은 주문을 내지 않는다. 실제 주문 API·계정 API는 어디에도 연결되어 있지 않다.
 export const SIGNAL_DEFAULTS = Object.freeze({ validMin: 45, minRR: 1.5, maxPerDay: 20 });
 const int = (v, lo, hi, d) => { const t = String(v ?? '').trim(), n = Number.parseInt(t, 10); return Number.isInteger(n) && String(n) === t && n >= lo && n <= hi ? n : d; };
 const num = (v, lo, hi, d) => { const t = String(v ?? '').trim(), n = Number(t); return t !== '' && Number.isFinite(n) && n >= lo && n <= hi ? n : d; };
@@ -12,6 +13,10 @@ export function signalMode(env = process.env) {
   const v = String(env?.RADAR_SIGNAL ?? '').trim().toLowerCase();
   return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
 }
-export function fibMode(env = process.env) {\n  const v = String(env?.RADAR_FIB_PULLBACK ?? '').trim().toLowerCase();\n  return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';\n}\nexport function signalSettings(env = process.env) {
+export function fibMode(env = process.env) {
+  const v = String(env?.RADAR_FIB_PULLBACK ?? '').trim().toLowerCase();
+  return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
+}
+export function signalSettings(env = process.env) {
   return { mode: signalMode(env), validMin: int(env?.RADAR_SIGNAL_VALID_MIN, 15, 120, SIGNAL_DEFAULTS.validMin), minRR: num(env?.RADAR_SIGNAL_MIN_RR, 1, 5, SIGNAL_DEFAULTS.minRR), maxPerDay: int(env?.RADAR_SIGNAL_MAX_PER_DAY, 1, 50, SIGNAL_DEFAULTS.maxPerDay), paper: String(env?.RADAR_SIGNAL_PAPER ?? '').trim().toLowerCase() === 'on' };
 }
