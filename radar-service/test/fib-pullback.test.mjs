@@ -6,6 +6,7 @@ import { fibMode } from '../signal/config.mjs';
 import { FIB, fibRsi, fibAnchors, estimatedVolumeProfile, evaluateFibPullback, applyFibGate } from '../signal/fib-pullback.mjs';
 import { signalStep } from '../signal/step.mjs';
 import { evaluateSignal } from '../signal/evaluate.mjs';
+import { signalCaption } from '../signal/chart.mjs';
 import { mkA, mk15, T, NOW, collectors, oppState } from './signal-fixture.mjs';
 import { H1, H4 } from '../opportunity/indicators.mjs';
 
@@ -125,4 +126,26 @@ test('workflow flag defaults off and contains no new order or secret handling',(
   assert.match(yml,/RADAR_FIB_PULLBACK: \$\{\{ vars\.RADAR_FIB_PULLBACK \|\| 'off' \}\}/);
   const source=readFileSync(new URL('../signal/fib-pullback.mjs',import.meta.url),'utf8');
   assert.ok(!/\/api\/v5\/trade|place-order|TELEGRAM_BOT_TOKEN|RICH300_FEED_KEY/.test(source));
+});
+
+
+test('Telegram image caption distinctly identifies FIB-confirmed candidate but preserves legacy caption', () => {
+  const plain = evaluateSignal({a:mkA(),c15:mk15(),now:NOW});
+  const base = signalCaption('ETHUSDT', plain, {now:NOW});
+  assert.ok(!base.includes('FIB 0.5~0.618'));
+  const enhanced = { ...plain, fib: { ok:true, fib:{lo:98.5,hi:99.5},rsi1:54.5,rsi15:57.2 } };
+  const caption = signalCaption('ETHUSDT', enhanced, {now:NOW});
+  assert.match(caption, /FIB 0\.5~0\.618/);
+  assert.match(caption, /98\.5~99\.5/);
+  assert.match(caption, /RSI14 1H 55 · 15m 57/);
+  assert.ok(caption.length <= 1024, 'Telegram photo caption size limit');
+  assert.match(caption, /손절/);
+  assert.match(caption, /1차/);
+  assert.ok(!base.includes('98.5~99.5'));
+});
+
+test('FIB flag cannot swallow SIGNAL_PAPER workflow variable', () => {
+  const yml=readFileSync(new URL('../../.github/workflows/radar.yml',import.meta.url),'utf8');
+  assert.match(yml,/^\s+RADAR_FIB_PULLBACK:.*\n\s+RADAR_SIGNAL_PAPER: /m);
+  assert.ok(!/RADAR_FIB_PULLBACK:[^\n]*\\n/.test(yml), 'literal \\n must not occur inside YAML env comment');
 });
