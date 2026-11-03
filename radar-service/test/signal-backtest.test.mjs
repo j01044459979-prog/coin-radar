@@ -79,3 +79,10 @@ test('백테스트는 읽기 전용이다: 모듈·CLI에 Telegram·주문·계�
   const wf = readFileSync(new URL('../../.github/workflows/signal-backtest.yml', import.meta.url), 'utf8');
   assert.ok(!/secrets\.|schedule:|cron:/.test(wf) && /contents: read/.test(wf) && /branches: \['claude\/opportunity-radar-v2'\]/.test(wf));
 });
+test('FIB 태깅(--fib): 기본은 태그 없음, 켜면 같은 이벤트에 fibOk/fibWhy만 추가되고 이벤트 수·결과는 변하지 않는다', () => {
+  const base = collectSignalEvents('ETHUSDT', C.ETHUSDT, C.BTCUSDT, OPT), withFib = collectSignalEvents('ETHUSDT', C.ETHUSDT, C.BTCUSDT, { ...OPT, fib: true });
+  assert.equal(withFib.events.length, base.events.length); assert.ok(base.events.every(e => e.fibOk === null && e.fibWhy === null));
+  assert.deepEqual(withFib.events.map(e => [e.i, e.dir, e.res.wick.net]), base.events.map(e => [e.i, e.dir, e.res.wick.net]));
+  assert.ok(withFib.events.every(e => typeof e.fibOk === 'boolean' && Array.isArray(e.fibWhy)));
+  assert.ok(SIGNAL_COHORTS.some(c => /FIB 충족/.test(c[0])) && SIGNAL_COHORTS.some(c => /FIB 미충족/.test(c[0])));
+});

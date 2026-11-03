@@ -18,6 +18,7 @@ import { aggregate, H1, H4 } from '../opportunity/indicators.mjs';
 import { clusterBootstrap } from '../opportunity/backtest.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { signalTransition } from './transition.mjs';
+import { evaluateFibPullback } from './fib-pullback.mjs';
 
 export const SBT = Object.freeze({ win15: 120, win1h: 150, win4h: 300, warm15: 3700, horizon15: 192, costBps: 15, stressBps: 30, minRR: 1.5, validMin: 45 });
 
@@ -48,7 +49,7 @@ export function pathOutcome(c15, i, dir, stop, target, { stopModel = 'wick', hor
 export function buildFrames(c15) { const c1h = aggregate(c15, M15, H1), c4h = aggregate(c1h); return { c1h, c4h }; }
 
 // 코인 하나의 이벤트. 반환 { events, control } — 각 항목에 신호 시점 지표와 두 무효화 모형·두 목표(T1, T2) 결과가 들어 있다.
-export function collectSignalEvents(symbol, c15, btc15 = null, { from = SBT.warm15, minRR = SBT.minRR, validMin = SBT.validMin, horizon = SBT.horizon15, control = true, P = SIG } = {}) {
+export function collectSignalEvents(symbol, c15, btc15 = null, { from = SBT.warm15, minRR = SBT.minRR, validMin = SBT.validMin, horizon = SBT.horizon15, control = true, fib = false, P = SIG } = {}) {
   const { c1h, c4h } = buildFrames(c15), btc4 = btc15 ? buildFrames(btc15).c4h : null;
   const out = { events: [], control: [] };
   const state = { sig: null, ctl: null };
@@ -74,7 +75,12 @@ export function collectSignalEvents(symbol, c15, btc15 = null, { from = SBT.warm
       const res = {};
       for (const model of ['close', 'wick']) { res[model] = pathOutcome(c15, i, e.dir, e.stop, t1, { stopModel: model, horizon }); res[`${model}T2`] = pathOutcome(c15, i, e.dir, e.stop, t2 ?? t1, { stopModel: model, horizon }); }
       if (!res.wick || res.wick.skipped) continue;                                              // 다음 봉 시가가 이미 손절 기준을 넘음
-      bucket.push({ symbol, i, t: closeT, dir: e.dir, stage: a.stage, score: a.score?.total ?? null, volRel: e.volRel, rr1: e.t1.rr, net1: e.t1.net, hasT2: Boolean(e.t2), riskPct: e.riskPct, btcAlign: a.metrics.btcAlign, res });
+      let fibOk = null, fibWhy = null;
+      if (fib) {                                                                              // FIB 확인은 신호 시점에 쓸 수 있었던 확정 봉만 쓴다(운영 step.mjs 와 같은 입력 형태)
+        try { const r = evaluateFibPullback({ a, c1h: c1h.slice(Math.max(0, p1 - SBT.win1h), p1), c4h: c4h.slice(Math.max(0, p4 - SBT.win4h), p4), c15: win }); fibOk = r.ok; fibWhy = r.reasons; }
+        catch { fibOk = false; fibWhy = ['오류']; }
+      }
+      bucket.push({ symbol, i, t: closeT, dir: e.dir, fibOk, fibWhy, stage: a.stage, score: a.score?.total ?? null, volRel: e.volRel, rr1: e.t1.rr, net1: e.t1.net, hasT2: Boolean(e.t2), riskPct: e.riskPct, btcAlign: a.metrics.btcAlign, res });
     }
   }
   return out;
@@ -103,6 +109,8 @@ export const SIGNAL_COHORTS = Object.freeze([
   ['신호 · 거래량 ×2 이상', 'sig', 'wick', r => r.filter(x => x.volRel >= 2)],
   ['신호 · 기회 점수 75↑', 'sig', 'wick', r => r.filter(x => x.score >= 75)],
   ['신호 · BTC 방향 일치', 'sig', 'wick', r => r.filter(x => x.btcAlign === '일치')],
+  ['신호 · FIB 충족(--fib 일 때만)', 'sig', 'wick', r => r.filter(x => x.fibOk === true)],
+  ['신호 · FIB 미충족(--fib 일 때만)', 'sig', 'wick', r => r.filter(x => x.fibOk === false)],
   ['대조: 맥락만(15분 트리거·거래량 없이) · 스탑주문 모형', 'ctl', 'wick', r => r],
   ['대조: 맥락만 · 종가 모형', 'ctl', 'close', r => r],
 ]);

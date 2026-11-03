@@ -1,5 +1,5 @@
 // 15분봉 진입 트리거 과거 데이터 검증 실행기(읽기 전용): 공개 OKX 시세(history-candles)만 읽는다. Telegram·비밀값·상태 캐시·주문 없음.
-// 사용: node radar-service/signal/backtest-cli.mjs [--top 20] [--days 120] [--json out.json]
+// 사용: node radar-service/signal/backtest-cli.mjs [--top 20] [--days 120] [--json out.json] [--fib]
 import { writeFileSync } from 'node:fs';
 import { jsonRequest } from '../service.mjs';
 import { scanMarket } from '../universe.mjs';
@@ -36,7 +36,7 @@ const queue = [...ids]; await Promise.all([0, 1].map(async () => { while (queue.
 if (skipped.length) console.log('SKIPPED ' + skipped.join(' | '));
 const btc = data.BTCUSDT ?? null;
 if (!btc) { console.log('BTC 데이터가 없어 중단'); process.exit(1); }
-const result = runSignalBacktest(data, btc);
+const result = runSignalBacktest(data, btc, { fib: process.argv.includes('--fib') });
 const { raw, ...summary } = result;
 console.log(renderSignalReport(result, { note: `OKX USDT 무기한 거래대금 상위 ${Object.keys(data).length}종목, 확정 15분봉에서 1H·4H 집계 (생존 편향 있음)` }));
 console.log('JSON ' + JSON.stringify({ ...summary, coinList: Object.keys(data), skipped }));

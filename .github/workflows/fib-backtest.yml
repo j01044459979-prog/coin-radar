@@ -1,0 +1,29 @@
+name: fib-backtest
+# FIB 눌림 확인이 기존 A급 후보의 사후 성과를 개선하는지 읽기 전용으로 비교한다(공개 OKX 과거 데이터). Telegram·Secret·상태 캐시·쓰기 권한 없음. 운영 radar와 concurrency 그룹이 다르다.
+on:
+  push:
+    branches: [ops/fib-backtest]
+    paths: [.github/workflows/fib-backtest.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fib-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/signal-backtest.test.mjs radar-service/test/signal.test.mjs
+      - name: Backtest (public OKX data, FIB tagging, no Telegram)
+        run: node radar-service/signal/backtest-cli.mjs --top 20 --days 120 --fib | tee "$RUNNER_TEMP/fib-backtest.txt"
+      - name: Summary
+        run: |
+          { echo '### FIB vs legacy A-grade candidates (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/fib-backtest.txt"; } >> "$GITHUB_STEP_SUMMARY"
