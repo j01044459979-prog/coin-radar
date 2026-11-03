@@ -134,6 +134,8 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
       # 캐시 저장이 실제로 반영됐는지 확인한다. 실패하면 이 실행을 성공으로 표시하지 않는다.
+      # 저장 직후 조회는 캐시 서비스 반영이 1~2초 늦어 일시적으로 miss 가 날 수 있다(2026-11-03 #1655: 저장 1.4초 뒤 조회 실패, 다음 실행은 같은 상태를 정상 복원).
+      # 그래서 같은 조회를 짧게 기다린 뒤 최대 2회 더 한다(정상 경로는 첫 조회로 끝나 추가 시간 0). 끝내 확인되지 않으면 다른 키로 재저장하고 같은 방식으로 재검증하며, 그래도 안 되면 실행을 실패로 표시한다(검증을 통과 처리하지 않는다).
       - name: Verify state saved
         id: verify
         continue-on-error: true
@@ -144,16 +146,68 @@ jobs:
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
           lookup-only: true
           fail-on-cache-miss: true
-      # 저장 검증이 실패하면 다른 키로 한 번 더 저장하고 다시 검증한다(다음 실행이 오래된 상태를 복원해 정기 보고가 중복되는 것을 줄이기 위함).
+      - name: Wait 5s before re-verify
+        if: always() && steps.verify.outcome == 'failure'
+        run: sleep 5
+      - name: Re-verify state saved (2)
+        id: verify2
+        continue-on-error: true
+        if: always() && steps.verify.outcome == 'failure'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: Wait 10s before re-verify
+        if: always() && steps.verify.outcome == 'failure' && steps.verify2.outcome == 'failure'
+        run: sleep 10
+      - name: Re-verify state saved (3)
+        id: verify3
+        continue-on-error: true
+        if: always() && steps.verify.outcome == 'failure' && steps.verify2.outcome == 'failure'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      # 저장 검증이 세 번 모두 실패하면 다른 키로 한 번 더 저장하고 다시 검증한다(다음 실행이 오래된 상태를 복원해 정기 보고가 중복되는 것을 줄이기 위함).
       - name: Retry state save
         id: retry_save
-        if: always() && steps.verify.outcome == 'failure'
+        if: always() && steps.verify.outcome == 'failure' && steps.verify2.outcome == 'failure' && steps.verify3.outcome == 'failure'
         uses: actions/cache/save@v4
         with:
           path: .radar-state
           key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
       - name: Verify retry save
-        if: always() && steps.verify.outcome == 'failure'
+        id: verify_r1
+        continue-on-error: true
+        if: always() && steps.retry_save.outcome == 'success'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: Wait 5s before retry re-verify
+        if: always() && steps.retry_save.outcome == 'success' && steps.verify_r1.outcome == 'failure'
+        run: sleep 5
+      - name: Re-verify retry save (2)
+        id: verify_r2
+        continue-on-error: true
+        if: always() && steps.retry_save.outcome == 'success' && steps.verify_r1.outcome == 'failure'
+        uses: actions/cache/restore@v4
+        with:
+          path: .radar-state
+          key: radar-state-${{ github.run_id }}-${{ github.run_attempt }}-retry
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: Wait 10s before final retry re-verify
+        if: always() && steps.retry_save.outcome == 'success' && steps.verify_r1.outcome == 'failure' && steps.verify_r2.outcome == 'failure'
+        run: sleep 10
+      - name: Verify retry save (final)
+        if: always() && steps.retry_save.outcome == 'success' && steps.verify_r1.outcome == 'failure' && steps.verify_r2.outcome == 'failure'
         uses: actions/cache/restore@v4
         with:
           path: .radar-state
