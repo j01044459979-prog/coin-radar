@@ -136,7 +136,7 @@ test('Telegram image caption distinctly identifies FIB-confirmed candidate but p
   const enhanced = { ...plain, fib: { ok:true, fib:{lo:98.5,hi:99.5},rsi1:54.5,rsi15:57.2 } };
   const caption = signalCaption('ETHUSDT', enhanced, {now:NOW});
   assert.match(caption, /FIB 0\.5~0\.618/);
-  assert.match(caption, /98\.5~99\.5/);
+  assert.match(caption, /98\.50~99\.50/);
   assert.match(caption, /RSI14 1H 55 · 15m 57/);
   assert.ok(caption.length <= 1024, 'Telegram photo caption size limit');
   assert.match(caption, /손절/);
