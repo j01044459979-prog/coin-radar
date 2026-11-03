@@ -31,6 +31,10 @@ export function signalCaption(symbol, ev, opts = {}) {
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
     `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
+    ...(ev.fib?.ok && ev.fib.fib ? [
+      `📐 FIB 0.5~0.618 · ${f(ev.fib.fib.lo)}~${f(ev.fib.fib.hi)}`,
+      `RSI14 1H ${Number(ev.fib.rsi1).toFixed(0)} · 15m ${Number(ev.fib.rsi15).toFixed(0)}`,
+    ] : []),
     `💰 진입 관심가 ${f(ev.entry)}`,
     `🛑 손절 기준 ${f(ev.stop)} · 손절폭 ${ev.riskPct.toFixed(2)}%`,
     `🎯 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
