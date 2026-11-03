@@ -1,6 +1,9 @@
 name: fib-preview
 # FIB 눌림 확인(RADAR_FIB_PULLBACK) 읽기 전용 미리보기: 공개 OKX 시세로 판정하고 결과를 출력만 한다. Telegram·Secret·상태 캐시·쓰기 권한 없음, 운영 radar와 concurrency 그룹이 다르다.
 on:
+  push:
+    branches: [ops/fib-preview]
+    paths: [.github/workflows/fib-preview.yml]
   workflow_dispatch:
     inputs:
       top:
