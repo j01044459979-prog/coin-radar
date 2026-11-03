@@ -2,7 +2,7 @@
 // 사용: node radar-service/signal/preview-cli.mjs [--top 20]
 import { runSignalSafe } from './step.mjs';
 const args = process.argv.slice(2), top = Number(args.includes('--top') ? args[args.indexOf('--top') + 1] : 20);
-const out = await runSignalSafe({ now: Date.now(), state: {}, env: { RADAR_SIGNAL: 'preview' }, send: null, save: async () => {}, force: true, scanAll: true, topN: top, log: () => {} });
+const out = await runSignalSafe({ now: Date.now(), state: {}, env: { RADAR_SIGNAL: 'preview', ...(process.env.RADAR_FIB_PULLBACK ? { RADAR_FIB_PULLBACK: process.env.RADAR_FIB_PULLBACK } : {}) }, send: null, save: async () => {}, force: true, scanAll: true, topN: top, log: () => {} });
 const { preview, ...rest } = out;
 console.log('SIGNAL ' + JSON.stringify(rest));
 if (preview) { console.log('--- per-coin ---'); preview.lines.forEach(l => console.log(l)); console.log(`--- messages that would be sent (${preview.messages.length}) ---`); preview.messages.forEach((m, i) => console.log(`[${i + 1}]\n${m}\n`)); }

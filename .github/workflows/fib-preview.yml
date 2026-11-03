@@ -1,0 +1,30 @@
+name: fib-preview
+# FIB 눌림 확인(RADAR_FIB_PULLBACK) 읽기 전용 미리보기: 공개 OKX 시세로 판정하고 결과를 출력만 한다. Telegram·Secret·상태 캐시·쓰기 권한 없음, 운영 radar와 concurrency 그룹이 다르다.
+on:
+  workflow_dispatch:
+    inputs:
+      top:
+        description: '관찰 종목 수(기본 30)'
+        default: '30'
+permissions:
+  contents: read
+concurrency:
+  group: fib-preview
+  cancel-in-progress: true
+jobs:
+  preview:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Preview (FIB=preview, public OKX data, nothing sent)
+        env:
+          RADAR_FIB_PULLBACK: preview
+        run: node radar-service/signal/preview-cli.mjs --top "${{ inputs.top || '30' }}" | tee "$RUNNER_TEMP/fib.txt"
+      - name: Summary
+        run: |
+          { echo '### FIB preview (read-only, nothing sent)'; echo '```'; cat "$RUNNER_TEMP/fib.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
