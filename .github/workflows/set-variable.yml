@@ -1,0 +1,74 @@
+name: set-variable
+# 승인된 저장소 변수 변경 경로(Claude Code 가 GitHub Actions 변수 API 에 직접 쓸 수 없을 때 쓰는 별도 실행 경로). 수동 전용, main 에서만, 허용 목록만.
+#  · 허용: RADAR_RICH300_BUTTONS(on|off) · RADAR_TELEGRAM_QUIET(on|off) · RADAR_FIB_PULLBACK(off|preview — on 은 거부). 그 밖의 변수·값은 scheduler/variable-guard.mjs 가 거부한다.
+#  · 인증: Secret RADAR_VARS_PAT (이 저장소 전용 fine-grained PAT, Variables 읽기·쓰기만). 값은 출력하지 않는다. 없으면 실패하고 아무것도 바꾸지 않는다.
+#  · mode=read 는 읽기만 한다(연결 확인). mode=set 은 변경 전 값을 읽고, 쓰고, 다시 읽어 일치하는지 검증한 뒤에만 성공한다.
+#  · Secret·Telegram·Cloudflare·RICH300 배포는 건드리지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'read(읽기만) 또는 set(변경 후 재조회 검증)'
+        required: true
+        type: choice
+        options: [read, set]
+        default: read
+      variable:
+        description: '대상 변수'
+        required: true
+        type: choice
+        options: [RADAR_RICH300_BUTTONS, RADAR_TELEGRAM_QUIET, RADAR_FIB_PULLBACK]
+      value:
+        description: 'set 일 때만 사용: on | off | preview (FIB 는 on 금지)'
+        required: false
+        type: choice
+        options: [off, on, preview]
+        default: off
+      confirm:
+        description: 'set 일 때만: set-variable 을 입력'
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: set-variable
+  cancel-in-progress: false
+jobs:
+  vars:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && (github.event.inputs.mode == 'read' || github.event.inputs.confirm == 'set-variable')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.RADAR_VARS_PAT }}
+      REPO: ${{ github.repository }}
+      MODE: ${{ github.event.inputs.mode }}
+      VARIABLE: ${{ github.event.inputs.variable }}
+      VALUE: ${{ github.event.inputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Guard (allow-list)
+        run: |
+          if [ "$MODE" = "set" ]; then node scheduler/variable-guard.mjs "$VARIABLE" "$VALUE"; else node scheduler/variable-guard.mjs "$VARIABLE" off; fi
+      - name: Check required secret
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::error title=GitHub Secret 누락::RADAR_VARS_PAT 이 등록되지 않았습니다 (값은 출력하지 않습니다). 변경하지 않았습니다."; exit 1; fi
+      - name: Read current value
+        id: before
+        run: |
+          if v=$(gh variable get "$VARIABLE" --repo "$REPO" 2>/dev/null); then echo "before=$v" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=$v"; else echo "before=(unset)" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=(unset)"; fi
+      - name: Set value
+        if: env.MODE == 'set'
+        run: gh variable set "$VARIABLE" --body "$VALUE" --repo "$REPO"
+      - name: Read back and verify
+        if: env.MODE == 'set'
+        run: |
+          after=$(gh variable get "$VARIABLE" --repo "$REPO")
+          echo "변경 후 $VARIABLE=$after (변경 전 ${{ steps.before.outputs.before }})"
+          if [ "$after" != "$VALUE" ]; then echo "::error title=재조회 불일치::기대 $VALUE, 실제 $after"; exit 1; fi
+      - name: Summary
+        if: always()
+        run: |
+          { echo "### set-variable ($MODE)"; echo "- 변수: \`$VARIABLE\`"; echo "- 변경 전: \`${{ steps.before.outputs.before }}\`"; if [ "$MODE" = "set" ]; then echo "- 요청 값: \`$VALUE\`"; fi; } >> "$GITHUB_STEP_SUMMARY"
