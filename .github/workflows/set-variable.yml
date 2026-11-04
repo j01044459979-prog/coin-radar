@@ -55,17 +55,24 @@ jobs:
       - name: Check required secret
         run: |
           if [ -z "$GH_TOKEN" ]; then echo "::error title=GitHub Secret 누락::RADAR_VARS_PAT 이 등록되지 않았습니다 (값은 출력하지 않습니다). 변경하지 않았습니다."; exit 1; fi
+      # 인증 확인: 변수 목록 조회(Variables 읽기 권한 필요)가 성공해야 한다. 401/403 등은 '(unset)' 으로 오인하지 않고 실패로 처리한다.
+      - name: Verify token can read variables
+        run: |
+          if ! n=$(gh api "repos/$REPO/actions/variables" --jq '.total_count' 2>err.txt); then echo "::error title=PAT 인증/권한 실패::변수 목록 조회 실패(Variables 읽기 권한·만료 확인). 변경하지 않았습니다."; sed -E 's/[A-Za-z0-9_]{30,}/<redacted>/g' err.txt | head -3; exit 1; fi
+          echo "토큰 확인: 저장소 변수 ${n}개 조회됨"
       - name: Read current value
         id: before
         run: |
-          if v=$(gh variable get "$VARIABLE" --repo "$REPO" 2>/dev/null); then echo "before=$v" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=$v"; else echo "before=(unset)" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=(unset)"; fi
+          if v=$(gh api "repos/$REPO/actions/variables/$VARIABLE" --jq '.value' 2>err.txt); then echo "before=$v" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=$v";
+          elif grep -q "HTTP 404" err.txt; then echo "before=(unset)" >> "$GITHUB_OUTPUT"; echo "현재 $VARIABLE=(unset)";
+          else echo "::error title=변수 조회 실패::404 가 아닌 오류"; sed -E 's/[A-Za-z0-9_]{30,}/<redacted>/g' err.txt | head -3; exit 1; fi
       - name: Set value
         if: env.MODE == 'set'
         run: gh variable set "$VARIABLE" --body "$VALUE" --repo "$REPO"
       - name: Read back and verify
         if: env.MODE == 'set'
         run: |
-          after=$(gh variable get "$VARIABLE" --repo "$REPO")
+          after=$(gh api "repos/$REPO/actions/variables/$VARIABLE" --jq '.value')
           echo "변경 후 $VARIABLE=$after (변경 전 ${{ steps.before.outputs.before }})"
           if [ "$after" != "$VALUE" ]; then echo "::error title=재조회 불일치::기대 $VALUE, 실제 $after"; exit 1; fi
       - name: Summary
