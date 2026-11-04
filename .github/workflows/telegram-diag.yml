@@ -1,0 +1,41 @@
+name: telegram-diag
+# Telegram 봇 연결 읽기 전용 진단: getMe + getWebhookInfo 만 호출한다(메시지 전송·getUpdates·webhook 변경 없음 → 대기 중인 업데이트를 소비하지 않는다).
+#  · 수동 전용, main에서만, 확인 문구 필요. 토큰·채팅 ID 는 출력하지 않는다(봇 id·사용자명은 공개 정보라 출력).
+#  · 해석: pending_update_count > 0 이고 오래됐다면 RICH300 의 rich300TgPoll(1분 트리거)이 업데이트를 가져가지 못하는 것. 0 이면 가져가긴 하는데 페어링 불일치로 조용히 무시하거나 다른 곳이 가져가는 것.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'diag-telegram 을 입력'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: telegram-diag
+  cancel-in-progress: false
+jobs:
+  diag:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'diag-telegram'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - name: Read bot and webhook state (read-only)
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then echo "::error title=Secret 누락::TELEGRAM_BOT_TOKEN 이 없습니다 (값은 출력하지 않습니다)"; exit 1; fi
+          ME=$(curl -sS -m 15 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" 2>/dev/null) || { echo "::error::getMe 네트워크 오류"; exit 1; }
+          WH=$(curl -sS -m 15 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" 2>/dev/null) || { echo "::error::getWebhookInfo 네트워크 오류"; exit 1; }
+          [ "$(printf '%s' "$ME" | jq -r '.ok')" = "true" ] || { echo "::error title=getMe 실패::토큰이 유효하지 않을 수 있습니다"; exit 1; }
+          [ "$(printf '%s' "$WH" | jq -r '.ok')" = "true" ] || { echo "::error title=getWebhookInfo 실패"; exit 1; }
+          printf '%s' "$ME" | jq -r '"봇 id=\(.result.id) 사용자명=@\(.result.username) is_bot=\(.result.is_bot)"'
+          NOW=$(date +%s)
+          printf '%s' "$WH" | jq -r --argjson now "$NOW" '
+            .result as $r |
+            "webhook 설정됨=\(($r.url // "") != "")" ,
+            "webhook 호스트=\((($r.url // "") | sub("^https?://";"") | split("/")[0]) // "")",
+            "pending_update_count=\($r.pending_update_count)",
+            "last_error_age_sec=\(if $r.last_error_date then ($now - $r.last_error_date) else "없음" end)",
+            "last_error_message=\(($r.last_error_message // "없음") | .[0:120])",
+            "allowed_updates=\(($r.allowed_updates // []) | join(","))"'
