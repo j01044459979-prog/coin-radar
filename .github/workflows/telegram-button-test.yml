@@ -1,0 +1,35 @@
+name: telegram-button-test
+# 버튼 수신 확인용 "테스트·가상" Telegram 메시지를 1건만 보낸다. 수동 전용, main에서만, 확인 문구 필요. 주문·장부 기록 없음.
+#  · 메시지에는 기계가 읽는 'R9 v1' 줄이 없다. 앱은 이런 메시지의 버튼 입력을 "알 수 없는 신호입니다"로 응답만 하고 Signals/Responses/Strategies/Fills 에 아무것도 쓰지 않는다
+#    (rich300/lib/tg.mjs tgOnResponse: 저장소에 sid 가 없고 메시지에서 R9 줄도 읽히지 않으면 unknown-signal 로 종료).
+#  · sid 는 'SG-TESTBTN-…' 형식으로 실제 신호 sid(SG-코인-L|S-시각)와 겹치지 않는다. 토큰은 환경변수로만 쓰고 출력하지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'send-test-button 을 입력'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: telegram-button-test
+  cancel-in-progress: false
+jobs:
+  send:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'send-test-button'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Send one labeled test message
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then echo "::error title=Secret 누락::TELEGRAM 비밀값이 없습니다 (값은 출력하지 않습니다)"; exit 1; fi
+          TEXT=$(printf '🧪 테스트 · 가상 데이터 · 매매 금지\n버튼 수신 확인용 메시지입니다 (장부 기록 없음).\n아래 [관망했어]를 한 번 눌러 주세요.\n"알 수 없는 신호입니다"라고 뜨면 버튼 수신이 정상입니다.')
+          KB='{"inline_keyboard":[[{"text":"진입했어","callback_data":"r1:SG-TESTBTN-L-zz0001:e"},{"text":"관망했어","callback_data":"r1:SG-TESTBTN-L-zz0001:w"},{"text":"놓쳤어","callback_data":"r1:SG-TESTBTN-L-zz0001:m"}]]}'
+          RES=$(curl -sS -m 20 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${TEXT}" --data-urlencode "reply_markup=${KB}" 2>/dev/null) || { echo "::error title=전송 실패::네트워크 오류"; exit 1; }
+          OK=$(printf '%s' "$RES" | jq -r '.ok'); MID=$(printf '%s' "$RES" | jq -r '.result.message_id // empty')
+          if [ "$OK" != "true" ] || [ -z "$MID" ]; then echo "::error title=전송 미확인::Telegram 응답 ok=$OK"; exit 1; fi
+          echo "테스트 메시지 1건 전송 확인(message_id=$MID)"
