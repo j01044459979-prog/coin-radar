@@ -24,6 +24,11 @@ test('워크플로: 수동 전용·main 만·확인 문구(set 일 때)·최소 
   assert.ok(wf.indexOf('Guard (allow-list)') < wf.indexOf('Check required secret') && wf.indexOf('Check required secret') < wf.indexOf('gh variable set'));
   assert.ok(wf.indexOf('gh variable set') < wf.indexOf('Read back and verify')); assert.match(wf, /\[ "\$after" != "\$VALUE" \].*exit 1/);
 });
+test('읽기 검증: 인증 실패를 (unset)으로 오인하지 않는다(목록 조회 성공이 선행, 404 만 unset, 그 밖의 오류는 실패)', () => {
+  assert.ok(wf.indexOf('Verify token can read variables') < wf.indexOf('Read current value') && wf.indexOf('Read current value') < wf.indexOf('gh variable set'));
+  assert.match(wf, /actions\/variables" --jq '\.total_count'/); assert.match(wf, /grep -q "HTTP 404"/); assert.match(wf, /404 가 아닌 오류[\s\S]{0,160}exit 1/);
+  assert.doesNotMatch(wf, /2>\/dev\/null/);
+});
 test('워크플로: Secret 은 환경변수로만, 출력·디버그 없음, 다른 Secret·Telegram·Cloudflare 미접촉', () => {
   assert.match(wf, /GH_TOKEN: \$\{\{ secrets\.RADAR_VARS_PAT \}\}/); assert.equal((wf.match(/secrets\./g) || []).length, 1);
   assert.doesNotMatch(wf, /echo "?\$GH_TOKEN|set -x|--verbose|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|CLOUDFLARE|RICH300_FEED_KEY|continue-on-error/);
