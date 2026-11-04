@@ -46,6 +46,9 @@ function rich300TgPoll() {
   try { var env = rich300TgEnv_(); out = RICH300_ENGINE.tgPoll(env); RICH300_ENGINE.tgGc(env); }
   catch (err) { out = { status: 'exception', quota: /too many times|quota|exceeded|limit/i.test(String(err && err.message || '')) }; }       // 메시지 자체는 저장하지 않고 분류만
   finally { if (lk) lk.releaseLock(); }
+  if (out && (out.handled || out.ignored || out.duplicate || out.retry || out.poison)) {                    // 입력이 있었던 폴링만 개수·종류를 남긴다(사용자 ID·토큰·메시지 본문 없음)
+    props.setProperty('tg:act', JSON.stringify({ at: t0, handled: out.handled | 0, ignored: out.ignored | 0, duplicate: out.duplicate | 0, retry: out.retry | 0, replyFailed: out.replyFailed | 0, actions: out.actions || {}, acks: out.acks || {} }));
+  }
   var ms = Date.now() - t0, st = {}; try { st = JSON.parse(props.getProperty('tg:stats') || '{}'); } catch (err) { st = {}; }
   var gap = st.lastAt ? t0 - st.lastAt : 0;
   props.setProperty('tg:last', JSON.stringify({ at: t0, ms: ms, r: { status: out.status, handled: out.handled, retry: out.retry, code: out.code } }));
