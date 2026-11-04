@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-const wf = readFileSync(new URL('../../.github/workflows/telegram-diag.yml', import.meta.url), 'utf8');
+const raw = readFileSync(new URL('../../.github/workflows/telegram-diag.yml', import.meta.url), 'utf8'), wf = raw.split('\n').filter(l => !/^\s*#/.test(l)).join('\n');   // 주석은 제외하고 실제 명령만 검사
 test('수동 전용·main 만·확인 문구·최소 권한', () => {
   assert.match(wf, /on:\n  workflow_dispatch:/); assert.doesNotMatch(wf, /\n  (push|schedule|pull_request)/);
   assert.match(wf, /github\.ref == 'refs\/heads\/main'/); assert.match(wf, /confirm == 'diag-telegram'/); assert.match(wf, /permissions:\n  contents: read/);
