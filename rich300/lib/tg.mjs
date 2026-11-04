@@ -418,12 +418,12 @@ function tgOnMessage(env, ev) {
 
 // ── 버튼(callback) ──
 function tgOnCallback(env, ev) {
-  const answer = t => tgAnswer(env, ev.cbId, t), parts = ev.data.split(':');
+  const answer = t => { const r = tgAnswer(env, ev.cbId, t); ev.ack = r.ok ? 'ok' : r.code === 'stale-callback' ? 'stale' : 'failed'; return r; }, parts = ev.data.split(':');   // 응답(answerCallbackQuery) 결과를 ok|stale(제한 시간 만료)|failed 로 분리해 둔다(진단용, 값 없음)
   const cb = { chatId: ev.chatId, messageId: ev.messageId, photo: ev.isPhoto === true };
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
-  answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button' };
+  const a = answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button', replyFailed: !tgOkOrBenign(a) };
 }
 function tgOnResponse(env, ev, sid, choice, cb, answer) {
   const se = env.storeEnv();
@@ -435,7 +435,12 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
       sg = storeGet(se, 'signal', sid);
     }
   }
-  if (!sg || sg.void) { answer('알 수 없는 신호입니다'); return { status: 'handled', action: 'unknown-signal' }; }
+  if (!sg || sg.void) {
+    const a = answer('알 수 없는 신호입니다');
+    // 알림(토스트)은 응답 제한 시간이 지나면 사라질 수 있다(1분 폴링). 메시지 자체에도 처리 결과를 남긴다(편집은 시간 제한이 없다). 아무것도 저장하지 않는다.
+    const e = ev.msgText ? tgEdit(env, cb, `${r9StripLine(ev.msgText)}\n→ 수신됨 · 알 수 없는 신호라 기록하지 않음`) : null;
+    return { status: 'handled', action: 'unknown-signal', replyFailed: !tgOkOrBenign(a) || (e !== null && !tgOkOrBenign(e)) };
+  }
   const shown = ev.msgText && r9ParseSignal(ev.msgText) ? r9StripLine(ev.msgText) : tgSignalText(sg.data);
   const r = storeCreate(se, 'response', { sid, choice, at: env.now() }, { actor: 'tg' });
   if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
@@ -497,6 +502,7 @@ export function tgHandleUpdate(env, update) {
   let out;
   try { out = ev.kind === 'callback' ? (ev.chatId === null || ev.messageId === null ? { status: 'ignored', action: 'no-message' } : tgOnCallback(env, ev)) : tgOnMessage(env, ev); }
   catch (e) { if (e instanceof StoreError && e.code === 'LOCK') return { status: 'retry', action: 'lock' }; return { status: 'retry', action: 'error', errorType: e instanceof StoreError ? e.code : 'exception' }; }
+  if (ev.ack) out = { ...out, ack: ev.ack };
   if (out.status === 'ignored') return out;
   try { storeClaimUpdate(se, 'u', ev.updateId, 'tg'); if (ev.cbId) storeClaimUpdate(se, 'cb', ev.cbId, 'tg'); }
   catch (e) { return { status: 'retry', action: e instanceof StoreError && e.code === 'LOCK' ? 'lock' : 'error', errorType: e instanceof StoreError ? e.code : 'exception' }; }   // 기록은 이미 저장됨: 재처리는 sid·fillId 유일키로 같은 결과(중복 없음)
@@ -521,6 +527,7 @@ export function tgPoll(env, { limit = 50, leaseMs = 55000 } = {}) {
         stats.poison++; env.kv.del(key);                                                        // 계속 실패하는 update는 건너뛴다
       } else { stats[x.status === 'handled' ? 'handled' : x.status === 'duplicate' ? 'duplicate' : 'ignored']++; if (x.action) stats.actions[x.action] = ((stats.actions[x.action] != null ? stats.actions[x.action] : 0)) + 1; }
       if (x.replyFailed) stats.replyFailed++;
+      if (x.ack) { stats.acks = stats.acks || {}; stats.acks[x.ack] = (stats.acks[x.ack] || 0) + 1; }      // 버튼 응답 결과(ok|stale|failed) 집계 — 입력이 없으면 키 자체가 없다(기존 결과 모양 유지)
       tgKvPut(env, 'offset', u.update_id + 1);
     }
     return stats;

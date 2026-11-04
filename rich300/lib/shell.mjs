@@ -64,12 +64,19 @@ export function shellRenderWatch({ state, result = null, net = null, ran = false
   const netUrl = shellUrl(appUrl, 'watch&net=1'), links = (runUrl ? `<a class="cta" target="_top" href="${dashEsc(runUrl)}">미리보기 실행(전송 없음)</a> ` : '') + (netUrl ? `<a class="cta" target="_top" href="${dashEsc(netUrl)}">시세 연결 점검</a>` : '');
   return shellPage('RICH300 감시 점검', `<header><h1>RICH 300 · 감시 점검</h1></header>${dashNav('', appUrl)}${body}<section class="card"><div class="sub">빌드 ${dashEsc(build)} · 이 화면은 텔레그램을 보내지 않고 트리거를 만들지 않으며 감시 설정을 바꾸지 않습니다. 미리보기는 거래소 공개 시세를 읽기만 합니다.</div>${links}</section>`);
 }
+// 마지막으로 *입력이 있었던* 폴링의 요약(개수·종류만). 수신(처리/무시)과 응답(answerCallbackQuery) 성공·만료·실패를 나눠 보여 준다. 사용자 ID·토큰·메시지 본문은 없다.
+const SHELL_ACT_NAMES = { unpaired: '페어링 불일치(무시됨)', 'unknown-signal': '알 수 없는 신호(기록 없음)', 'response-saved': '응답 저장', 'response-duplicate': '응답 중복', 'unknown-button': '알 수 없는 버튼', 'already-processed': '이미 처리됨', unparsable: '해석 불가', 'no-message': '메시지 없음' };
+export function shellActLine(a) {
+  if (!a) return '마지막 입력 처리: 기록 없음';
+  const acts = Object.entries(a.actions || {}).map(([k, v]) => `${SHELL_ACT_NAMES[k] || '기타'} ${v}`).join(', ') || '없음', k = a.acks || {};
+  return `마지막 입력 처리: ${a.ageMin}분 전 · 처리 ${a.handled || 0} · 무시 ${a.ignored || 0} · 재시도 ${a.retry || 0} · 종류 ${acts} · 버튼 응답 성공 ${k.ok || 0} / 만료 ${k.stale || 0} / 실패 ${k.failed || 0} · 메시지 응답 실패 ${a.replyFailed || 0}`;
+}
 // RICH300 전용 Telegram 연결 준비·진단(?p=tg): d = rich300TgDiagState_() 결과(존재 여부·코드만). 토큰·채팅 ID·봇 이름은 어디에도 표시하지 않는다(토큰은 입력창에서 서버로만 가며 화면에 되돌려 주지 않는다).
 export function shellRenderTgDiag({ d, check = null, nonce = null, pairCode = null, appUrl = '', build = 'dev' } = {}) {
   const li = t => `<li>${dashEsc(t)}</li>`, test = d.test || null, selfUrl = shellUrl(appUrl, 'tg');
   const stateText = !test ? '아직 보낸 적 없음' : { pending: '전송 중이었는데 결과를 기록하지 못함(상태 불명)', sent: '전송 API 성공 — 수신 확인 대기', failed: `전송 실패(${test.code || 'error'})`, acked: '전송 API 성공 + 사용자가 수신 확인함', unacked: '전송했으나 사용자가 못 받았다고 표시' }[test.state];
   const rows = [`환경: ${d.env || '미설정'}`, `봇 토큰 속성: ${d.tokenSet ? '있음' : '없음'}`, `운영 승인(RICH300_PROD_APPROVED): ${d.prodApproved ? '있음' : '없음'} — 감시·폴링·버튼 알림은 이것이 있어야 전송됩니다`, `테스트 전송 허용(RICH300_TG_TEST_OK): ${d.testAllow ? '허용됨' : '꺼짐'} — 읽기 점검·페어링 확인 1회·테스트 메시지 1건만 허용(그 밖은 계속 차단)`,
-    `메시지 전송 가드(일반): ${d.gateSend ? `막힘(${d.gateSend})` : '통과'}`, `테스트 메시지 가드: ${d.gateTestSend ? `막힘(${d.gateTestSend})` : '통과'}`, `수신 계정 연결(페어링): ${d.paired ? '됨' : '안 됨'}${d.pairingActive ? ' · 페어링 코드 대기 중' : ''}`, `수신 폴링 트리거: ${d.pollTriggers ? d.pollTriggers + '개' : '없음'}`, d.lastPoll ? `마지막 폴링: ${d.lastPoll.ageMin}분 전 · ${d.lastPoll.status}` : '마지막 폴링: 기록 없음', `테스트 메시지: ${stateText}`];
+    `메시지 전송 가드(일반): ${d.gateSend ? `막힘(${d.gateSend})` : '통과'}`, `테스트 메시지 가드: ${d.gateTestSend ? `막힘(${d.gateTestSend})` : '통과'}`, `수신 계정 연결(페어링): ${d.paired ? '됨' : '안 됨'}${d.pairingActive ? ' · 페어링 코드 대기 중' : ''}`, `수신 폴링 트리거: ${d.pollTriggers ? d.pollTriggers + '개' : '없음'}`, d.lastPoll ? `마지막 폴링: ${d.lastPoll.ageMin}분 전 · ${d.lastPoll.status}` : '마지막 폴링: 기록 없음', shellActLine(d.lastAct), `테스트 메시지: ${stateText}`];
   let body = `<section class="card"><div class="k">Telegram 연결 상태 (값 비노출)</div><ul class="warn" style="list-style:none;padding:0">${rows.map(li).join('')}</ul></section>`;
   if (check) body += `<section class="card"><div class="k">Telegram 읽기 점검 (getMe·getWebhookInfo 두 호출만 · 메시지 없음)</div><ul class="warn" style="list-style:none;padding:0">${(check.items || []).map(li).join('')}</ul></section>`;
   const canTest = !!nonce && !d.gateTestSend && d.paired && d.tokenSet && (!test || test.state === 'failed' || test.state === 'unacked'), waitingAck = !!test && (test.state === 'sent' || test.state === 'pending');

@@ -16,10 +16,11 @@ function rich300TgDiagState_() {
   try { paired = !!RICH300_ENGINE.tgPairedUser(rich300TgEnv_()); } catch (err) { paired = false; }
   try { pairingActive = !paired && rich300TgEnv_().kv.get('pair') !== null; } catch (err) { pairingActive = false; }
   try { var l = JSON.parse(props.getProperty('tg:last') || 'null'); if (l) lastPoll = { ageMin: Math.round((Date.now() - l.at) / 60000), status: l.r && l.r.status }; } catch (err) { lastPoll = null; }
+  var lastAct = null; try { var a = JSON.parse(props.getProperty('tg:act') || 'null'); if (a) lastAct = { ageMin: Math.round((Date.now() - a.at) / 60000), handled: a.handled, ignored: a.ignored, retry: a.retry, replyFailed: a.replyFailed, actions: a.actions || {}, acks: a.acks || {} }; } catch (err) { lastAct = null; }
   var t = rich300TgTestRead_(), tl = null; try { var r = JSON.parse(props.getProperty('tgdiag:tokenlast') || 'null'); if (r) tl = { ageMin: Math.round((Date.now() - r.at) / 60000), code: r.code, d: r.d }; } catch (err) { tl = null; }
   return { env: props.getProperty('RICH300_ENV') || null, tokenLast: tl, tokenSet: !!props.getProperty('RICH300_TG_TOKEN'), prodApproved: props.getProperty('RICH300_PROD_APPROVED') === 'yes', testAllow: props.getProperty('RICH300_TG_TEST_OK') === 'yes',
     gateSend: rich300TgGateFor_('sendMessage', ''), gateTestSend: rich300TgGateFor_('sendMessage', 'test-send'), gateRead: rich300TgGateFor_('getMe', ''), gatePair: rich300TgGateFor_('getUpdates', 'pair-poll'), paired: paired, pairingActive: pairingActive,
-    pollTriggers: ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300TgPoll'; }).length, lastPoll: lastPoll, test: t ? { state: t.state, code: t.code || null, at: t.at, tries: t.tries || 0 } : null };
+    pollTriggers: ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300TgPoll'; }).length, lastPoll: lastPoll, lastAct: lastAct, test: t ? { state: t.state, code: t.code || null, at: t.at, tries: t.tries || 0 } : null };
 }
 function rich300PageTg_(e) {
   var p = (e && e.parameter) || {}, d = rich300TgDiagState_(), check = null, nonce = null;
