@@ -29,6 +29,12 @@ test('읽기 검증: 인증 실패를 (unset)으로 오인하지 않는다(목�
   assert.match(wf, /actions\/variables" --jq '\.total_count'/); assert.match(wf, /grep -q "HTTP 404"/); assert.match(wf, /404 가 아닌 오류[\s\S]{0,160}exit 1/);
   assert.doesNotMatch(wf, /2>\/dev\/null/);
 });
+test('YAML 불리언 함정: value 옵션과 기본값이 따옴표 문자열이고, 파싱하면 문자열 on/off/preview 로 남는다', () => {
+  assert.match(wf, /options: \['off', 'on', 'preview'\]/); assert.match(wf, /default: 'off'/);
+  assert.doesNotMatch(wf, /options: \[off, on, preview\]/);
+  const py = execFileSync('python3', ['-c', "import yaml,sys,json;d=yaml.safe_load(open(sys.argv[1]));i=d[True]['workflow_dispatch']['inputs']['value'];print(json.dumps([i['options'],i['default']]))", new URL('../../.github/workflows/set-variable.yml', import.meta.url).pathname]).toString();
+  assert.deepEqual(JSON.parse(py), [['off', 'on', 'preview'], 'off']);
+});
 test('워크플로: Secret 은 환경변수로만, 출력·디버그 없음, 다른 Secret·Telegram·Cloudflare 미접촉', () => {
   assert.match(wf, /GH_TOKEN: \$\{\{ secrets\.RADAR_VARS_PAT \}\}/); assert.equal((wf.match(/secrets\./g) || []).length, 1);
   assert.doesNotMatch(wf, /echo "?\$GH_TOKEN|set -x|--verbose|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|CLOUDFLARE|RICH300_FEED_KEY|continue-on-error/);

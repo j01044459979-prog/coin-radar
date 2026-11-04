@@ -22,8 +22,8 @@ on:
         description: 'set 일 때만 사용: on | off | preview (FIB 는 on 금지)'
         required: false
         type: choice
-        options: [off, on, preview]
-        default: off
+        options: ['off', 'on', 'preview']   # 따옴표 필수: YAML 1.1 에서 on/off 는 불리언(true/false)으로 해석된다
+        default: 'off'
       confirm:
         description: 'set 일 때만: set-variable 을 입력'
         required: false
