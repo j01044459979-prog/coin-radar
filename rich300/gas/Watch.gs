@@ -71,6 +71,7 @@ function rich300WatchCanSend_() {
 function rich300WatchTick() {
   var out = rich300WatchRun_(rich300WatchMode_());                                    // 실제 보유 포지션 감시(기존 동작 그대로)
   try { var sm = rich300StrategyMode_(); if (sm !== 'off') rich300StrategyRun_(sm); } catch (err) { /* 전략 추적 실패가 위치 감시를 막지 않는다 */ }      // 추천 전략 자동 추적(별도 설정·별도 상태)
+  try { var fm = rich300FollowMode_(); if (fm !== 'off') rich300FollowRun_(fm); } catch (err) { /* 1시간 후속 보고 실패가 기존 감시/전략 추적에 영향을 주지 않음 */ }
   return out;
 }
 /** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관, 어떤 속성도 쓰지 않는다). */
