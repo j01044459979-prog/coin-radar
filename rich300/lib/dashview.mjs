@@ -41,7 +41,7 @@ nav.tabs a{flex:1 1 0;max-width:260px;border-radius:12px;min-height:48px;font-si
 .focus-brand{letter-spacing:-.4px;font-size:23px;font-weight:750}
 .focus-eyebrow{font-size:12px;color:var(--mute)}
 .focus-panel{margin-top:14px}.focus-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.focus-primary{font-size:38px;font-weight:750;letter-spacing:-1px;line-height:1.17;word-break:break-word}
+.focus-primary{font-size:42px;font-weight:750;letter-spacing:-1px;line-height:1.17;word-break:break-word}
 .focus-unit{font-size:16px;color:var(--mute);font-weight:500}
 .focus-label{font-size:13px;color:var(--mute)}
 .focus-sub{font-size:12px;color:var(--mute);margin-top:7px}
