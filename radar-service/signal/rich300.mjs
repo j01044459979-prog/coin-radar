@@ -1,6 +1,6 @@
-// RICH 300 연동(R9): 진입 후보 메시지에 [진입했어][관망했어][놓쳤어] 버튼과 고유 ID·기계가 읽는 한 줄을 붙인다.
+// RICH 300 연동(R9): 진입 후보 메시지에 [진입했어][안 했어] 버튼과 고유 ID·기계가 읽는 한 줄을 붙인다.
 //  · 기능 플래그 RADAR_RICH300_BUTTONS = on 일 때만 동작(기본 off → 기존 메시지·전송 경로는 한 글자도 바뀌지 않는다).
-//  · 버튼의 callback_data 는 'r1:<고유ID>:e|w|m'. 같은 봇의 수신 함수를 폴링하는 RICH 300 앱(Apps Script)이 처리한다. radar 는 수신을 하지 않는다.
+//  · 버튼의 callback_data 는 'r1:<고유ID>:e|w'. 같은 봇의 수신 함수를 폴링하는 RICH 300 앱(Apps Script)이 처리한다. radar 는 수신을 하지 않는다.
 //  · 신호 상세(코인·방향·진입가·손절·목표·시각·점수)는 메시지 본문의 'R9 v1 …' 한 줄에 담긴다. 앱은 버튼을 누른 메시지에서 이 줄을 읽어 신호를 저장한다(radar → 앱 별도 통신·Secret 없음).
 //  · 주문 기능 없음. 버튼은 기록용이다.
 import { escHtml } from '../format.mjs';
@@ -19,7 +19,7 @@ export function r9Line(symbol, ev, { strategy = R9_STRATEGY, sid = r9Sid(symbol,
   const score = Number.isFinite(ev.score) ? String(Math.max(0, Math.min(100, Math.round(ev.score)))) : '-';
   return `R9 v1 ${sid} ${symbol} ${ev.dir} ${f.join(' ')} ${strategy} ${score} ${Math.round(ev.triggerT)}`;
 }
-export const r9Keyboard = sid => ({ inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '관망했어', callback_data: `r1:${sid}:w` }, { text: '놓쳤어', callback_data: `r1:${sid}:m` }]] });
+export const r9Keyboard = sid => ({ inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '안 했어', callback_data: `r1:${sid}:w` }]] });
 
 // 본문(HTML)·사진 설명(일반 텍스트) 뒤에 붙일 꼬리. 줄을 만들 수 없으면 null(그 메시지는 기존 모습 그대로 나간다).
 export function r9Tail(symbol, ev, opts) {
