@@ -26,9 +26,11 @@ function world({ price = { SOLUSDT: 150 }, known = ['SOLUSDT', 'ETHUSDT'] } = {}
 const FORM = { formId: 'abc123', symbol: 'sol', dir: 'LONG', entry: '140', qty: '2', leverage: '3', stop: '135', tp1: '148', tp2: '155', at: '' };
 const snapshot = g => JSON.stringify(g.P.getKeys().sort().map(k => [k, g.P.getProperty(k)]));
 
+const navLabels = html => [...(/<nav class="tabs".*?<\/nav>/s.exec(html) || [''])[0].matchAll(/>([^<>]+)<\/a>/g)].map(m => m[1]);
+
 test('?p=pos: 소유자만 · 메뉴에 "포지션" · 등록 폼과 빈 목록 · 시세 호출 0 · 텔레그램 0 · 트리거 0', () => {
   const w = world(); const trig = w.g.spy.triggers.length, h = w.g.ctx.doGet({ parameter: { p: 'pos' } }).html, t = strip(h);
-  assert.match(t, /포지션 등록/); assert.match(t, /등록된 보유 포지션이 없습니다/); assert.match(h, /id="go"/); assert.match(h, /data-sym="BTC"/); assert.match(h, /aria-current="page">포지션</);
+  assert.match(t, /포지션 등록/); assert.match(t, /등록된 보유 포지션이 없습니다/); assert.match(h, /id="go"/); assert.match(h, /data-sym="BTC"/); assert.deepEqual(navLabels(h), ['홈', '매매일지']); assert.ok(!/aria-current="page">/.test(h));
   assert.equal(w.hits.length, 0); assert.equal(w.g.tele.sent.length, 0); assert.equal(w.g.spy.triggers.length, trig);
   assert.match(loadProd({ email: 'other@example.com' }).ctx.doGet({ parameter: { p: 'pos' } }).html, /접근 제한/);
 });

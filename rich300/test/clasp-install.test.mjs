@@ -182,8 +182,11 @@ test('clasp 선택: PATH 의 clasp 3.x 를 우선 쓰고, 없으면 3.4.1 로 �
   const w = setup(), bindir = `${w.root}/bin`; mkdirSync(bindir); writeFileSync(`${bindir}/clasp`, FAKE, { mode: 0o755 });
   const base = { RICH300_CLASP: '' }, chk = (env, re) => { const x = run(w, { env: { ...base, ...env, RICH300_CONFIRM: 'ZZZZZZ' } }); assert.match(x.out, re, x.out); };
   chk({ PATH: `${bindir}:${process.env.PATH}` }, /\(clasp: clasp\)/);
-  chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':') }, /\(clasp: npx -y @google\/clasp@3\.4\.1\)/);
-  chk({ PATH: process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`)).join(':'), RICH300_CLASP_VERSION: '3.4.0' }, /clasp@3\.4\.0/);
+  // npx 는 가짜로 대체한다: 실제 npx 는 레지스트리에서 패키지를 내려받느라 수 분이 걸릴 수 있고(네트워크 의존), 이 시험은 '어떤 명령을 고르는가'만 본다. 가짜 npx 는 즉시 비정상 종료한다
+  const npxbin = `${w.root}/npxbin`; mkdirSync(npxbin); writeFileSync(`${npxbin}/npx`, '#!/usr/bin/env bash\nexit 9\n', { mode: 0o755 });
+  const noClasp = `${npxbin}:${process.env.PATH.split(':').filter(d => !existsSync(`${d}/clasp`) && !existsSync(`${d}/npx`)).join(':')}`;
+  chk({ PATH: noClasp }, /\(clasp: npx -y @google\/clasp@3\.4\.1\)/);
+  chk({ PATH: noClasp, RICH300_CLASP_VERSION: '3.4.0' }, /clasp@3\.4\.0/);
   assert.ok(!/clasp@3\.3\.0/.test(readFileSync(SCRIPT, 'utf8').replace(/^#.*$/gm, '')));
 });
 test('Apps Script 호환 검사: 설치 파일에 최신 문법(10n 등)이 있으면 로그인 전에 중단 — push 하면 Syntax error: ParseError 로 실패할 파일을 미리 막는다', () => {

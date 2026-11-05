@@ -68,8 +68,8 @@ test('위치 감시와 같은 트리거 공유: 전략 추적 실패가 위치 �
   const w = world(); w.g.P.setProperty('RICH300_STRATEGY', 'on'); const real = w.g.ctx.rich300StrategyRun_; w.g.ctx.rich300StrategyRun_ = () => { throw new Error('boom'); };
   assert.deepEqual(j(w.g.ctx.rich300WatchTick()), { status: 'off' }); w.g.ctx.rich300StrategyRun_ = real; w.at(5); assert.equal(w.g.rows('strategy').length, 1);
 });
-test('?p=strat: 소유자만 · 기본 화면(주소만 열면) · 열기만 해서는 아무것도 바꾸지 않는다(피드·시세·텔레그램·속성 0)', () => {
-  const w = world(); const before = snap(w.g); const h = w.g.ctx.doGet({ parameter: {} }).html, t = strip(h); assert.match(t, /추천 전략/); assert.match(t, /신규 추천 전략 \(0\)/); assert.match(t, /진입 대기 전략 \(0\)/); assert.match(t, /자동 추적 중인 전략 \(0\)/); assert.match(t, /종료 전략 및 성과 \(0\)/); assert.match(t, /실제 보유 포지션 \(선택 기능\)/);
+test('?p=strat: 소유자만 · 전략 화면은 명시 경로(주소만 열면 홈) · 열기만 해서는 아무것도 바꾸지 않는다(피드·시세·텔레그램·속성 0)', () => {
+  const w = world(); const before = snap(w.g); assert.match(strip(w.g.ctx.doGet({ parameter: {} }).html), /오늘 복리 목표/); assert.ok(!/신규 추천 전략/.test(strip(w.g.ctx.doGet({ parameter: {} }).html))); const h = w.g.ctx.doGet({ parameter: { p: 'strat' } }).html, t = strip(h); assert.match(t, /추천 전략/); assert.match(t, /신규 추천 전략 \(0\)/); assert.match(t, /진입 대기 전략 \(0\)/); assert.match(t, /자동 추적 중인 전략 \(0\)/); assert.match(t, /종료 전략 및 성과 \(0\)/); assert.match(t, /실제 보유 포지션 \(선택 기능\)/);
   assert.match(t, /꺼짐\(자동 추적 안 함\)/); assert.deepEqual(snap(w.g), before); assert.equal(w.hits.length, 0); assert.equal(w.g.spy.feedHits.length, 0); assert.equal(w.g.tele.sent.length, 0); assert.match(loadProd({ email: 'other@example.com' }).ctx.doGet({ parameter: { p: 'strat' } }).html, /접근 제한/);
 });
 

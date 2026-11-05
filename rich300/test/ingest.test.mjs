@@ -118,7 +118,7 @@ test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명
   const get = (a, p) => { const o = a.ctx.doGet({ parameter: { p } }); return o.text !== undefined ? o.text : o.html; }, DENIED = /접근 제한/;
   const owner = loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'Me@Example.com' }, email: 'me@example.com', extra: PAGE });
   assert.equal(get(owner, 'fill'), 'FILL-PAGE'); assert.equal(get(owner, 'dash'), 'DASH-PAGE');
-  for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'STRAT-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'STRAT-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'STRAT-PAGE');         // 빈 화면 대신 메인
+  assert.equal(get(owner, 'strat'), 'STRAT-PAGE'); for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'DASH-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'DASH-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'DASH-PAGE');         // 빈 화면 대신 메인(홈). 전략 화면은 ?p=strat 로 별도 접근
   for (const email of ['', 'other@example.com', 'me@example.com.evil.io']) assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email, extra: PAGE }), 'dash'), DENIED, email || '(익명)');
   assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY }, email: 'me@example.com', extra: PAGE }), 'dash'), DENIED);                     // 소유자 이메일 미설정 → 닫힘(접근 안내)
   assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email: 'me@example.com' }), 'dash'), /오류 코드|다시 시도/); // 페이지 함수 없음 → 빈 응답이 아니라 오류 화면(재시도 버튼)

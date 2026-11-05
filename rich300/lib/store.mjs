@@ -52,8 +52,8 @@ function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아
   return m;
 }
 export const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key), null);
-export function storeList(env, entityName, { includeVoid = false } = {}) {
-  const out = [...storeLatestMap(env, entityName, storeReadAuditTail(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+export function storeList(env, entityName, { includeVoid = false, audit } = {}) {      // audit: 같은 요청에서 이미 읽은 Audit 끝부분(여러 목록을 읽을 때 매번 다시 읽지 않는다)
+  const out = [...storeLatestMap(env, entityName, audit || storeReadAuditTail(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return includeVoid ? out : out.filter(r => !r.void);
 }
 export function storeHistory(env, entityName, key) {
@@ -180,12 +180,12 @@ export function storeRepair(env) {
 }
 
 // ── R2 계산 엔진 연결 ──
-export function storeLoadLedgerInputs(env) {
-  const ch = storeGet(env, 'challenge', 'challenge');
+export function storeLoadLedgerInputs(env, { audit = storeReadAuditTail(env) } = {}) {
+  const ch = nullishOr(storeLatestMap(env, 'challenge', audit).get('challenge'), null);
   if (!ch || ch.void) throw new StoreError('NOT_FOUND', '챌린지 설정 없음(storeSetupChallenge 필요)');
-  const schedule = storeList(env, 'rate').map(r => ({ from: r.data.from, rate: r.data.rate })).sort((a, b) => (a.from < b.from ? -1 : 1));
+  const schedule = storeList(env, 'rate', { audit }).map(r => ({ from: r.data.from, rate: r.data.rate })).sort((a, b) => (a.from < b.from ? -1 : 1));
   if (!schedule.length || schedule[0].from > ch.data.startDay) throw new StoreError('INTEGRITY', '시작일 이전부터 적용되는 목표율 일정이 없음');
-  const d = n => storeList(env, n).map(r => r.data);
+  const d = n => storeList(env, n, { audit }).map(r => r.data);
   return { challenge: { startEquity: ch.data.startEquity, startDay: ch.data.startDay, rateSchedule: schedule }, fills: d('fill'), cashflows: d('cashflow'), adjustments: d('adjustment'), openingPositions: d('opening'),
     equityInputs: d('equity').map(e => ({ day: e.day, equity: e.equity, unrealized: e.unrealized, late: e.late })) };
 }

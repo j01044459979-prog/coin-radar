@@ -27,6 +27,8 @@ function world() {
 }
 const text = html => html.replace(/<style>[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ');
 
+const navLabels = html => [...(/<nav class="tabs".*?<\/nav>/s.exec(html) || [''])[0].matchAll(/>([^<>]+)<\/a>/g)].map(m => m[1]);
+
 test('추천 기록: 신호별 응답(진입/관망/놓침/미응답)·전략·점수·추천가, 실제 매매 여부와 결과를 분리해 보여 준다', () => {
   const { env } = world(), m = siglogBuild(env, {});
   assert.equal(m.total, 5); assert.deepEqual(m.counts, { entered: 2, watched: 1, missed: 1, none: 1 }); assert.equal(m.tradedCount, 1); assert.equal(m.enteredNoFill, 1);
@@ -40,7 +42,7 @@ test('추천 기록 필터와 화면: 응답별 보기, 실제 매매 없음 문
   const { env } = world(); const m = siglogBuild(env, { filter: 'entered' }); assert.deepEqual(m.rows.map(r => r.sid).sort(), ['SG-BTC-L-1', 'SG-DOGE-L-5']); assert.equal(siglogBuild(env, { filter: '<script>' }).filter, 'all');
   const t = text(siglogRenderHtml(siglogBuild(env, {}), { appUrl: 'https://script.google.com/macros/s/X/exec' }));
   assert.match(t, /추천 신호 5 건/); assert.match(t, /실제 매매 없음\(손익에 포함되지 않음\)/); assert.match(t, /체결 기록이 아직 없습니다/); assert.match(t, /실제 진입가 101/); assert.match(t, /72점/); assert.match(t, /전체 5 진입 2 관망 1 놓침 1 미응답 1/);
-  const html = siglogRenderHtml(siglogBuild(env, {}), { appUrl: 'https://script.google.com/macros/s/X/exec' }); assert.match(html, /p=signals&amp;r=entered/); assert.match(html, /aria-current="page">추천/); assert.ok(!/<script/.test(html));
+  const html = siglogRenderHtml(siglogBuild(env, {}), { appUrl: 'https://script.google.com/macros/s/X/exec' }); assert.match(html, /p=signals&amp;r=entered/); assert.deepEqual(navLabels(html), ['홈', '매매일지']); assert.ok(!/<script/.test(html));
   assert.match(siglogRenderError(), /불러오지 못했습니다/);
 });
 test('추천 기록은 읽기 전용이고 모의 손익을 만들지 않는다(체결 없으면 손익 없음)', () => {
@@ -63,5 +65,5 @@ test('전략별 성적: 신호 레이더(S) 신호만 있으면 S 한 칸, A/B �
 });
 test('자산 탭: 평가액 입력·입출금·마감 기록이 있고 통계·일지는 없다', () => {
   const { env } = world(), html = journalRenderHtml(journalBuild(env, {}), { appUrl: 'https://script.google.com/macros/s/X/exec', tab: 'assets' });
-  for (const w of ['실제 계좌 평가액 입력', '입출금 기록', '일 마감 (매일 00:00 KST)']) assert.ok(html.includes(w), w); assert.ok(!html.includes('Profit factor') && !html.includes('10초 복기 분석')); assert.match(html, /aria-current="page">자산/);
+  for (const w of ['실제 계좌 평가액 입력', '입출금 기록', '일 마감 (매일 00:00 KST)']) assert.ok(html.includes(w), w); assert.ok(!html.includes('Profit factor') && !html.includes('10초 복기 분석')); assert.deepEqual(navLabels(html), ['홈', '매매일지']);
 });

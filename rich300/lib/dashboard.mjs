@@ -8,7 +8,7 @@ import { dec, decMul, decFormat, decRoundDiv, decToMicro } from './decimal.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
 import { kstDayOf, dayStartMs, addDays } from './time.mjs';
 import { StoreError } from './schema.mjs';
-import { storeLoadLedgerInputs, storeList } from './store.mjs';
+import { storeLoadLedgerInputs, storeList, storeReadAuditTail } from './store.mjs';
 
 
 const dashGroup = s => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -86,19 +86,19 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
 
 // 저장소에서 읽어 만든다. 챌린지 설정이 없으면 샘플로 대체하지 않고 설정 전 상태를 돌려 준다(설정이 있는데 오류가 나면 던진다).
 export function dashBuildFromStore(env, { now }) {
-  let inputs;
-  try { inputs = storeLoadLedgerInputs(env); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
+  let inputs; const audit = storeReadAuditTail(env);
+  try { inputs = storeLoadLedgerInputs(env, { audit }); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
   const model = dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
   {
-    const signals = new Map(storeList(env, 'signal').map(r => [r.data.sid, r.data]));
-    const reviews = new Set(storeList(env, 'review').map(r => r.data.sid));
+    const signals = new Map(storeList(env, 'signal', { audit }).map(r => [r.data.sid, r.data]));
+    const reviews = new Set(storeList(env, 'review', { audit }).map(r => r.data.sid));
     for (const tr of model.recentTrades) {
       const sig = signals.get(tr.sid);
       tr.symbol = sig && typeof sig.symbolId === 'string' ? sig.symbolId.replace(/USDT$/, '') : null;
       tr.reviewed = reviews.has(tr.sid);
     }
-    const filled = new Set(storeList(env, 'fill').map(r => r.data.sid));
-    const responses = storeList(env, 'response').map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
+    const filled = new Set(inputs.fills.map(f => f.sid));            // 이미 읽은 체결을 재사용(시트 재조회 없음)
+    const responses = storeList(env, 'response', { audit }).map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
     const pending = responses.map(r => {
       const sig = signals.get(r.sid);
       return { sid: r.sid, symbol: sig && sig.symbolId ? sig.symbolId.replace(/USDT$/, '') : r.sid,

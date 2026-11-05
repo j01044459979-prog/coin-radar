@@ -58,7 +58,7 @@ nav.tabs a{flex:1 1 0;max-width:260px;border-radius:12px;min-height:48px;font-si
 .focus-trade{border-bottom:1px solid var(--line);padding:11px 0}
 .focus-trade:last-child{border-bottom:0}
 .focus-cta{display:block;text-align:center;min-height:44px;margin-top:12px;padding:11px 12px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:700}
-.focus-secondary{display:block;text-align:center;margin:10px 0;color:var(--ink2);font-size:13px;text-decoration:underline}
+.focus-secondary{display:flex;align-items:center;justify-content:center;min-height:44px;margin:4px 0;padding:0 12px;color:var(--ink2);font-size:13px;text-decoration:underline}
 .focus-collapse{margin:14px 0}.focus-collapse summary{cursor:pointer;font-weight:650;min-height:44px;padding:12px}
 .focus-collapse .card{margin-top:4px}
 .focus-note{font-size:12px;line-height:1.5;color:var(--mute)}

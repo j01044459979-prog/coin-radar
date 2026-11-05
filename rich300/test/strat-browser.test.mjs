@@ -19,7 +19,7 @@ test('구역 5개와 상태·성과 표시: 신규/대기/추적/종료/실제 �
   assert.match(t, /▼ −3\.20 USDT/); assert.match(t, /▲ \+6\.40 USDT/); assert.ok((t.match(/전략 기준 가상 추적 · 실제 체결 아님/g) || []).length >= 4); assert.deepEqual(errs, []);
   const hrefs = await p.$$eval('a', as => as.map(a => a.getAttribute('href'))); assert.ok(hrefs.some(h => /p=pos$/.test(h)) && hrefs.some(h => /p=journal$/.test(h)) && hrefs.some(h => /p=ops$/.test(h)));
 }));
-test('모바일 폭 320/390: 가로 넘침 없음 · 메뉴 첫 탭이 전략', skip, async () => { for (const w of [320, 390]) await withPage(async (p) => {
-  const r = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, first: document.querySelector('nav.tabs a').textContent, cur: document.querySelector('nav.tabs a[aria-current]').textContent })); assert.ok(r.sw <= r.cw, `넘침 ${r.sw}>${r.cw}`); assert.deepEqual([r.first, r.cur], ['전략', '전략']);
+test('모바일 폭 320/390: 가로 넘침 없음 · 메뉴는 홈·매매일지 두 개뿐(전략 화면은 메뉴에 없음)', skip, async () => { for (const w of [320, 390]) await withPage(async (p) => {
+  const r = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, items: [...document.querySelectorAll('nav.tabs a')].map(a => a.textContent), cur: document.querySelector('nav.tabs a[aria-current]') })); assert.ok(r.sw <= r.cw, `넘침 ${r.sw}>${r.cw}`); assert.deepEqual(r.items, ['홈', '매매일지']); assert.equal(r.cur, null);
 }, w); });
 test('빈 상태·꺼짐: 안내 문구만 · 오류 없음', skip, () => withPage(async (p, errs) => { const t = await p.textContent('main'); assert.match(t, /신규 추천 전략 \(0\)/); assert.match(t, /꺼짐\(자동 추적 안 함\)/); assert.match(t, /아직 종료된 전략이 없습니다/); assert.deepEqual(errs, []); }, 390, { rows: [], now: NOW, mode: 'off' }));

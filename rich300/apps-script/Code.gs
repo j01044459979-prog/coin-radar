@@ -654,18 +654,37 @@ function dashBuildModel({ inputs, throughDay, now, sample = false }) {
       returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === BigInt(0) ? null : dashUsd(curCash, { sign: true }) };
   } else model.current = null;
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
-  const rem = cur ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
+  // 오늘 입력이 없으면 과거 평가액으로 오늘 목표 달성률·남은 금액을 계산하지 않는다.
+  const rem = todayInput ? dashZeroFloor(t.targetProfitMicro - t.pnlMicro) : null, met = todayInput ? t.pnlMicro >= t.targetProfitMicro : null;
+  const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv(t.pnlMicro * BigInt(1000000), t.targetProfitMicro) : null;
+  const progress = progressPpm === null ? null : Math.max(0, Math.min(100, Number(progressPpm) / 10000));
   const real = t.realizedNetMicro;
-  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
+  const previous = rows.length > 1 ? rows[rows.length - 2] : null, startConfirmed = previous === null || previous.closeSource === 'input';
+  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }), startRemainingLabel: dashUsd(t.targetProfitMicro), startConfirmed, todayPnlLabel: todayInput ? dashUsd(t.pnlMicro, { sign: true }) : null,
     realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
-    needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions };
+    needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions, progress, progressLabel: progressPpm === null ? null : dashPct(progressPpm) };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
-  model.daily = rows.slice(-DASH_DAILY_LIMIT).reverse().map(r => {
+  let cashRunning = BigInt(0);
+  const plottingRows = rows.map(r => { cashRunning += r.cashflowMicro; return { r, adjusted: r.closeMicro - cashRunning }; });
+  model.daily = plottingRows.slice(-DASH_DAILY_LIMIT).reverse().map(({ r, adjusted }) => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
     return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > BigInt(0), pnlNegative: p < BigInt(0), pnlBasis: input ? 'equity' : 'realized',
-      targetLabel: dashUsd(r.targetCloseMicro), met: input && r.closeMicro >= r.targetCloseMicro, review: r.needsReview };
+      targetLabel: dashUsd(r.targetCloseMicro), idealMicro: String(r.idealMicro), actualMicro: input ? String(adjusted) : null, met: input && r.pnlMicro >= r.targetProfitMicro, review: r.needsReview };
   });
   model.dailyTotal = rows.length;
+  model.idealTodayLabel = dashUsd(t.idealMicro);
+  model.idealGapLabel = todayInput ? dashUsd(dashZeroFloor(t.idealMicro - (t.closeMicro - cashRunning))) : null;
+  // 장부의 실제 체결만 최근 3건으로 요약. 신호 버튼/가상 전략은 여기에 넣지 않는다.
+  model.recentTrades = [...led.trades.values()].sort((a, b) => {
+    const at = t => t.events.length ? t.events[t.events.length - 1].at : 0;
+    return at(b) - at(a);
+  }).slice(0, 3).map(tr => ({
+    sid: tr.sid, symbol: null, dir: tr.dir, status: tr.status,
+    at: tr.events.length ? tr.events[tr.events.length - 1].at : null,
+    netLabel: dashUsd(tr.totals.netEnteredMicro, { sign: true }),
+    pnlPositive: tr.totals.netEnteredMicro > BigInt(0), pnlNegative: tr.totals.netEnteredMicro < BigInt(0),
+    reviewed: false
+  }));
   // ── 데이터 품질 경고(숨기지 않음) ──
   const w = [], cnt = f => rows.filter(r => r.flags.includes(f)).length;
   if (cnt('ledger-mismatch')) w.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${cnt('ledger-mismatch')}일(확인 필요, 자동으로 손익에 반영하지 않음)` });
@@ -677,9 +696,28 @@ function dashBuildModel({ inputs, throughDay, now, sample = false }) {
 
 // 저장소에서 읽어 만든다. 챌린지 설정이 없으면 샘플로 대체하지 않고 설정 전 상태를 돌려 준다(설정이 있는데 오류가 나면 던진다).
 function dashBuildFromStore(env, { now }) {
-  let inputs;
-  try { inputs = storeLoadLedgerInputs(env); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
-  return dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
+  let inputs; const audit = storeReadAuditTail(env);
+  try { inputs = storeLoadLedgerInputs(env, { audit }); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
+  const model = dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
+  {
+    const signals = new Map(storeList(env, 'signal', { audit }).map(r => [r.data.sid, r.data]));
+    const reviews = new Set(storeList(env, 'review', { audit }).map(r => r.data.sid));
+    for (const tr of model.recentTrades) {
+      const sig = signals.get(tr.sid);
+      tr.symbol = sig && typeof sig.symbolId === 'string' ? sig.symbolId.replace(/USDT$/, '') : null;
+      tr.reviewed = reviews.has(tr.sid);
+    }
+    const filled = new Set(inputs.fills.map(f => f.sid));            // 이미 읽은 체결을 재사용(시트 재조회 없음)
+    const responses = storeList(env, 'response', { audit }).map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
+    const pending = responses.map(r => {
+      const sig = signals.get(r.sid);
+      return { sid: r.sid, symbol: sig && sig.symbolId ? sig.symbolId.replace(/USDT$/, '') : r.sid,
+        dir: sig ? sig.dir : null, status: 'unconfirmed', at: r.at, reviewed: false,
+        netLabel: null, pnlPositive: false, pnlNegative: false };
+    });
+    model.recentTrades = [...model.recentTrades, ...pending].sort((a,b) => b.at - a.at).slice(0, 3);
+  }
+  return model;
 }
 
 // ── 샘플 데이터(화면 검증용, 결정적) ──
@@ -723,7 +761,7 @@ const dashEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c => ({ '&
 const DASH_ARROW = (pos, neg) => (pos ? '▲' : neg ? '▼' : '■');
 const dashTone = (pos, neg) => (pos ? 'pos' : neg ? 'neg' : 'zero');
 
-const DASH_PAGES = Object.freeze([['strat', '전략'], ['dash', '홈'], ['pos', '포지션'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
+const DASH_PAGES = Object.freeze([['dash', '홈'], ['journal', '매매일지']]);
 
 const DASH_CSS = `
 :root{color-scheme:light;--bg:#f6f7f9;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#3f3e3b;--mute:#5c5b57;--line:#dcdbd6;--accent:#2a78d6;--good:#17794f;--bad:#c62828;--warnbg:#fff4d6;--warnink:#6b4a00;--track:#e8e7e2}
@@ -749,6 +787,37 @@ td .sub{display:block}
 .warn{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}.warn li{margin:3px 0}
 .cta{display:inline-block;margin-top:8px;padding:10px 14px;border:1px solid var(--accent);border-radius:10px;color:var(--ink);text-decoration:none;font-size:14px}
 footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
+
+/* Focus UI: only Home and Journal are primary navigation. Other routes remain accessible to owner. */
+main{padding-bottom:96px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;margin:0;justify-content:center;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));gap:10px}
+nav.tabs a{flex:1 1 0;max-width:260px;border-radius:12px;min-height:48px;font-size:16px;display:flex;align-items:center;justify-content:center}
+.focus-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.focus-brand{letter-spacing:-.4px;font-size:23px;font-weight:750}
+.focus-eyebrow{font-size:12px;color:var(--mute)}
+.focus-panel{margin-top:14px}.focus-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.focus-primary{font-size:42px;font-weight:750;letter-spacing:-1px;line-height:1.17;word-break:break-word}
+.focus-unit{font-size:16px;color:var(--mute);font-weight:500}
+.focus-label{font-size:13px;color:var(--mute)}
+.focus-sub{font-size:12px;color:var(--mute);margin-top:7px}
+.focus-mini{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px;min-width:0}
+.focus-mini .v{font-size:22px;overflow-wrap:anywhere}
+.focus-target{font-size:28px;font-weight:730}
+.focus-progress{height:11px;border-radius:999px;background:var(--track);overflow:hidden;margin:14px 0 3px}
+.focus-progress span{display:block;background:var(--accent);height:100%;border-radius:999px}
+.focus-progress.empty span{display:none}
+.focus-graph{width:100%;height:auto;display:block;margin:8px 0 0}
+.focus-legend{display:flex;gap:16px;font-size:12px;color:var(--mute);flex-wrap:wrap}
+.focus-legend i{display:inline-block;width:17px;height:3px;vertical-align:middle;margin-right:4px;background:var(--ink2)}
+.focus-legend i.ideal{background:var(--accent);border-top:2px dashed var(--surface)}
+.focus-trade{border-bottom:1px solid var(--line);padding:11px 0}
+.focus-trade:last-child{border-bottom:0}
+.focus-cta{display:block;text-align:center;min-height:44px;margin-top:12px;padding:11px 12px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:700}
+.focus-secondary{display:flex;align-items:center;justify-content:center;min-height:44px;margin:4px 0;padding:0 12px;color:var(--ink2);font-size:13px;text-decoration:underline}
+.focus-collapse{margin:14px 0}.focus-collapse summary{cursor:pointer;font-weight:650;min-height:44px;padding:12px}
+.focus-collapse .card{margin-top:4px}
+.focus-note{font-size:12px;line-height:1.5;color:var(--mute)}
+@media(max-width:360px){.focus-primary{font-size:32px}.focus-target{font-size:24px}.focus-mini .v{font-size:19px}}
 `;
 const dashHead = title => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${dashEsc(title)}</title><style>${DASH_CSS}</style></head>`;
 const dashUrl = (appUrl, p) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}p=${p}` : null);
@@ -761,37 +830,48 @@ const dashFooter = m => `<footer>기록 전용 · 자동 주문 없음 · 갱신
 function dashRenderError(appUrl) {
   return `${dashHead('RICH300')}<body><main><header><h1>RICH 300</h1></header>${dashNav('dash', appUrl)}<section class="card"><p>화면을 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
 }
+function dashGrowthSvg(daily) {
+  const rows = (daily || []).slice().reverse();
+  const values = rows.flatMap(r => [Number(r.idealMicro),r.actualMicro === null ? NaN : Number(r.actualMicro)]).filter(Number.isFinite);
+  if (!rows.length || values.length < 2) return '<div class="focus-sub">기록이 쌓이면 실제 자산과 복리 목표의 성장선이 표시됩니다.</div>';
+  const hi=Math.max(...values),lo=Math.min(...values),span=Math.max(hi-lo,1),x=i=>14+292*(rows.length===1?0.5:i/(rows.length-1)),y=v=>108-(v-lo)/span*92;
+  const ideal=rows.map((r,i)=>`${x(i).toFixed(1)},${y(Number(r.idealMicro)).toFixed(1)}`).join(' ');
+  const parts=[];let current=[];
+  for(let i=0;i<rows.length;i++){const r=rows[i],val=r.actualMicro===null?NaN:Number(r.actualMicro);if(!Number.isFinite(val)){if(current.length>1)parts.push(current.join(' '));current=[];}else current.push(`${x(i).toFixed(1)},${y(val).toFixed(1)}`);}
+  if(current.length>1)parts.push(current.join(' '));
+  const dots=rows.map((r,i)=>r.actualMicro!==null&&Number.isFinite(Number(r.actualMicro))?`<circle cx="${x(i).toFixed(1)}" cy="${y(Number(r.actualMicro)).toFixed(1)}" r="2.5" fill="currentColor"><title>${dashEsc(r.day)} · 실제 입력</title></circle>`:'').join('');
+  return `<svg class="focus-graph" viewBox="0 0 320 124" role="img" aria-label="최근 ${rows.length}일간 실제 입력 평가액(입출금 제외)과 이상 복리 목표 비교"><path d="M14 16H306 M14 62H306 M14 108H306" fill="none" stroke="currentColor" stroke-opacity=".14" stroke-dasharray="3 5"/><polyline points="${ideal}" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="5 5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>${parts.map(p=>`<polyline points="${p}" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}${dots}</svg>`;
+}
 function dashRenderHtml(m, { appUrl } = {}) {
-  const title = 'RICH300', head = `<header><h1>RICH 300</h1></header>${dashNav('dash', appUrl)}`, sampleBox = m.sample ? '<div class="sample" role="note"><strong>샘플 데이터</strong> — 화면 검증용 예시입니다. 실제 계좌와 무관합니다.</div>' : '';
-  if (m.noChallenge) return `${dashHead(title)}<body><main>${head}<section class="card"><p>챌린지가 아직 설정되지 않았습니다.</p><p class="sub">Apps Script에서 설치 함수를 실행하면 시작 자금 300 USDT로 설정됩니다.</p></section></main></body></html>`;
-  if (m.empty) return `${dashHead(title)}<body><main>${head}${sampleBox}<section class="card"><p>아직 시작 전입니다. 시작일: ${dashEsc(m.startDay)}</p></section></main></body></html>`;
-  const c = m.current, t = m.today, assetsUrl = dashUrl(appUrl, 'assets');
-  const input = assetsUrl ? `<a class="cta" target="_top" href="${dashEsc(assetsUrl)}">평가액 입력하기</a>` : '';
-  const hero = c
-    ? `<div class="k">현재 총자산 (입력 평가액)</div><div class="big">${dashEsc(c.label)}<small>USDT</small></div><div class="sub">${c.today ? '오늘 입력' : `${dashEsc(c.day)} 입력 기준 — 오늘 평가액은 아직 없습니다`}${c.cashflowLabel ? ` · 입출금 ${dashEsc(c.cashflowLabel)}(손익과 분리)` : ''}</div>`
-    : `<div class="k">현재 총자산</div><div class="big zero">미입력<small>USDT</small></div><div class="sub">거래소 평가액을 입력하면 표시됩니다. 입력이 없을 때 임의의 잔액을 만들어 보여 주지 않습니다.</div>${input}`;
-  const goalNote = c && t.achieved ? '<span class="badge ok">✔ 오늘 목표 달성</span>' : c && t.achievedStale ? '<span class="badge">입력 시점 기준 목표 초과(오늘 평가액 없음)</span>' : '';
-  return `${dashHead(title)}<body><main>
-${head}
-${sampleBox}
-<section aria-label="현재 자산"><div class="card hero">${hero}</div></section>
-<section aria-label="시작 자금 대비 성과"><div class="card"><div class="grid2">
-<div><div class="k">시작 자금 대비 누적 손익</div>${c ? `<div class="v ${dashTone(c.pnlPositive, c.pnlNegative)}">${DASH_ARROW(c.pnlPositive, c.pnlNegative)} ${dashEsc(c.pnlLabel)} <small>USDT</small></div>` : '<div class="v zero">미입력</div>'}</div>
-<div><div class="k">시작 자금 대비 누적 수익률</div>${c ? `<div class="v ${dashTone(c.pnlPositive, c.pnlNegative)}">${DASH_ARROW(c.pnlPositive, c.pnlNegative)} ${dashEsc(c.returnLabel)}</div>` : '<div class="v zero">미입력</div>'}</div></div>
-<div class="sub" style="margin-top:8px">시작 자금 ${dashEsc(m.startEquity)} USDT · 입출금은 손익에서 제외</div></div></section>
-<section aria-labelledby="h-today"><h2 id="h-today">오늘 (${dashEsc(t.day)}) · ${t.n}일차</h2><div class="card"><div class="grid2">
-<div><div class="k">오늘 시작 자산</div><div class="v">${dashEsc(t.startLabel)} <small>USDT</small></div></div>
-<div><div class="k">오늘 목표 자산 (+${dashEsc(t.rate)})</div><div class="v">${dashEsc(t.targetLabel)} <small>${dashEsc(t.targetProfitLabel)}</small></div></div>
-<div><div class="k">오늘 실현손익</div><div class="v ${dashTone(t.realizedPositive, t.realizedNegative)}">${DASH_ARROW(t.realizedPositive, t.realizedNegative)} ${dashEsc(t.realizedLabel)} <small>USDT</small></div></div>
-<div><div class="k">목표까지 남은 금액</div>${t.remainingLabel === null ? '<div class="v zero">미입력</div>' : `<div class="v">${dashEsc(t.remainingLabel)} <small>USDT</small></div>`}</div></div>
-${goalNote ? `<div style="margin-top:8px">${goalNote}</div>` : ''}
-${t.needsReview ? `<div class="alert" role="alert">⚠ 장부와 입력 평가액의 차이 ${dashEsc(t.diffLabel)} USDT — 확인이 필요합니다(자동으로 손익에 반영하지 않음).</div>` : ''}
-<div class="sub" style="margin-top:8px">목표 = 전일 실제 마감 자산 × (1+${dashEsc(t.rate)}). 목표치일 뿐 수익을 보장하지 않으며 실제 성과는 입력 평가액 기준입니다.</div></div></section>
-<section aria-labelledby="h-daily"><h2 id="h-daily">날짜별 마감 자산 · 일간 손익${m.dailyTotal > m.daily.length ? ` <span class="sub">(최근 ${m.daily.length}일)</span>` : ''}</h2><div class="card"><table><thead><tr><th>날짜</th><th>마감 자산</th><th>일간 손익</th></tr></thead><tbody>
-${m.daily.map(d => `<tr><td>${dashEsc(d.day.slice(5))}${d.today ? ' <span class="sub">오늘·진행 중</span>' : ''}${d.met ? ' <span class="badge ok">달성</span>' : ''}</td><td>${d.input ? dashEsc(d.closeLabel) : '<span class="sub">미입력</span>'}${d.review ? ' <span class="sub">⚠ 장부 차이</span>' : ''}</td><td class="${dashTone(d.pnlPositive, d.pnlNegative)}">${DASH_ARROW(d.pnlPositive, d.pnlNegative)} ${dashEsc(d.pnlLabel)}${d.input ? '' : '<span class="sub">장부상 실현손익</span>'}</td></tr>`).join('')}
-</tbody></table></div></section>
-${m.warnings.length ? `<section aria-labelledby="h-w"><h2 id="h-w">데이터 확인</h2><div class="card"><ul class="warn">${m.warnings.map(w => `<li>${dashEsc(w.text)}</li>`).join('')}</ul></div></section>` : ''}
-${dashFooter(m)}
+  const head = `<header class="focus-title"><span class="focus-brand">RICH 300</span><span class="focus-eyebrow">MY TRADING JOURNAL</span></header>`;
+  const nav = dashNav('dash',appUrl);
+  const sample = m.sample ? '<div class="sample"><strong>샘플 데이터</strong> · 실제 자산 아님</div>' : '';
+  if (m.noChallenge) return `${dashHead('RICH300')}<body><main>${head}${sample}<section class="card"><p>챌린지가 아직 설정되지 않았습니다.</p><p class="focus-note">계좌 정보 없이 금액을 임의로 표시하지 않습니다.</p></section>${nav}</main></body></html>`;
+  if (m.empty) return `${dashHead('RICH300')}<body><main>${head}${sample}<section class="card">아직 시작 전입니다. 시작일: ${dashEsc(m.startDay)}</section>${nav}</main></body></html>`;
+  const c=m.current,t=m.today,assets=dashUrl(appUrl,'assets'),journal=dashUrl(appUrl,'journal'),ops=dashUrl(appUrl,'ops');
+  const currentHtml=c?`<div class="focus-primary">${dashEsc(c.label)} <span class="focus-unit">USDT</span></div><div class="focus-sub">${c.today?'오늘 입력':`${dashEsc(c.day)} 입력 기준 · 오늘 평가액 없음`}${c.cashflowLabel?` · 입출금 ${dashEsc(c.cashflowLabel)}(손익 별도)`:''}</div>`:`<div class="focus-primary">미입력</div><div class="focus-sub">실제 계좌 평가액을 입력해야 표시됩니다.</div>`;
+  const pnl=c?`<div class="v ${dashTone(c.pnlPositive,c.pnlNegative)}">${DASH_ARROW(c.pnlPositive,c.pnlNegative)} ${dashEsc(c.pnlLabel)}</div>`:'<div class="v">미입력</div>';
+  const ret=c?`<div class="v ${dashTone(c.pnlPositive,c.pnlNegative)}">${DASH_ARROW(c.pnlPositive,c.pnlNegative)} ${dashEsc(c.returnLabel)}</div>`:'<div class="v">미입력</div>';
+  const remaining=t.remainingLabel===null
+    ? `<span class="focus-target">${dashEsc(t.startRemainingLabel)} <span class="focus-unit">USDT</span></span><div class="focus-sub">오늘 평가액 미입력 · 당일 시작 기준 필요 수익 (실시간 잔여 아님)</div>`
+    : `<span class="focus-target">${dashEsc(t.remainingLabel)} <span class="focus-unit">USDT</span></span><div class="focus-sub">오늘 입력 평가액 기준 · 입출금은 수익에서 제외</div>`;
+  const achieved=t.achieved?'<span class="badge ok">오늘 목표 달성</span>':'';
+  const progress=t.progress===null?'<div class="focus-progress empty"><span></span></div><div class="focus-sub">오늘 평가액 없음 · 달성률 계산 대기</div>':`<div class="focus-progress"><span style="width:${Math.max(0,Math.min(100,t.progress)).toFixed(2)}%"></span></div><div class="focus-sub">오늘 수익 목표 달성률 ${dashEsc(t.progressLabel)}${achieved?' · '+achieved:''}</div>`;
+  const realTrades=(m.recentTrades||[]).map(tr=>`<div class="focus-trade"><div class="focus-row"><strong>${dashEsc(tr.symbol||tr.sid)} · ${dashEsc(tr.dir || '')}</strong><strong class="${dashTone(tr.pnlPositive,tr.pnlNegative)}">${tr.status==='unconfirmed'?'체결정보 대기':tr.status==='closed'?dashEsc(tr.netLabel)+' USDT':'보유 중'}</strong></div><div class="focus-sub">${tr.status==='unconfirmed'?'텔레그램 진입 확인 · 손익 집계 제외':tr.status==='closed'?'실제 체결 종료':'실제 체결 기록'}${tr.status==='unconfirmed'?'':' · '+(tr.reviewed?'복기 완료':'복기 필요')}</div></div>`).join('');
+  const tradeSection=realTrades||'<div class="focus-sub">아직 진입 확인 또는 실제 체결 기록이 없습니다. 가상 전략은 표시하지 않습니다.</div>';
+  const history=(m.daily||[]).map(d=>`<tr><td>${dashEsc(d.day.slice(5))}${d.today?' 오늘·진행 중':''}</td><td>${d.input?dashEsc(d.closeLabel):'미입력'}</td><td class="${dashTone(d.pnlPositive,d.pnlNegative)}">${dashEsc(d.pnlLabel)}${d.input?'':' <span class="sub">장부상 실현손익</span>'}</td></tr>`).join('');
+  const records=m.dailyTotal>m.daily.length?` · 최근 ${m.daily.length}일`:'';
+  return `${dashHead('RICH300')}<body><main>${head}${sample}
+<section class="focus-panel" aria-label="내 실제 자산"><div class="card hero"><div class="focus-label">내 실제 총자산 (입력 평가액)</div>${currentHtml}</div></section>
+<section class="focus-panel" aria-label="누적 성과"><div class="grid2"><div class="focus-mini"><div class="focus-label">누적 손익</div>${pnl}</div><div class="focus-mini"><div class="focus-label">누적 수익률</div>${ret}</div></div><p class="focus-sub">시작 자금 ${dashEsc(m.startEquity)} USDT · 입출금 제외 · 실제 평가액 기준</p></section>
+<section class="focus-panel" aria-label="오늘 복리 목표"><div class="card"><div class="focus-row"><h2>오늘 복리 목표 +${dashEsc(t.rate)}</h2><span class="focus-label">${dashEsc(t.day)} · ${t.n}일차</span></div><div class="focus-row"><span class="focus-label">오늘 시작 자산</span><strong>${dashEsc(t.startLabel)} USDT</strong></div><div class="focus-row" style="margin-top:10px"><span class="focus-label">오늘 목표 자산</span><strong>${dashEsc(t.targetLabel)} USDT</strong></div><div class="focus-row" style="margin-top:10px"><span class="focus-label">오늘 목표 수익 (+5%)</span><strong>${dashEsc(t.targetProfitLabel)} USDT</strong></div>${!t.startConfirmed?'<div class="alert">전일 실제 마감 평가액 미입력 · 시작 자산과 목표는 장부 추정치입니다.</div>':''}<div class="focus-label" style="margin-top:18px">목표까지 남은 수익</div>${remaining}${t.todayPnlLabel!==null?`<div class="focus-sub">오늘 실제 손익 ${dashEsc(t.todayPnlLabel)} USDT</div>`:''}${progress}${t.needsReview?`<div class="alert">장부와 입력 평가액의 차이 ${dashEsc(t.diffLabel)} USDT — 확인 필요</div>`:''}<p class="focus-note">목표 = 전일 실제 마감 자산 × (1+${dashEsc(t.rate)}). 목표일 뿐 수익을 보장하지 않으며, 미입력일에는 달성 여부를 추정하지 않습니다.</p></div></section>
+<section class="focus-panel" aria-label="자산 성장"><div class="card"><h2>내 자산 증식 현황</h2>${dashGrowthSvg(m.daily)}<div class="focus-legend"><span><i></i>실제 평가액 (입출금 제외)</span><span><i class="ideal"></i>이상 5% 복리 목표</span></div><div class="focus-row" style="margin-top:14px"><span class="focus-label">이상 복리 목표 자산</span><strong>${dashEsc(m.idealTodayLabel)} USDT</strong></div><div class="focus-row" style="margin-top:8px"><span class="focus-label">이상 복리선까지 격차</span><strong>${m.idealGapLabel===null?'오늘 평가액 미입력':dashEsc(m.idealGapLabel)+' USDT'}</strong></div><p class="focus-note">실제 평가액을 입력한 날짜만 실선으로 표시합니다. 차트는 참고용 목표와 실제 기록을 구분합니다.</p></div></section>
+<section class="focus-panel" aria-label="최근 매매일지"><div class="card"><div class="focus-row"><h2>최근 매매일지</h2>${journal?`<a class="focus-secondary" target="_top" href="${dashEsc(journal)}">전체 보기</a>`:''}</div>${tradeSection}</div></section>
+${assets?`<a class="focus-cta" target="_top" href="${dashEsc(assets)}">오늘 평가액 입력하기</a>`:''}
+<details class="focus-collapse"><summary>날짜별 마감 자산 · 일간 손익${records}</summary><div class="card"><table><thead><tr><th>날짜</th><th>마감 자산</th><th>손익</th></tr></thead><tbody>${history}</tbody></table></div></details>
+${m.warnings.length?`<details class="focus-collapse"><summary>데이터 확인 (${m.warnings.length})</summary><div class="card"><ul class="warn">${m.warnings.map(w=>`<li>${dashEsc(w.text)}</li>`).join('')}</ul></div></details>`:''}
+${ops?`<a class="focus-secondary" target="_top" href="${dashEsc(ops)}">운영 관리</a>`:''}
+${dashFooter(m)}${nav}
 </main></body></html>`;
 }
 
@@ -1055,8 +1135,8 @@ function storeLatestMap(env, entityName, audit) {      // 엔티티 시트 + 아
   return m;
 }
 const storeGet = (env, entityName, key) => nullishOr(storeLatestMap(env, entityName, storeReadAuditTail(env)).get(key), null);
-function storeList(env, entityName, { includeVoid = false } = {}) {
-  const out = [...storeLatestMap(env, entityName, storeReadAuditTail(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+function storeList(env, entityName, { includeVoid = false, audit } = {}) {      // audit: 같은 요청에서 이미 읽은 Audit 끝부분(여러 목록을 읽을 때 매번 다시 읽지 않는다)
+  const out = [...storeLatestMap(env, entityName, audit || storeReadAuditTail(env)).values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return includeVoid ? out : out.filter(r => !r.void);
 }
 function storeHistory(env, entityName, key) {
@@ -1183,12 +1263,12 @@ function storeRepair(env) {
 }
 
 // ── R2 계산 엔진 연결 ──
-function storeLoadLedgerInputs(env) {
-  const ch = storeGet(env, 'challenge', 'challenge');
+function storeLoadLedgerInputs(env, { audit = storeReadAuditTail(env) } = {}) {
+  const ch = nullishOr(storeLatestMap(env, 'challenge', audit).get('challenge'), null);
   if (!ch || ch.void) throw new StoreError('NOT_FOUND', '챌린지 설정 없음(storeSetupChallenge 필요)');
-  const schedule = storeList(env, 'rate').map(r => ({ from: r.data.from, rate: r.data.rate })).sort((a, b) => (a.from < b.from ? -1 : 1));
+  const schedule = storeList(env, 'rate', { audit }).map(r => ({ from: r.data.from, rate: r.data.rate })).sort((a, b) => (a.from < b.from ? -1 : 1));
   if (!schedule.length || schedule[0].from > ch.data.startDay) throw new StoreError('INTEGRITY', '시작일 이전부터 적용되는 목표율 일정이 없음');
-  const d = n => storeList(env, n).map(r => r.data);
+  const d = n => storeList(env, n, { audit }).map(r => r.data);
   return { challenge: { startEquity: ch.data.startEquity, startDay: ch.data.startDay, rateSchedule: schedule }, fills: d('fill'), cashflows: d('cashflow'), adjustments: d('adjustment'), openingPositions: d('opening'),
     equityInputs: d('equity').map(e => ({ day: e.day, equity: e.equity, unrealized: e.unrealized, late: e.late })) };
 }
@@ -1419,6 +1499,21 @@ function r9ParseSignal(text) {
 // 버튼을 누른 뒤 메시지를 다시 쓸 때 기계 줄은 빼고 사람이 읽는 부분만 남긴다.
 const r9StripLine = text => String((text != null ? text : '')).replace(R9_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trimEnd();
 
+/** 추천 알림 본문 '📈 근거'의 bullet만 보존한다. 없으면 null, 임의 추정은 하지 않는다. */
+function r9ReasonSummary(text) {
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  const start = lines.findIndex(line => /📈\s*근거/.test(line));
+  if (start < 0) return null;
+  const evidence = [];
+  for (let i = start + 1; i < lines.length && evidence.length < 3; i++) {
+    const line = lines[i].trim(), bullet = /^•\s*(.+)$/.exec(line);
+    if (bullet) { evidence.push(bullet[1].replace(/<[^>]*>/g, '').trim()); continue; }
+    if (evidence.length || line && !/^\s*$/.test(line)) break;
+  }
+  const summary = evidence.filter(Boolean).join(' / ').slice(0, 120);
+  return summary || null;
+}
+
 // ── tg.mjs ──
 // R4 Telegram 처리(수신 → 기록). 네트워크·시트·키 저장소는 전부 env 포트로 주입하므로 같은 코드를 Node 테스트(가짜 Telegram)와 Apps Script가 쓴다.
 //  env = { now(): ms, sha256(s): hex, randomId(n): string, randomInt(n): 0..n-1 (암호학적 난수), sleep(ms),
@@ -1496,6 +1591,11 @@ const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callb
 const tgOkOrBenign = r => r.ok || r.benign;
 const tgSendMessage = tgSend;                  // 검증 하니스(테스트 환경 전용)가 임의 메시지를 보낼 때 사용
 // 일 마감 알림 발송(R7): 텍스트 + 선택적 URL 버튼. 결과 코드만 반환(본문·토큰 없음).
+/** Hourly report with hold/close buttons. Same owner-bound Telegram transport and gate. */
+function tgSendFollow(env, chatId, text, sid) {
+  const markup = followKeyboard(sid);
+  return markup ? tgSend(env, chatId, text, markup) : { ok: false, code: 'bad-sid' };
+}
 function tgSendNotice(env, chatId, text, url) {
   const r = tgSend(env, chatId, text, url && /^https:\/\/\S+$/.test(url) ? { inline_keyboard: [[{ text: '입력하기', url }]] } : undefined);
   return r.ok ? { ok: true } : { ok: false, code: r.code };
@@ -1581,7 +1681,7 @@ function tgPairPoll(env) {
 // ── 메시지·버튼 만들기 ──
 function tgResponseKeyboard(sid) {
   if (!TG_SID_RE.test(sid)) throw new Error('sid는 영문·숫자·_.- 54자 이하(callback_data 한도)');
-  return { inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '관망했어', callback_data: `r1:${sid}:w` }, { text: '놓쳤어', callback_data: `r1:${sid}:m` }]] };
+  return { inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '안 했어', callback_data: `r1:${sid}:w` }]] };
 }
 function tgSignalText(s) {
   return [`🔔 ${s.strategy}전략 ${s.dir} ${s.symbolId}`, `진입 ${s.entry} · 손절 ${s.stop} · TP1 ${s.tp1}`, '내 판단은?'].join('\n');
@@ -1831,6 +1931,7 @@ function tgOnCallback(env, ev) {
   const answer = t => { const r = tgAnswer(env, ev.cbId, t); ev.ack = r.ok ? 'ok' : r.code === 'stale-callback' ? 'stale' : 'failed'; return r; }, parts = ev.data.split(':');   // 응답(answerCallbackQuery) 결과를 ok|stale(제한 시간 만료)|failed 로 분리해 둔다(진단용, 값 없음)
   const cb = { chatId: ev.chatId, messageId: ev.messageId, photo: ev.isPhoto === true };
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
+  if (parts[0] === 'h1' && parts.length === 3 && (parts[2] === 'k' || parts[2] === 'c')) return tgOnFollow(env, ev, parts[1], parts[2], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
   const a = answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button', replyFailed: !tgOkOrBenign(a) };
@@ -1841,6 +1942,8 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   if (!sg || sg.void) {                                  // R9: COIN RADAR 메시지의 'R9 v1' 줄에서 신호를 만든다(같은 sid의 메시지만, 이미 있으면 건드리지 않음)
     const parsed = r9ParseSignal(ev.msgText);
     if (parsed && parsed.sid === sid) {
+      const why = r9ReasonSummary(ev.msgText);
+      if (why) parsed.summary = why;
       try { storeCreate(se, 'signal', parsed, { actor: 'tg:r9' }); } catch (e) { if (!(e instanceof StoreError)) throw e; if (e.code === 'LOCK') throw e; }
       sg = storeGet(se, 'signal', sid);
     }
@@ -1853,14 +1956,33 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   }
   const shown = ev.msgText && r9ParseSignal(ev.msgText) ? r9StripLine(ev.msgText) : tgSignalText(sg.data);
   const r = storeCreate(se, 'response', { sid, choice, at: env.now() }, { actor: 'tg' });
-  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
-  const a = answer(`기록: ${RESPONSE_CHOICES[choice]}`), e = tgEdit(env, cb, `${shown}\n→ ${RESPONSE_CHOICES[choice]}`);
-  let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
-  if (choice === 'entered' && r.status === 'added') {
-    const link = tgFillLink(env.uiUrl, sg.data), s = tgSend(env, ev.chatId, `진입 기록: /fill ${sid} 증거금 레버리지 ${sg.data.entry} ${sg.data.stop}${link ? '\n(숫자 입력은 아래 화면이 더 편합니다)' : ''}${tgPlanCard(env, sid)}`, link ? { inline_keyboard: [[{ text: '입력 화면 열기', url: link }]] } : undefined);
-    replyFailed = replyFailed || !s.ok;
+  const choiceLabel = choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[choice];
+  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
+  // 진입 응답은 실제 체결이 아니다. 매매일지의 '진입 확인·체결 미입력'으로만 표시하며,
+  // /fill 안내 메시지와 추가 알림은 보내지 않는다. 안 했어 응답은 여기서 종료한다.
+  // An entered response opts in to 1-hour reassessment. No Fill is created.
+  // If an opt-in state update fails after the response is stored, the response still remains recorded.
+  if (choice === 'entered') followStart(env.kv, sid, env.now());
+  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 1시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
+  const a = answer(`기록: ${choiceLabel}`), e = tgEdit(env, cb, `${shown}\n→ ${outcome}`);
+  return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
+}
+/** User can keep hourly analysis coming, or stop it without pretending the position was actually closed at the exchange. */
+function tgOnFollow(env, ev, sid, action, cb, answer) {
+  if (!TG_SID_RE.test(sid)) { const a = answer('유효하지 않은 신호입니다'); return { status: 'handled', action: 'follow-invalid', replyFailed: !tgOkOrBenign(a) }; }
+  const se = env.storeEnv(), response = storeGet(se, 'response', sid);
+  if (!response || response.void || response.data.choice !== 'entered') {
+    const a = answer('진입 확인이 없는 신호입니다');
+    return { status: 'handled', action: 'follow-not-entered', replyFailed: !tgOkOrBenign(a) };
   }
-  return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed };
+  const choice = followChoice(env.kv, sid, action === 'k' ? 'keep' : 'close', env.now());
+  if (choice.status === 'not-tracked') { const a = answer('추적 정보가 없습니다'); return { status: 'handled', action: 'follow-not-tracked', replyFailed: !tgOkOrBenign(a) }; }
+  const closed = choice.status === 'closed' || choice.status === 'already-closed';
+  const label = closed ? '정리됨 · 1시간 분석 중단' : '유지 중 · 1시간 분석 계속';
+  const a = answer(label);
+  const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\n→ 상태: .+$/, '');
+  const e = tgEdit(env, cb, base.slice(0, 3400) + '\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
+  return { status: 'handled', action: 'follow-' + choice.status, replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
 function tgOnReview(env, ev, parts, cb, answer) {
   const sid = parts[1], st = parts[2], plan = st.slice(0, 2), mind = st.slice(2);
@@ -2565,6 +2687,151 @@ function watchSymbolVerdict(okxJson, bybitJson) {
   const okx = okxJson ? watchParseOkxTicker(okxJson) : null, byb = bybitJson ? watchParseBybitTicker(bybitJson) : null;
   if (okx || byb) return 'ok';
   return okxJson && bybitJson ? 'unknown' : 'unverified';
+}
+
+// ── follow.mjs ──
+// RICH300 hourly Telegram follow-up: ONLY user-confirmed "entered" signals.
+// An entered response is not a Fill; this module never creates trades, profit or exchange orders.
+// State in the existing tg: KV namespace (Script Properties), entirely separate from trading ledger.
+// Explicit opt-in via response button; explicit stop with "closed" is irreversible from old cards.
+// Safe default OFF. Every send has a pre-send attempt marker to prevent scheduler duplicates.
+
+const FOLLOW_HOUR_MS = 3600000;
+const FOLLOW_MAX_POSITIONS = 12; // prevent unlimited API calls or alert floods per run
+const FOLLOW_RETRY_MS = 10 * 60000;
+const FOLLOW_MAX_STALE_MS = 10 * 60000;
+
+const followKey = sid => 'follow:' + sid;
+function followRead(kv, sid) {
+  let s; try { s = JSON.parse(kv.get(followKey(sid)) || 'null'); } catch (e_) { s = null; }
+  return s && s.v === 1 && (s.status === 'open' || s.status === 'closed') ? s : null;
+}
+function followStart(kv, sid, at) {
+  const cur = followRead(kv, sid);
+  if (cur) return { status: cur.status === 'closed' ? 'closed' : 'duplicate', state: cur };
+  const s = { v: 1, status: 'open', enteredAt: at, confirmedAt: at, lastSentAt: null, pendingHour: null, retryAt: null };
+  kv.put(followKey(sid), JSON.stringify(s));
+  return { status: 'added', state: s };
+}
+function followChoice(kv, sid, choice, now) {
+  const s = followRead(kv, sid);
+  if (!s) return { status: 'not-tracked' };
+  if (s.status === 'closed') return { status: 'already-closed' };
+  if (choice !== 'keep' && choice !== 'close') return { status: 'invalid' };
+  if (choice === 'close') {
+    kv.put(followKey(sid), JSON.stringify({ ...s, status: 'closed', closedAt: now, pendingHour: null }));
+    return { status: 'closed' };
+  }
+  kv.put(followKey(sid), JSON.stringify({ ...s, confirmedAt: now }));
+  return { status: 'kept' };
+}
+function followKeyboard(sid) {
+  if (!/^[A-Za-z0-9_.-]{1,54}$/.test(sid)) return null;
+  return { inline_keyboard: [[
+    { text: '유지 중', callback_data: 'h1:' + sid + ':k' },
+    { text: '정리했어', callback_data: 'h1:' + sid + ':c' }
+  ]] };
+}
+const followTrendLabel = t => t === 'up' ? '상승' : t === 'down' ? '하락' : t === 'flat' ? '횡보' : '판단 보류';
+function followReport({ signal, market, now, enteredAt }) {
+  const t1 = watchTrend(market.bars1h), t4 = watchTrend(market.bars4h),
+    v1 = watchVolRatio(market.bars1h), price = market.price, dir = signal.dir, sign = dir === 'LONG' ? 1 : -1;
+  const entry = Number(signal.entry), stop = Number(signal.stop), tp1 = Number(signal.tp1), tp2 = Number(signal.tp2);
+  const stopPassed = (price - stop) * sign <= 0, tp1Passed = (price - tp1) * sign >= 0,
+    tp2Passed = Number.isFinite(tp2) && (price - tp2) * sign >= 0;
+  const against1 = wAgainst(t1, dir), against4 = wAgainst(t4, dir), aligned1 = wAligned(t1, dir);
+  let verdict, reasons;
+  if (stopPassed) {
+    verdict = '손절 기준 이탈 — 거래소의 실제 손절 체결 여부를 확인';
+    reasons = ['현재 공개 시세가 처음 정한 손절 기준을 벗어났습니다.', '이미 체결된 손절 주문이 있는지 직접 확인하세요.'];
+  } else if (tp2Passed) {
+    verdict = '2차 목표 도달 — 익절 체결 여부 및 잔량 점검';
+    reasons = ['현재 공개 시세가 최초 2차 목표를 넘어섰습니다.'];
+  } else if (tp1Passed) {
+    verdict = '1차 목표 도달 — 부분 익절·손절 보호 조건 점검';
+    reasons = ['현재 공개 시세가 최초 1차 목표를 넘어섰습니다.'];
+  } else if (against1 && against4) {
+    verdict = '추천 추세와 반대 방향 — 손절·보유 근거 재검토';
+    reasons = ['1시간과 4시간 추세가 모두 선택한 방향에 반대입니다.'];
+  } else if (against1 || against4) {
+    verdict = '추세 일부 약화 — 리스크 확대 없이 경과 확인';
+    reasons = [against1 ? '1시간 추세가 반대 방향입니다.' : '4시간 추세가 반대 방향입니다.'];
+  } else if (aligned1) {
+    verdict = '기존 방향 유지 가능성 — 지정 손절선 유효 여부 점검';
+    reasons = ['1시간 추세가 추천 방향과 같습니다.', '이것만으로 수익을 보장하지 않습니다.'];
+  } else {
+    verdict = '방향 미확정 — 기존 계획과 변동성 점검';
+    reasons = ['1시간 추세가 명확히 정렬되지 않았습니다.'];
+  }
+  const time = new Date(now + 9 * FOLLOW_HOUR_MS).toISOString().slice(5, 16).replace('T', ' ');
+  const age = Math.round((now - market.priceAt) / 60000);
+  const original = typeof signal.summary === 'string' && signal.summary.trim()
+    ? signal.summary.trim().slice(0, 120) : signal.strategy === 'S'
+      ? '4H 추세·1H 눌림 구간·15분 확정 트리거·거래량·비용 반영 손익비가 추천 당시 조건이었습니다.'
+      : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
+  const priceChange = Number.isFinite(entry) && entry > 0 ? (price - entry) * sign / entry * 100 : null;
+  return [
+    '📊 RICH300 · 1시간 포지션 점검',
+    signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
+    '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
+    '',
+    '최초 추천 기준: ' + original,
+    '추천 진입 ' + signal.entry + ' · 손절 ' + signal.stop + ' · TP1 ' + signal.tp1 + (signal.tp2 ? ' · TP2 ' + signal.tp2 : ''),
+    '현재 공개 시세 (' + market.source + ', ' + wHhmm(market.priceAt) + ' KST' + (age > 1 ? ', ' + age + '분 전' : '') + '): ' + wFmt(price, price),
+    '추천 진입가 대비 방향 변화: ' + (priceChange === null ? '계산 불가' : (priceChange >= 0 ? '+' : '') + priceChange.toFixed(2) + '%') + ' (실제 손익 아님)',
+    '1H ' + followTrendLabel(t1.state) + ' · 4H ' + followTrendLabel(t4.state)
+      + ' · 1H 거래량 ' + (v1 === null ? '확인 불가' : '평균 대비 ' + v1.toFixed(2) + '배'),
+    '',
+    '판단 참고: ' + verdict,
+    ...reasons.map(x => '• ' + x),
+    '※ 자동 주문·청산 없음. 손익은 실제 체결·수수료에 따라 달라집니다.',
+    '포지션이 종료됐다면 [정리했어]를 눌러 다음 보고를 중단하세요.'
+  ].join('\n').slice(0, 3600);
+}
+function followTick(env) {
+  const mode = env.mode();
+  if (mode !== 'on' && mode !== 'preview') return { status: 'off' };
+  const now = env.now(), se = env.storeEnv();
+  const signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data]));
+  const responses = storeList(se, 'response').map(r => r.data).filter(r => r.choice === 'entered').sort((a,b) => a.at - b.at);
+  const tradeMap = pnlComputeAll(storeList(se, 'fill').map(r => r.data), {});
+  const out = { status: 'ok', mode, entered: responses.length, active: 0, due: 0, sent: 0, failed: 0, stale: 0, closed: 0, missing: 0, capped: 0 };
+  const h = Math.floor(now / FOLLOW_HOUR_MS);
+  for (const r of responses) {
+    // Only selections made by an existing opt-in button can initiate follow-up.
+    const st = followRead(env.kv, r.sid);
+    if (!st || st.status === 'closed') continue;
+    const trade = tradeMap.get(r.sid);
+    if (trade && trade.status === 'closed') {
+      out.closed++;
+      if (mode === 'on') followChoice(env.kv, r.sid, 'close', now);
+      continue;
+    }
+    const sig = signals.get(r.sid);
+    if (!sig) { out.missing++; continue; }
+    out.active++;
+    const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_HOUR_MS;
+    if (now < next || (st.retryAt && now < st.retryAt) || st.pendingHour === h) continue;
+    if (out.due >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
+    out.due++;
+    let market; try { market = env.market(sig.symbolId); } catch (e_) { market = null; }
+    if (!market || !market.ok || !watchAssessMarket(market, now).ok) { out.stale++; continue; }
+    const text = followReport({ signal: sig, market, now, enteredAt: r.at });
+    if (mode === 'preview') continue;
+    // Mark the attempt BEFORE Telegram to prevent overlapping scheduler runs from duplicating reports.
+    const pending = { ...st, pendingHour: h, retryAt: null };
+    env.kv.put(followKey(r.sid), JSON.stringify(pending));
+    let sent; try { sent = env.send(text, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
+    if (sent && sent.ok) {
+      env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, pendingHour: null, lastSentAt: now }));
+      out.sent++;
+    } else {
+      // Transient error: next check may retry; a time-out with unknown delivery must not retry immediately.
+      env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, retryAt: now + FOLLOW_RETRY_MS }));
+      out.failed++;
+    }
+  }
+  return out;
 }
 
 // ── feed.mjs ──
@@ -3410,10 +3677,22 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
       fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key, r.rev) })),
       voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key, r.rev) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
+      review: rv ? { planKey: rv.plan, mindKey: rv.mind, plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
   const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
+  // 텔레그램 [진입했어] 버튼만 누른 건은 '실제 체결 확인 전' 별도 일지에 보관한다.
+  // [안 했어]/[놓쳤어]는 일지에서 완전히 제외하고 손익·자산에 어떤 영향도 주지 않는다.
+  const confirmedEntries = responses.filter(r => r.choice === 'entered' && !led.trades.has(r.sid)).map(r => {
+    const sg = sig.get(r.sid);
+    return {
+      sid: r.sid, symbol: sg && typeof sg.symbolId === 'string' ? sg.symbolId.replace(/USDT$/, '') : r.sid,
+      dir: sg && sg.dir ? sg.dir : null, at: r.at, atLabel: jvKst(r.at),
+      entry: sg && sg.entry ? sg.entry : null, stop: sg && sg.stop ? sg.stop : null,
+      status: 'unconfirmed'
+    };
+  }).filter(t => (!qDay || kstDayOf(t.at) === qDay) && (!qSym || (t.symbol + ' ' + t.sid).toUpperCase().includes(qSym))).sort((a, b) => b.at - a.at);
+
   const warnings = [], rows = led.rows, cnt = f => rows.filter(r => r.flags.includes(f)).length;
   const mism = rows.filter(r => r.needsReview);
   if (mism.length) warnings.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${mism.length}일: ${mism.slice(-5).map(r => `${r.day}(${anUsd(r.diffMicro, { sign: true })})`).join(', ')}` });
@@ -3425,8 +3704,17 @@ function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day = null,
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
   const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').sort((a, b) => b.data.at - a.data.at).slice(0, 10).map(cr => { const c = cr.data; return { cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId, cr.rev) }; });
-  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
+  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, confirmedEntries: confirmedEntries.slice(0, JOURNAL_SEARCH_LIMIT), confirmedEntriesTotal: confirmedEntries.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
+}
+
+
+/** 10초 복기 작성·수정. 실제 체결된 신호에만 허용하고 기존 R3 감사 이력을 그대로 사용한다. */
+function journalSaveReview(env, { sid, plan, mind, memo } = {}, { actor = 'ui:journal' } = {}) {
+  if (typeof sid !== 'string' || !sid.trim() || sid.length > 80) jvFail('복기할 거래를 선택해 주세요');
+  const se = env.storeEnv();
+  if (!storeList(se, 'fill').some(row => row.data.sid === sid)) jvFail('실제 체결 기록이 없는 신호는 복기를 저장할 수 없습니다');
+  return storeSaveReview(se, { sid, plan, mind, memo: typeof memo === 'string' && memo.trim() ? memo.trim().slice(0, 500) : undefined }, { actor });
 }
 
 // ── 수정 ──
@@ -3477,7 +3765,8 @@ h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 8px;color:var(--ink2);fo
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}.pos{color:var(--good)}.neg{color:var(--bad)}.zero{color:var(--ink2)}
 .badge{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--ink2);white-space:nowrap}.badge.warn{background:var(--warnbg);color:var(--warnink);border-color:transparent}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center}.day{padding:8px 0;border-top:1px solid var(--line)}.day:first-of-type{border-top:0}
-label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select,textarea{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+textarea{min-height:90px;resize:vertical}
 button.act{font:inherit;font-size:15px;min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--s1);background:var(--s1);color:#fff;margin-top:10px}button.act.alt{background:none;color:var(--ink);border-color:var(--line)}button.act:disabled{opacity:.5}
 .out{margin-top:8px;font-size:13px;white-space:pre-wrap}.out.bad{color:var(--bad)}.out.ok{color:var(--good)}
 .stat dl,.mini dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}.stat dt,.mini dt{color:var(--mute)}.stat dd,.mini dd{margin:0;text-align:right}.stat h3{font-size:14px;margin:0 0 6px}
@@ -3486,6 +3775,12 @@ details.trade{border-top:1px solid var(--line);padding:8px 0}details.trade:first
 .fill{border-top:1px dashed var(--line);padding:8px 0;font-size:13px}.fill:first-child{border-top:0}.edits{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--ink2)}.edits li{margin:2px 0}.chg{color:var(--mute)}
 details.edit{margin-top:6px}details.edit>summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-size:13px;color:var(--s1)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
 ul.plain{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}ul.plain li{margin:3px 0}footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
+
+/* Focus navigation: keep advanced pages by direct URL, show only daily work tabs. */
+main{padding-bottom:96px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;display:flex;justify-content:center;gap:10px;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+nav.tabs a{flex:1 1 0;max-width:260px;min-height:48px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:12px;color:var(--ink2);font-size:16px;font-weight:600;text-decoration:none;background:var(--surface)}
+nav.tabs a[aria-current="page"]{border-color:var(--s1);color:var(--s1)}
 `;
 const jvHead = t => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${jvE(t)}</title><style>${JV_CSS}</style></head>`;
 const journalRenderError = () => `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>일지를 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
@@ -3511,26 +3806,51 @@ function jvTradeHtml(t) {
   return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE((t.symbol != null ? t.symbol : t.sid))}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
 <div class="sub">${t.response ? `응답: ${jvE(t.response.label)}` : '응답 기록 없음'} · 신호 ${jvE(t.sid)}</div>
 ${t.review ? `<div class="sub">복기: ${jvE(t.review.plan)} · ${jvE(t.review.mind)}${t.review.memo ? ` · ${jvE(t.review.memo)}` : ''} (${jvE(t.review.savedLabel)})</div>${edits(t.review.edits)}` : '<div class="sub">복기 안 함</div>'}
+<details class="edit"><summary>${t.review ? '복기 수정하기' : '10초 복기 작성하기'}</summary>
+<form class="reviewForm" data-sid="${jvE(t.sid)}">
+<label>계획 준수 여부</label><select name="plan" required><option value="">선택하세요</option>
+<option value="plan_ok"${t.review && t.review.planKey==='plan_ok'?' selected':''}>계획대로 진입·청산</option>
+<option value="early_exit"${t.review && t.review.planKey==='early_exit'?' selected':''}>조기 청산</option>
+<option value="chase_or_average_down"${t.review && t.review.planKey==='chase_or_average_down'?' selected':''}>추격 진입·물타기</option>
+<option value="other_violation"${t.review && t.review.planKey==='other_violation'?' selected':''}>기타 위반</option></select>
+<label>매매 당시 감정</label><select name="mind" required><option value="">선택하세요</option>
+<option value="calm"${t.review && t.review.mindKey==='calm'?' selected':''}>침착</option>
+<option value="anxious_rushed"${t.review && t.review.mindKey==='anxious_rushed'?' selected':''}>불안·조급</option>
+<option value="revenge"${t.review && t.review.mindKey==='revenge'?' selected':''}>손실 복구 욕심</option>
+<option value="greedy"${t.review && t.review.mindKey==='greedy'?' selected':''}>욕심</option></select>
+<label>진입 이유·다음에 개선할 점 (최대 500자)</label><textarea name="memo" maxlength="500" placeholder="왜 들어갔고, 다음 거래에서 무엇을 바꿀까요?">${jvE(t.review && t.review.memo ? t.review.memo : '')}</textarea>
+<button class="act" type="submit">복기 저장하기</button><div class="out" role="status"></div>
+</form></details>
+
 ${t.fills.map(fill).join('')}${t.voidedFills.length ? `<div class="sub" style="margin-top:6px">취소된 체결(손익에서 제외됨)</div>${t.voidedFills.map(v => `<div class="fill"><div>${jvE(v.kindLabel)} · ${jvE(v.atLabel)} · ${jvE(v.price)} × ${jvE(v.qty)}</div>${edits(v.edits)}</div>`).join('')}` : ''}</details>`;
 }
 const JV_TABS = Object.freeze(['journal', 'stats', 'assets']);
 function journalRenderHtml(m, { appUrl, tab = 'all', query = null } = {}) {
   if (m.empty) return `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>챌린지 설정이 없습니다. 먼저 시작 자금과 시작일을 저장해 주세요.</p></section></main></body></html>`;
   const a = m.analytics, rv = a.reviews, active = JV_TABS.includes(tab) ? tab : 'journal';
+  const entryUrl = p => typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) && p.entry && p.dir
+    ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=fill&sid=' + encodeURIComponent(p.sid) + '&dir=' + encodeURIComponent(p.dir) + '&entry=' + encodeURIComponent(p.entry) + (p.stop ? '&stop=' + encodeURIComponent(p.stop) : '')
+    : null;
+  const pendingHtml = (m.confirmedEntries || []).map(p => {
+    const url = entryUrl(p);
+    return `<div class="day"><div class="row"><span><strong>${jvE(p.symbol)}</strong> · ${jvE(p.dir || '방향 미확인')}</span><span class="badge warn">체결정보 미입력</span></div><div class="sub">${jvE(p.atLabel)} · 텔레그램에서 진입했다고 응답 · 손익 집계 제외</div>${url ? `<a class="cta" target="_top" href="${jvE(url)}">실제 진입가·수량 입력</a>` : ''}</div>`;
+  }).join('');
+  const manualUrl = typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=pos' : null;
+
   const sec = {
     close: `${jvCloseHtml(m)}`,
     stat: `<section aria-labelledby="h-stat"><h2 id="h-stat">통계 <span class="sub">실제 청산 거래만 · 모의 제외</span></h2>${jvStat('전체', a.overall)}<div class="sub" style="margin:-4px 0 8px">승률 구간은 표본이 작을수록 넓어집니다. 30건 미만은 참고용입니다.</div>${a.strategies.map(s => jvStat(s.name, s)).join('')}${a.unlinked ? `<div class="sub">전략을 알 수 없는 거래 ${a.unlinked}건은 전체에만 포함됩니다.</div>` : ''}${a.dirs.map(d => jvStat(d.key, d)).join('')}</section>`,
     rv: `<section aria-labelledby="h-rv"><h2 id="h-rv">10초 복기 분석 <span class="sub">복기율 ${jvE(rv.reviewRate)} (${rv.reviewed}/${rv.total})</span></h2>${rv.byPlan.length ? `<div class="sub">계획 준수</div>${rv.byPlan.map(jvGrp).join('')}` : '<div class="card sub">저장된 복기가 없습니다.</div>'}${rv.byMind.length ? `<div class="sub">심리 상태</div>${rv.byMind.map(jvGrp).join('')}` : ''}${rv.insights.length ? `<div class="card"><strong>참고</strong><ul class="plain">${rv.insights.map(i => `<li>${jvE(i.text)}</li>`).join('')}</ul></div>` : ''}</section>`,
     cf: `<section aria-labelledby="h-cf"><h2 id="h-cf">입출금 기록</h2><div class="card"><form id="cfForm"><div class="sub">거래소와 지갑 사이 입금(+)·출금(−)을 기록합니다. 손익과 분리되어 목표 계산에 영향을 주지 않습니다.</div><label for="cfAmt">금액 (USDT, 입금 +, 출금 −)</label><input id="cfAmt" inputmode="decimal" autocomplete="off"><label for="cfNote">메모 (선택)</label><input id="cfNote" autocomplete="off"><button class="act" type="submit">저장</button><div class="out" id="cfOut" role="status"></div></form></div>
 ${m.cashflows.length ? `<div class="card">${m.cashflows.map(c => `<div class="day"><div class="row"><span>${jvE(c.atLabel)} · <strong>${jvE(c.amount)}</strong> ${jvE(c.note)}</span></div><form class="cfVoid" data-cf="${jvE(c.cfId)}"><div class="row" style="gap:6px"><input name="reason" placeholder="취소 사유" autocomplete="off" aria-label="취소 사유"><button class="act alt" type="submit" style="margin:0;white-space:nowrap">취소</button></div><div class="out" role="status"></div></form></div>`).join('')}</div>` : ''}</section>`,
-    jr: `<section aria-labelledby="h-j"><h2 id="h-j">매매일지 <span class="sub">${m.tradesTotal}건${m.tradesOpen ? ` · 보유 ${m.tradesOpen}` : ''}${m.voidedCount ? ` · 취소된 체결 ${m.voidedCount}` : ''}</span></h2><div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">아직 기록이 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시 (전체 ${m.tradesTotal}건)</div>${m.trades.length < 200 && !(query && (query.day || query.q)) && typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `<a class="cta" target="_top" href="${jvE(appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal&n=' + Math.min(m.trades.length + 40, 200))}">더 보기 (+40건)</a>` : ''}` : ''}</section>`,
+    jr: `<section aria-labelledby="h-j"><h2 id="h-j">내 매매일지 <span class="sub">실제 체결 ${m.tradesTotal}건 · 체결 미입력 ${m.confirmedEntriesTotal || 0}건</span></h2>${manualUrl ? `<a class="cta" target="_top" href="${jvE(manualUrl)}">직접 매매한 종목 등록하기</a>` : ''}${pendingHtml ? `<div class="card"><strong>진입했다고 기록한 거래</strong><div class="sub">텔레그램 버튼만으로는 체결가·수량·손익이 확정되지 않습니다.</div>${pendingHtml}</div>` : ''}<div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">실제 체결 내역이 아직 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시 (전체 ${m.tradesTotal}건)</div>${m.trades.length < 200 && !(query && (query.day || query.q)) && typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `<a class="cta" target="_top" href="${jvE(appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal&n=' + Math.min(m.trades.length + 40, 200))}">더 보기 (+40건)</a>` : ''}` : ''}</section>`,
     warn: `${m.warnings.length ? `<section aria-labelledby="h-w"><h2 id="h-w">데이터 확인</h2><div class="card"><ul class="plain">${m.warnings.map(w => `<li>${jvE(w.text)}</li>`).join('')}</ul></div></section>` : ''}`,
     search: `<form class="card" method="get" action="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl : '')}" target="_top"><input type="hidden" name="p" value="journal"><div class="grid2"><div><label for="qDay">날짜 (진입·청산·체결일)</label><input id="qDay" name="day" type="date" value="${jvE(query && query.day ? query.day : '')}"></div><div><label for="qSym">코인</label><input id="qSym" name="q" autocomplete="off" placeholder="BTC" value="${jvE(query && query.q ? query.q : '')}"></div></div><div class="row"><button class="act" type="submit">검색</button>${query && (query.day || query.q) ? `<a target="_top" href="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal' : '')}">전체 보기</a>` : ''}</div>${query && (query.day || query.q) ? `<div class="sub">검색 결과 ${m.tradesTotal}건${m.tradesTotal > m.trades.length ? ` 중 ${m.trades.length}건 표시` : ''}</div>` : ''}</form>`,
   };
   const order = tab === 'assets' ? ['close', 'cf', 'warn'] : tab === 'stats' ? ['stat', 'rv'] : tab === 'journal' ? ['search', 'jr', 'warn'] : ['close', 'stat', 'rv', 'cf', 'jr', 'warn'];
   const title = tab === 'assets' ? '자산 관리' : tab === 'stats' ? '전략별 성적' : '매매일지';
   return `${jvHead('RICH300 ' + title)}<body><main>
-<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">${jvE(m.startDay)} 시작 · 시작 자금 ${jvE(m.startEquity)} USDT</span></header>
+<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">실제 체결 기준 · ${jvE(m.startDay)} 시작</span></header>
 ${dashNav(tab === 'all' ? 'journal' : tab === 'journal' ? 'journal' : tab, appUrl)}
 ${order.map(k => sec[k]).join('\n')}
 <footer>기록 전용 · 자동 주문 없음 · 수정은 사유와 함께 이력으로 남습니다 · 갱신 ${jvE(new Date(m.generatedAt + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' '))} KST</footer></main><script>${JV_JS}</script></body></html>`;
@@ -3546,6 +3866,7 @@ document.addEventListener('submit',function(e){e.preventDefault();var f=e.target
 if(f.id==='eqForm'){var out=$('#eqOut');lock(f);call('rich300EquitySubmit',[{day:$('#eqDay').value,equity:$('#eqVal').value.trim(),unrealized:$('#eqUn').value.trim(),reason:$('#eqWhy').value.trim()}],out)}
 else if(f.id==='cfForm'){var out2=$('#cfOut');lock(f);call('rich300CashflowSubmit',[{formId:cfId,amount:$('#cfAmt').value.trim(),note:$('#cfNote').value.trim()}],out2,function(){cfId=id()})}
 else if(f.classList.contains('cfVoid')){var o3=$('.out',f);if(!f.elements.reason.value.trim()){say(o3,'사유를 입력해 주세요',false);return}lock(f);call('rich300CashflowVoid',[f.getAttribute('data-cf'),f.elements.reason.value.trim()],o3)}
+else if(f.classList.contains('reviewForm')){var o5=$('.out',f);if(!f.elements.plan.value||!f.elements.mind.value){say(o5,'계획과 감정을 선택해 주세요',false);return}lock(f);call('rich300JournalReviewSubmit',[{sid:f.getAttribute('data-sid'),plan:f.elements.plan.value,mind:f.elements.mind.value,memo:f.elements.memo.value.trim()}],o5)}
 else if(f.classList.contains('fillForm')){var o4=$('.out',f),act=e.submitter&&e.submitter.getAttribute('data-act'),reason=f.elements.reason.value.trim();
 if(!reason){say(o4,'사유를 입력해 주세요',false);return}lock(f);
 if(act==='void'){call('rich300JournalVoidFill',[f.getAttribute('data-fill'),reason],o4)}
@@ -3835,7 +4156,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followReport, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -3886,7 +4207,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
           return;
         }
         handles[name] = sh;
-        var cur = sh.getLastRow() >= 1 ? sh.getRange(1, 1, 1, headers.length).getValues()[0].map(String) : [];
+        var cur = sh.getRange(1, 1, 1, headers.length).getValues()[0].map(String);      // 머리글 한 줄만 바로 읽는다(getLastRow 호출 생략; 빈 시트는 빈 문자열이라 아래에서 같이 불일치 처리)
         if (JSON.stringify(cur) !== JSON.stringify(headers)) throw new Error('헤더 불일치: ' + name);
       },
       rows: function (name) {
@@ -3929,7 +4250,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'c55bc690dd4b';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '5a292e064103';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -3953,11 +4274,11 @@ function rich300Html_(html, title) { return HtmlService.createHtmlOutput(html).s
  *  · 페이지 함수가 예외를 던지면 오류 코드와 '다시 시도' 버튼이 있는 화면. 처리 시간은 최근 기록(?p=health)에 남긴다.
  */
 function doGet(e) {
-  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'strat', out;
+  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'dash', out;
   if (name === 'ping') return rich300Ping_();
   try {
     if (rich300UiWho_() !== 'owner') return rich300Html_(RICH300_ENGINE.shellRenderDenied({ appUrl: rich300AppUrl_() }), '접근 제한');
-    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'strat';
+    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'dash';
     var fn = globalThis[RICH300_PAGES_[page]];
     if (typeof fn !== 'function') throw new Error('page-missing');
     out = fn(e);
@@ -4158,6 +4479,15 @@ function rich300EquitySubmit(form) {
     var f = form || {}, r = RICH300_ENGINE.closeSubmitEquity(env, { day: String(f.day || ''), equity: String(f.equity || ''), unrealized: f.unrealized ? String(f.unrealized) : undefined, reason: f.reason ? String(f.reason) : undefined }, { actor: 'ui:journal' });
     var detail = r.diffLabel === null ? '' : '장부 기준 ' + r.expectedLabel + ' · 차이 ' + (r.diffMicro && Number(r.diffMicro) > 0 ? '+' : '') + r.diffLabel + (r.needsReview ? ' (확인 필요)' : '');
     return { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 값이 저장돼 있습니다' : '저장됨', detail: detail, flags: r.flags };
+  });
+}
+function rich300JournalReviewSubmit(form) {
+  return rich300Guarded_(function (env) {
+    var f = form || {};
+    var r = RICH300_ENGINE.journalSaveReview(env, {
+      sid: String(f.sid || ''), plan: String(f.plan || ''), mind: String(f.mind || ''), memo: f.memo === undefined ? undefined : String(f.memo)
+    }, { actor: 'ui:journal' });
+    return { ok: true, status: r.status, message: r.status === 'unchanged' ? '기존 복기와 같습니다' : '복기 저장됨(새로고침하면 이력이 보입니다)' };
   });
 }
 function rich300JournalReviseFill(fillId, patch, reason) {
@@ -4517,6 +4847,7 @@ function rich300WatchCanSend_() {
 function rich300WatchTick() {
   var out = rich300WatchRun_(rich300WatchMode_());                                    // 실제 보유 포지션 감시(기존 동작 그대로)
   try { var sm = rich300StrategyMode_(); if (sm !== 'off') rich300StrategyRun_(sm); } catch (err) { /* 전략 추적 실패가 위치 감시를 막지 않는다 */ }      // 추천 전략 자동 추적(별도 설정·별도 상태)
+  try { var fm = rich300FollowMode_(); if (fm !== 'off') rich300FollowRun_(fm); } catch (err) { /* 1시간 후속 보고 실패가 기존 감시/전략 추적에 영향을 주지 않음 */ }
   return out;
 }
 /** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관, 어떤 속성도 쓰지 않는다). */
@@ -5044,4 +5375,61 @@ function rich300BotCheck() {
   var items = RICH300_ENGINE.checkBotItems(info);
   Logger.log('RICH300 봇 점검(읽기 전용)\n' + items.map(function (i) { return '[' + i.status + '] ' + i.id + ' ' + i.text; }).join('\n'));
   return { ok: items.every(function (i) { return i.status !== 'FAIL'; }), items: items };
+}
+
+// ── gas/Follow.gs ──
+/**
+ * Opt-in hourly follow-up for Telegram "진입했어" signals.
+ * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once each hour.
+ * OFF by default until owner explicitly configures RICH300_HOURLY_FOLLOW=on.
+ * Reuses RICH300 sheet, existing tg: Script Properties namespace and guarded bot transport.
+ * Public OKX/Bybit market data only; no exchange orders or account reads.
+ */
+function rich300FollowMode_() {
+  var v = String(PropertiesService.getScriptProperties().getProperty('RICH300_HOURLY_FOLLOW') || '').trim().toLowerCase();
+  return v === 'on' ? 'on' : v === 'preview' ? 'preview' : 'off';
+}
+function rich300FollowRun_(requested) {
+  var want = requested || rich300FollowMode_();
+  if (want === 'off') return { status: 'off' };
+  var props = PropertiesService.getScriptProperties(), t0 = Date.now(), output, lock = LockService.getUserLock();
+  if (lock && !lock.tryLock(500)) return { status: 'busy' };
+  try {
+    var tgEnv = rich300TgEnv_();
+    var paired = RICH300_ENGINE.tgPairedUser(tgEnv);
+    var live = want === 'on' && rich300WatchCanSend_() && !!paired;
+    var mode = live ? 'on' : 'preview';
+    var env = {
+      now: function () { return Date.now(); },
+      mode: function () { return mode; },
+      storeEnv: tgEnv.storeEnv,
+      kv: tgEnv.kv,
+      market: rich300WatchMarket_,
+      send: function (text, sid) {
+        return paired ? RICH300_ENGINE.tgSendFollow(tgEnv, paired.chatId, text, sid) : { ok: false, code: 'not-paired' };
+      }
+    };
+    output = RICH300_ENGINE.followTick(env);
+    output.requested = want;
+  } catch (err) {
+    output = { status: 'exception', code: String(err && err.code || err && err.name || 'error').slice(0, 30) };
+  } finally { if (lock) lock.releaseLock(); }
+  if (want !== 'preview') {
+    try {
+      props.setProperty('follow:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: output.status, requested: want,
+        mode: output.mode || null, active: output.active || 0, due: output.due || 0, sent: output.sent || 0,
+        failed: output.failed || 0, stale: output.stale || 0, closed: output.closed || 0, code: output.code || null }));
+    } catch (err) { /* never leak market or credentials to logs */ }
+  }
+  return output;
+}
+/** Preview is read-only: calculations only, with no writes and no Telegram sends. */
+function rich300FollowPreview() { return rich300FollowRun_('preview'); }
+function rich300FollowState_() {
+  var props = PropertiesService.getScriptProperties(), raw = props.getProperty('RICH300_HOURLY_FOLLOW'), mode = rich300FollowMode_();
+  var count = ScriptApp.getProjectTriggers().filter(function (x) { return x.getHandlerFunction() === 'rich300WatchTick'; }).length;
+  var canSend = rich300WatchCanSend_(), last = null;
+  try { last = JSON.parse(props.getProperty('follow:last') || 'null'); } catch (err) { last = null; }
+  return { property: raw === null ? 'unset' : mode, mode: mode, triggerCount: count, canSend: canSend,
+    effective: mode === 'off' || count !== 1 ? 'disabled' : (canSend ? 'active' : 'preview-only'), last: last };
 }

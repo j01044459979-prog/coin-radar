@@ -46,7 +46,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
           return;
         }
         handles[name] = sh;
-        var cur = sh.getLastRow() >= 1 ? sh.getRange(1, 1, 1, headers.length).getValues()[0].map(String) : [];
+        var cur = sh.getRange(1, 1, 1, headers.length).getValues()[0].map(String);      // 머리글 한 줄만 바로 읽는다(getLastRow 호출 생략; 빈 시트는 빈 문자열이라 아래에서 같이 불일치 처리)
         if (JSON.stringify(cur) !== JSON.stringify(headers)) throw new Error('헤더 불일치: ' + name);
       },
       rows: function (name) {
