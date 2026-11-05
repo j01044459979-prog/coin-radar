@@ -12,14 +12,14 @@ export const r9StripLine = text => String((text != null ? text : '')).replace(R9
 
 /** 추천 알림 본문 '📈 근거'의 bullet만 보존한다. 없으면 null, 임의 추정은 하지 않는다. */
 export function r9ReasonSummary(text) {
-  const lines = String(text == null ? '' : text).split(/\\r?\\n/);
-  const start = lines.findIndex(line => /📈\\s*근거/.test(line));
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  const start = lines.findIndex(line => /📈\s*근거/.test(line));
   if (start < 0) return null;
   const evidence = [];
   for (let i = start + 1; i < lines.length && evidence.length < 3; i++) {
-    const line = lines[i].trim(), bullet = /^•\\s*(.+)$/.exec(line);
+    const line = lines[i].trim(), bullet = /^•\s*(.+)$/.exec(line);
     if (bullet) { evidence.push(bullet[1].replace(/<[^>]*>/g, '').trim()); continue; }
-    if (evidence.length || line && !/^\\s*$/.test(line)) break;
+    if (evidence.length || line && !/^\s*$/.test(line)) break;
   }
   const summary = evidence.filter(Boolean).join(' / ').slice(0, 120);
   return summary || null;
