@@ -30,8 +30,8 @@ test('고유 ID: 코인·방향·트리거 시각으로 결정적이고 callback
   const ev = evL(), sid = r9Sid('ETHUSDT', ev); assert.match(sid, /^SG-ETH-L-[0-9a-z]+$/); assert.equal(r9Sid('ETHUSDT', evL()), sid);
   assert.match(r9Sid('ETHUSDT', evS()), /^SG-ETH-S-/); assert.notEqual(r9Sid('ETHUSDT', evS()), sid); assert.notEqual(r9Sid('BTCUSDT', ev), sid);
   for (const b of r9Keyboard(sid).inline_keyboard[0]) assert.ok(Buffer.byteLength(b.callback_data) <= 64, b.callback_data);
-  assert.deepEqual(r9Keyboard(sid).inline_keyboard[0].map(b => b.text), ['진입했어', '관망했어', '놓쳤어']);
-  assert.deepEqual(r9Keyboard(sid).inline_keyboard[0].map(b => b.callback_data.split(':')[2]), ['e', 'w', 'm']);
+  assert.deepEqual(r9Keyboard(sid).inline_keyboard[0].map(b => b.text), ['진입했어', '안 했어']);
+  assert.deepEqual(r9Keyboard(sid).inline_keyboard[0].map(b => b.callback_data.split(':')[2]), ['e', 'w']);
 });
 test('기계 줄: 신호 상세(코인·방향·진입·손절·1차·2차·전략·점수·시각)를 담고 값이 없으면 줄을 만들지 않는다', () => {
   const ev = evL(), f = r9Line('ETHUSDT', ev).split(' ');
@@ -42,23 +42,23 @@ test('기계 줄: 신호 상세(코인·방향·진입·손절·1차·2차·전�
   assert.equal(r9Line('ETHUSDT', ev, { strategy: 'B' }).split(' ')[9], 'B');
   assert.equal(r9Line('ETHUSDT', { ...ev, entry: 0.00000123 }).split(' ')[5], '0.00000123');
 });
-test('on: 텍스트 후보에 버튼 3개·고유 ID·기계 줄이 붙고 기존 본문은 그대로다(HTML 안전)', async () => {
+test('on: 텍스트 후보에 버튼 2개·고유 ID·기계 줄이 붙고 기존 본문은 그대로다(HTML 안전)', async () => {
   const r = mk({ RADAR_RICH300_BUTTONS: 'on' }), base = candidateMessage('ETHUSDT', evL(), { now: NOW }); const out = await signalStep(r.args);
   assert.equal(out.sentMessages, 1); const m = r.sd.sent[0]; assert.ok(m.text.startsWith(base.text)); assert.match(m.text, /🆔 SG-ETH-L-/); assert.match(m.text, /<code>R9 v1 SG-ETH-L-[0-9a-z]+ ETHUSDT LONG /);
-  assert.equal(m.opt.html, true); assert.equal(m.opt.markup.inline_keyboard[0].length, 3); assert.ok(m.text.length < 4000);
+  assert.equal(m.opt.html, true); assert.equal(m.opt.markup.inline_keyboard[0].length, 2); assert.ok(m.text.length < 4000);
   assert.ok(base.plain && !/[<>]/.test(m.text.replace(/<\/?(b|code)>/g, '')));
 });
 test('on: 사진 알림은 설명 끝에 ID·기계 줄, 사진 전송에 버튼이 전달된다(텍스트는 따로 보내지 않음)', async () => {
   const photos = []; const sendPhoto = async (png, caption, o) => { photos.push({ png, caption, o }); };
   const r = mk({ RADAR_RICH300_BUTTONS: 'on' }, { sendPhoto, renderChart: async () => PNG }); const out = await signalStep(r.args);
   assert.equal(out.photoSent, 1); assert.equal(r.sd.sent.length, 0); const p = photos[0];
-  assert.ok(p.caption.startsWith(signalCaption('ETHUSDT', evL(), { now: NOW }))); assert.match(p.caption, /\nR9 v1 SG-ETH-L-/); assert.ok([...p.caption].length <= 1024); assert.equal(p.o.markup.inline_keyboard[0].length, 3);
+  assert.ok(p.caption.startsWith(signalCaption('ETHUSDT', evL(), { now: NOW }))); assert.match(p.caption, /\nR9 v1 SG-ETH-L-/); assert.ok([...p.caption].length <= 1024); assert.equal(p.o.markup.inline_keyboard[0].length, 2);
   const off = mk({}, { sendPhoto: async (...a) => { photos.push({ n: a.length }); }, renderChart: async () => PNG }); await signalStep(off.args); assert.equal(photos[1].n, 2);     // off: 호출 인자 수도 기존과 같다(png, caption)
 });
 test('on: 사진이 4xx로 거절되면 버튼 달린 텍스트로 대체, 재실행해도 같은 신호는 다시 나가지 않는다', async () => {
   const sendPhoto = async () => { throw Object.assign(new Error('bad'), { status: 400 }); };
   const r = mk({ RADAR_RICH300_BUTTONS: 'on' }, { sendPhoto, renderChart: async () => PNG }); const out = await signalStep(r.args);
-  assert.equal(out.photoFallback, 1); assert.equal(r.sd.sent.length, 1); assert.equal(r.sd.sent[0].opt.markup.inline_keyboard[0].length, 3);
+  assert.equal(out.photoFallback, 1); assert.equal(r.sd.sent.length, 1); assert.equal(r.sd.sent[0].opt.markup.inline_keyboard[0].length, 2);
   await signalStep({ ...r.args, now: NOW + 16 * 60000 }); assert.equal(r.sd.sent.length, 1);
 });
 test('HTML 400 대체 전송에도 버튼이 유지된다', async () => {
