@@ -16,7 +16,8 @@ h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 8px;color:var(--ink2);fo
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}.pos{color:var(--good)}.neg{color:var(--bad)}.zero{color:var(--ink2)}
 .badge{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--ink2);white-space:nowrap}.badge.warn{background:var(--warnbg);color:var(--warnink);border-color:transparent}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center}.day{padding:8px 0;border-top:1px solid var(--line)}.day:first-of-type{border-top:0}
-label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select,textarea{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+textarea{min-height:90px;resize:vertical}
 button.act{font:inherit;font-size:15px;min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--s1);background:var(--s1);color:#fff;margin-top:10px}button.act.alt{background:none;color:var(--ink);border-color:var(--line)}button.act:disabled{opacity:.5}
 .out{margin-top:8px;font-size:13px;white-space:pre-wrap}.out.bad{color:var(--bad)}.out.ok{color:var(--good)}
 .stat dl,.mini dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}.stat dt,.mini dt{color:var(--mute)}.stat dd,.mini dd{margin:0;text-align:right}.stat h3{font-size:14px;margin:0 0 6px}
@@ -25,6 +26,12 @@ details.trade{border-top:1px solid var(--line);padding:8px 0}details.trade:first
 .fill{border-top:1px dashed var(--line);padding:8px 0;font-size:13px}.fill:first-child{border-top:0}.edits{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--ink2)}.edits li{margin:2px 0}.chg{color:var(--mute)}
 details.edit{margin-top:6px}details.edit>summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-size:13px;color:var(--s1)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
 ul.plain{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}ul.plain li{margin:3px 0}footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
+
+/* Focus navigation: keep advanced pages by direct URL, show only daily work tabs. */
+main{padding-bottom:96px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;display:flex;justify-content:center;gap:10px;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+nav.tabs a{flex:1 1 0;max-width:260px;min-height:48px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:12px;color:var(--ink2);font-size:16px;font-weight:600;text-decoration:none;background:var(--surface)}
+nav.tabs a[aria-current="page"]{border-color:var(--s1);color:var(--s1)}
 `;
 const jvHead = t => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${jvE(t)}</title><style>${JV_CSS}</style></head>`;
 export const journalRenderError = () => `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>일지를 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
@@ -50,26 +57,51 @@ function jvTradeHtml(t) {
   return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE((t.symbol != null ? t.symbol : t.sid))}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
 <div class="sub">${t.response ? `응답: ${jvE(t.response.label)}` : '응답 기록 없음'} · 신호 ${jvE(t.sid)}</div>
 ${t.review ? `<div class="sub">복기: ${jvE(t.review.plan)} · ${jvE(t.review.mind)}${t.review.memo ? ` · ${jvE(t.review.memo)}` : ''} (${jvE(t.review.savedLabel)})</div>${edits(t.review.edits)}` : '<div class="sub">복기 안 함</div>'}
+<details class="edit"><summary>${t.review ? '복기 수정하기' : '10초 복기 작성하기'}</summary>
+<form class="reviewForm" data-sid="${jvE(t.sid)}">
+<label>계획 준수 여부</label><select name="plan" required><option value="">선택하세요</option>
+<option value="plan_ok"${t.review && t.review.planKey==='plan_ok'?' selected':''}>계획대로 진입·청산</option>
+<option value="early_exit"${t.review && t.review.planKey==='early_exit'?' selected':''}>조기 청산</option>
+<option value="chase_or_average_down"${t.review && t.review.planKey==='chase_or_average_down'?' selected':''}>추격 진입·물타기</option>
+<option value="other_violation"${t.review && t.review.planKey==='other_violation'?' selected':''}>기타 위반</option></select>
+<label>매매 당시 감정</label><select name="mind" required><option value="">선택하세요</option>
+<option value="calm"${t.review && t.review.mindKey==='calm'?' selected':''}>침착</option>
+<option value="anxious_rushed"${t.review && t.review.mindKey==='anxious_rushed'?' selected':''}>불안·조급</option>
+<option value="revenge"${t.review && t.review.mindKey==='revenge'?' selected':''}>손실 복구 욕심</option>
+<option value="greedy"${t.review && t.review.mindKey==='greedy'?' selected':''}>욕심</option></select>
+<label>진입 이유·다음에 개선할 점 (최대 500자)</label><textarea name="memo" maxlength="500" placeholder="왜 들어갔고, 다음 거래에서 무엇을 바꿀까요?">${jvE(t.review && t.review.memo ? t.review.memo : '')}</textarea>
+<button class="act" type="submit">복기 저장하기</button><div class="out" role="status"></div>
+</form></details>
+
 ${t.fills.map(fill).join('')}${t.voidedFills.length ? `<div class="sub" style="margin-top:6px">취소된 체결(손익에서 제외됨)</div>${t.voidedFills.map(v => `<div class="fill"><div>${jvE(v.kindLabel)} · ${jvE(v.atLabel)} · ${jvE(v.price)} × ${jvE(v.qty)}</div>${edits(v.edits)}</div>`).join('')}` : ''}</details>`;
 }
 export const JV_TABS = Object.freeze(['journal', 'stats', 'assets']);
 export function journalRenderHtml(m, { appUrl, tab = 'all', query = null } = {}) {
   if (m.empty) return `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>챌린지 설정이 없습니다. 먼저 시작 자금과 시작일을 저장해 주세요.</p></section></main></body></html>`;
   const a = m.analytics, rv = a.reviews, active = JV_TABS.includes(tab) ? tab : 'journal';
+  const entryUrl = p => typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) && p.entry && p.dir
+    ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=fill&sid=' + encodeURIComponent(p.sid) + '&dir=' + encodeURIComponent(p.dir) + '&entry=' + encodeURIComponent(p.entry) + (p.stop ? '&stop=' + encodeURIComponent(p.stop) : '')
+    : null;
+  const pendingHtml = (m.confirmedEntries || []).map(p => {
+    const url = entryUrl(p);
+    return `<div class="day"><div class="row"><span><strong>${jvE(p.symbol)}</strong> · ${jvE(p.dir || '방향 미확인')}</span><span class="badge warn">체결정보 미입력</span></div><div class="sub">${jvE(p.atLabel)} · 텔레그램에서 진입했다고 응답 · 손익 집계 제외</div>${url ? `<a class="cta" target="_top" href="${jvE(url)}">실제 진입가·수량 입력</a>` : ''}</div>`;
+  }).join('');
+  const manualUrl = typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=pos' : null;
+
   const sec = {
     close: `${jvCloseHtml(m)}`,
     stat: `<section aria-labelledby="h-stat"><h2 id="h-stat">통계 <span class="sub">실제 청산 거래만 · 모의 제외</span></h2>${jvStat('전체', a.overall)}<div class="sub" style="margin:-4px 0 8px">승률 구간은 표본이 작을수록 넓어집니다. 30건 미만은 참고용입니다.</div>${a.strategies.map(s => jvStat(s.name, s)).join('')}${a.unlinked ? `<div class="sub">전략을 알 수 없는 거래 ${a.unlinked}건은 전체에만 포함됩니다.</div>` : ''}${a.dirs.map(d => jvStat(d.key, d)).join('')}</section>`,
     rv: `<section aria-labelledby="h-rv"><h2 id="h-rv">10초 복기 분석 <span class="sub">복기율 ${jvE(rv.reviewRate)} (${rv.reviewed}/${rv.total})</span></h2>${rv.byPlan.length ? `<div class="sub">계획 준수</div>${rv.byPlan.map(jvGrp).join('')}` : '<div class="card sub">저장된 복기가 없습니다.</div>'}${rv.byMind.length ? `<div class="sub">심리 상태</div>${rv.byMind.map(jvGrp).join('')}` : ''}${rv.insights.length ? `<div class="card"><strong>참고</strong><ul class="plain">${rv.insights.map(i => `<li>${jvE(i.text)}</li>`).join('')}</ul></div>` : ''}</section>`,
     cf: `<section aria-labelledby="h-cf"><h2 id="h-cf">입출금 기록</h2><div class="card"><form id="cfForm"><div class="sub">거래소와 지갑 사이 입금(+)·출금(−)을 기록합니다. 손익과 분리되어 목표 계산에 영향을 주지 않습니다.</div><label for="cfAmt">금액 (USDT, 입금 +, 출금 −)</label><input id="cfAmt" inputmode="decimal" autocomplete="off"><label for="cfNote">메모 (선택)</label><input id="cfNote" autocomplete="off"><button class="act" type="submit">저장</button><div class="out" id="cfOut" role="status"></div></form></div>
 ${m.cashflows.length ? `<div class="card">${m.cashflows.map(c => `<div class="day"><div class="row"><span>${jvE(c.atLabel)} · <strong>${jvE(c.amount)}</strong> ${jvE(c.note)}</span></div><form class="cfVoid" data-cf="${jvE(c.cfId)}"><div class="row" style="gap:6px"><input name="reason" placeholder="취소 사유" autocomplete="off" aria-label="취소 사유"><button class="act alt" type="submit" style="margin:0;white-space:nowrap">취소</button></div><div class="out" role="status"></div></form></div>`).join('')}</div>` : ''}</section>`,
-    jr: `<section aria-labelledby="h-j"><h2 id="h-j">매매일지 <span class="sub">${m.tradesTotal}건${m.tradesOpen ? ` · 보유 ${m.tradesOpen}` : ''}${m.voidedCount ? ` · 취소된 체결 ${m.voidedCount}` : ''}</span></h2><div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">아직 기록이 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시 (전체 ${m.tradesTotal}건)</div>${m.trades.length < 200 && !(query && (query.day || query.q)) && typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `<a class="cta" target="_top" href="${jvE(appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal&n=' + Math.min(m.trades.length + 40, 200))}">더 보기 (+40건)</a>` : ''}` : ''}</section>`,
+    jr: `<section aria-labelledby="h-j"><h2 id="h-j">내 매매일지 <span class="sub">실제 체결 ${m.tradesTotal}건 · 체결 미입력 ${m.confirmedEntriesTotal || 0}건</span></h2>${manualUrl ? `<a class="cta" target="_top" href="${jvE(manualUrl)}">직접 매매한 종목 등록하기</a>` : ''}${pendingHtml ? `<div class="card"><strong>진입했다고 기록한 거래</strong><div class="sub">텔레그램 버튼만으로는 체결가·수량·손익이 확정되지 않습니다.</div>${pendingHtml}</div>` : ''}<div class="card">${m.trades.length ? m.trades.map(jvTradeHtml).join('') : '<div class="sub">실제 체결 내역이 아직 없습니다.</div>'}</div>${m.tradesTotal > m.trades.length ? `<div class="sub">최근 ${m.trades.length}건만 표시 (전체 ${m.tradesTotal}건)</div>${m.trades.length < 200 && !(query && (query.day || query.q)) && typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `<a class="cta" target="_top" href="${jvE(appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal&n=' + Math.min(m.trades.length + 40, 200))}">더 보기 (+40건)</a>` : ''}` : ''}</section>`,
     warn: `${m.warnings.length ? `<section aria-labelledby="h-w"><h2 id="h-w">데이터 확인</h2><div class="card"><ul class="plain">${m.warnings.map(w => `<li>${jvE(w.text)}</li>`).join('')}</ul></div></section>` : ''}`,
     search: `<form class="card" method="get" action="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl : '')}" target="_top"><input type="hidden" name="p" value="journal"><div class="grid2"><div><label for="qDay">날짜 (진입·청산·체결일)</label><input id="qDay" name="day" type="date" value="${jvE(query && query.day ? query.day : '')}"></div><div><label for="qSym">코인</label><input id="qSym" name="q" autocomplete="off" placeholder="BTC" value="${jvE(query && query.q ? query.q : '')}"></div></div><div class="row"><button class="act" type="submit">검색</button>${query && (query.day || query.q) ? `<a target="_top" href="${jvE(typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? appUrl + (appUrl.includes('?') ? '&' : '?') + 'p=journal' : '')}">전체 보기</a>` : ''}</div>${query && (query.day || query.q) ? `<div class="sub">검색 결과 ${m.tradesTotal}건${m.tradesTotal > m.trades.length ? ` 중 ${m.trades.length}건 표시` : ''}</div>` : ''}</form>`,
   };
   const order = tab === 'assets' ? ['close', 'cf', 'warn'] : tab === 'stats' ? ['stat', 'rv'] : tab === 'journal' ? ['search', 'jr', 'warn'] : ['close', 'stat', 'rv', 'cf', 'jr', 'warn'];
   const title = tab === 'assets' ? '자산 관리' : tab === 'stats' ? '전략별 성적' : '매매일지';
   return `${jvHead('RICH300 ' + title)}<body><main>
-<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">${jvE(m.startDay)} 시작 · 시작 자금 ${jvE(m.startEquity)} USDT</span></header>
+<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">실제 체결 기준 · ${jvE(m.startDay)} 시작</span></header>
 ${dashNav(tab === 'all' ? 'journal' : tab === 'journal' ? 'journal' : tab, appUrl)}
 ${order.map(k => sec[k]).join('\n')}
 <footer>기록 전용 · 자동 주문 없음 · 수정은 사유와 함께 이력으로 남습니다 · 갱신 ${jvE(new Date(m.generatedAt + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' '))} KST</footer></main><script>${JV_JS}</script></body></html>`;
@@ -85,6 +117,7 @@ document.addEventListener('submit',function(e){e.preventDefault();var f=e.target
 if(f.id==='eqForm'){var out=$('#eqOut');lock(f);call('rich300EquitySubmit',[{day:$('#eqDay').value,equity:$('#eqVal').value.trim(),unrealized:$('#eqUn').value.trim(),reason:$('#eqWhy').value.trim()}],out)}
 else if(f.id==='cfForm'){var out2=$('#cfOut');lock(f);call('rich300CashflowSubmit',[{formId:cfId,amount:$('#cfAmt').value.trim(),note:$('#cfNote').value.trim()}],out2,function(){cfId=id()})}
 else if(f.classList.contains('cfVoid')){var o3=$('.out',f);if(!f.elements.reason.value.trim()){say(o3,'사유를 입력해 주세요',false);return}lock(f);call('rich300CashflowVoid',[f.getAttribute('data-cf'),f.elements.reason.value.trim()],o3)}
+else if(f.classList.contains('reviewForm')){var o5=$('.out',f);if(!f.elements.plan.value||!f.elements.mind.value){say(o5,'계획과 감정을 선택해 주세요',false);return}lock(f);call('rich300JournalReviewSubmit',[{sid:f.getAttribute('data-sid'),plan:f.elements.plan.value,mind:f.elements.mind.value,memo:f.elements.memo.value.trim()}],o5)}
 else if(f.classList.contains('fillForm')){var o4=$('.out',f),act=e.submitter&&e.submitter.getAttribute('data-act'),reason=f.elements.reason.value.trim();
 if(!reason){say(o4,'사유를 입력해 주세요',false);return}lock(f);
 if(act==='void'){call('rich300JournalVoidFill',[f.getAttribute('data-fill'),reason],o4)}

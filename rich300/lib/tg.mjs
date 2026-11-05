@@ -20,9 +20,10 @@ import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecStri
 import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger, storeWithLock } from './store.mjs';
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
-import { r9ParseSignal, r9StripLine } from './r9.mjs';
+import { r9ParseSignal, r9StripLine, r9ReasonSummary } from './r9.mjs';
 import { splanBuild, splanCheckAdd, splanStatus, splanLines, splanStatusLines, splanReasonText, splanQty } from './scaleplan.mjs';
 import { nullishOr } from './nullish.mjs';
+import { followStart, followChoice, followKeyboard } from './follow.mjs';
 
 export const TG_MAX_ATTEMPTS = 3;
 export const TG_MAX_WAIT_MS = 10000;                 // 이보다 긴 retry_after는 기다리지 않고 재시도 가능 오류로 반환(다음 트리거에서 재처리)
@@ -86,6 +87,11 @@ const tgAnswer = (env, cbId, text) => tgCall(env, 'answerCallbackQuery', { callb
 const tgOkOrBenign = r => r.ok || r.benign;
 export const tgSendMessage = tgSend;                  // 검증 하니스(테스트 환경 전용)가 임의 메시지를 보낼 때 사용
 // 일 마감 알림 발송(R7): 텍스트 + 선택적 URL 버튼. 결과 코드만 반환(본문·토큰 없음).
+/** Hourly report with hold/close buttons. Same owner-bound Telegram transport and gate. */
+export function tgSendFollow(env, chatId, text, sid) {
+  const markup = followKeyboard(sid);
+  return markup ? tgSend(env, chatId, text, markup) : { ok: false, code: 'bad-sid' };
+}
 export function tgSendNotice(env, chatId, text, url) {
   const r = tgSend(env, chatId, text, url && /^https:\/\/\S+$/.test(url) ? { inline_keyboard: [[{ text: '입력하기', url }]] } : undefined);
   return r.ok ? { ok: true } : { ok: false, code: r.code };
@@ -171,7 +177,7 @@ export function tgPairPoll(env) {
 // ── 메시지·버튼 만들기 ──
 export function tgResponseKeyboard(sid) {
   if (!TG_SID_RE.test(sid)) throw new Error('sid는 영문·숫자·_.- 54자 이하(callback_data 한도)');
-  return { inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '관망했어', callback_data: `r1:${sid}:w` }, { text: '놓쳤어', callback_data: `r1:${sid}:m` }]] };
+  return { inline_keyboard: [[{ text: '진입했어', callback_data: `r1:${sid}:e` }, { text: '안 했어', callback_data: `r1:${sid}:w` }]] };
 }
 export function tgSignalText(s) {
   return [`🔔 ${s.strategy}전략 ${s.dir} ${s.symbolId}`, `진입 ${s.entry} · 손절 ${s.stop} · TP1 ${s.tp1}`, '내 판단은?'].join('\n');
@@ -421,6 +427,7 @@ function tgOnCallback(env, ev) {
   const answer = t => { const r = tgAnswer(env, ev.cbId, t); ev.ack = r.ok ? 'ok' : r.code === 'stale-callback' ? 'stale' : 'failed'; return r; }, parts = ev.data.split(':');   // 응답(answerCallbackQuery) 결과를 ok|stale(제한 시간 만료)|failed 로 분리해 둔다(진단용, 값 없음)
   const cb = { chatId: ev.chatId, messageId: ev.messageId, photo: ev.isPhoto === true };
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
+  if (parts[0] === 'h1' && parts.length === 3 && (parts[2] === 'k' || parts[2] === 'c')) return tgOnFollow(env, ev, parts[1], parts[2], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
   const a = answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button', replyFailed: !tgOkOrBenign(a) };
@@ -431,6 +438,8 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   if (!sg || sg.void) {                                  // R9: COIN RADAR 메시지의 'R9 v1' 줄에서 신호를 만든다(같은 sid의 메시지만, 이미 있으면 건드리지 않음)
     const parsed = r9ParseSignal(ev.msgText);
     if (parsed && parsed.sid === sid) {
+      const why = r9ReasonSummary(ev.msgText);
+      if (why) parsed.summary = why;
       try { storeCreate(se, 'signal', parsed, { actor: 'tg:r9' }); } catch (e) { if (!(e instanceof StoreError)) throw e; if (e.code === 'LOCK') throw e; }
       sg = storeGet(se, 'signal', sid);
     }
@@ -443,14 +452,33 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   }
   const shown = ev.msgText && r9ParseSignal(ev.msgText) ? r9StripLine(ev.msgText) : tgSignalText(sg.data);
   const r = storeCreate(se, 'response', { sid, choice, at: env.now() }, { actor: 'tg' });
-  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
-  const a = answer(`기록: ${RESPONSE_CHOICES[choice]}`), e = tgEdit(env, cb, `${shown}\n→ ${RESPONSE_CHOICES[choice]}`);
-  let replyFailed = !tgOkOrBenign(a) || !tgOkOrBenign(e);
-  if (choice === 'entered' && r.status === 'added') {
-    const link = tgFillLink(env.uiUrl, sg.data), s = tgSend(env, ev.chatId, `진입 기록: /fill ${sid} 증거금 레버리지 ${sg.data.entry} ${sg.data.stop}${link ? '\n(숫자 입력은 아래 화면이 더 편합니다)' : ''}${tgPlanCard(env, sid)}`, link ? { inline_keyboard: [[{ text: '입력 화면 열기', url: link }]] } : undefined);
-    replyFailed = replyFailed || !s.ok;
+  const choiceLabel = choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[choice];
+  if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
+  // 진입 응답은 실제 체결이 아니다. 매매일지의 '진입 확인·체결 미입력'으로만 표시하며,
+  // /fill 안내 메시지와 추가 알림은 보내지 않는다. 안 했어 응답은 여기서 종료한다.
+  // An entered response opts in to 1-hour reassessment. No Fill is created.
+  // If an opt-in state update fails after the response is stored, the response still remains recorded.
+  if (choice === 'entered') followStart(env.kv, sid, env.now());
+  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 1시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
+  const a = answer(`기록: ${choiceLabel}`), e = tgEdit(env, cb, `${shown}\n→ ${outcome}`);
+  return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
+}
+/** User can keep hourly analysis coming, or stop it without pretending the position was actually closed at the exchange. */
+function tgOnFollow(env, ev, sid, action, cb, answer) {
+  if (!TG_SID_RE.test(sid)) { const a = answer('유효하지 않은 신호입니다'); return { status: 'handled', action: 'follow-invalid', replyFailed: !tgOkOrBenign(a) }; }
+  const se = env.storeEnv(), response = storeGet(se, 'response', sid);
+  if (!response || response.void || response.data.choice !== 'entered') {
+    const a = answer('진입 확인이 없는 신호입니다');
+    return { status: 'handled', action: 'follow-not-entered', replyFailed: !tgOkOrBenign(a) };
   }
-  return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed };
+  const choice = followChoice(env.kv, sid, action === 'k' ? 'keep' : 'close', env.now());
+  if (choice.status === 'not-tracked') { const a = answer('추적 정보가 없습니다'); return { status: 'handled', action: 'follow-not-tracked', replyFailed: !tgOkOrBenign(a) }; }
+  const closed = choice.status === 'closed' || choice.status === 'already-closed';
+  const label = closed ? '정리됨 · 1시간 분석 중단' : '유지 중 · 1시간 분석 계속';
+  const a = answer(label);
+  const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\n→ 상태: .+$/, '');
+  const e = tgEdit(env, cb, base.slice(0, 3400) + '\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
+  return { status: 'handled', action: 'follow-' + choice.status, replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
 function tgOnReview(env, ev, parts, cb, answer) {
   const sid = parts[1], st = parts[2], plan = st.slice(0, 2), mind = st.slice(2);

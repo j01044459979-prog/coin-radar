@@ -8,7 +8,7 @@ import { kstDayOf, isDayString } from './time.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
 import { pnlComputeTrade } from './pnl.mjs';
 import { StoreError, ENTITIES, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecString } from './schema.mjs';
-import { storeLoadLedgerInputs, storeList, storeGet, storeCreate, storeRevise, storeVoid, storeReadAudit } from './store.mjs';
+import { storeLoadLedgerInputs, storeList, storeGet, storeCreate, storeRevise, storeVoid, storeReadAudit, storeSaveReview } from './store.mjs';
 import { anBuild, anUsd } from './analytics.mjs';
 import { closeStatus, closeDiagnose, CLOSE_WARNING_TEXT } from './close.mjs';
 import { nullishOr } from './nullish.mjs';
@@ -62,10 +62,22 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
       response: rs ? { choice: rs.choice, label: RESPONSE_CHOICES[rs.choice] } : null,
       fills: rows.filter(r => !r.void).map(r => ({ fillId: r.key, kind: r.data.kind, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, fee: jvText(r.data.fee), funding: jvText(r.data.funding), feeEdit: jvEditAmt(r.data.fee), fundingEdit: jvEditAmt(r.data.funding), note: (r.data.note != null ? r.data.note : ''), rev: r.rev, margin: (r.data.margin != null ? r.data.margin : null), leverage: (r.data.leverage != null ? r.data.leverage : null), plannedStop: (r.data.plannedStop != null ? r.data.plannedStop : null), edits: edits('fill', r.key, r.rev) })),
       voidedFills: rows.filter(r => r.void).map(r => ({ fillId: r.key, kindLabel: (JV_KIND[r.data.kind] != null ? JV_KIND[r.data.kind] : r.data.kind), atLabel: jvKst(r.data.at), price: r.data.price, qty: r.data.qty, edits: edits('fill', r.key, r.rev) })),
-      review: rv ? { plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
+      review: rv ? { planKey: rv.plan, mindKey: rv.mind, plan: PLAN_CHOICES[rv.plan], mind: MIND_CHOICES[rv.mind], memo: (rv.memo != null ? rv.memo : null), savedLabel: jvKst(rv.savedAt), edits: edits('review', t.sid, revRev.get(t.sid)) } : null };
   }).sort((a, b) => b.lastAt - a.lastAt);
   const qDay = typeof day === 'string' && isDayString(day) ? day : null, qSym = typeof q === 'string' ? q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) : '';      // 검색: 해당 날짜에 체결이 있거나 진입·청산한 거래, 코인 이름 일부
   const found = qDay || qSym ? trades.filter(t => (!qDay || t.fillDays.includes(qDay)) && (!qSym || String((t.symbol != null ? t.symbol : t.sid)).toUpperCase().includes(qSym))) : trades;
+  // 텔레그램 [진입했어] 버튼만 누른 건은 '실제 체결 확인 전' 별도 일지에 보관한다.
+  // [안 했어]/[놓쳤어]는 일지에서 완전히 제외하고 손익·자산에 어떤 영향도 주지 않는다.
+  const confirmedEntries = responses.filter(r => r.choice === 'entered' && !led.trades.has(r.sid)).map(r => {
+    const sg = sig.get(r.sid);
+    return {
+      sid: r.sid, symbol: sg && typeof sg.symbolId === 'string' ? sg.symbolId.replace(/USDT$/, '') : r.sid,
+      dir: sg && sg.dir ? sg.dir : null, at: r.at, atLabel: jvKst(r.at),
+      entry: sg && sg.entry ? sg.entry : null, stop: sg && sg.stop ? sg.stop : null,
+      status: 'unconfirmed'
+    };
+  }).filter(t => (!qDay || kstDayOf(t.at) === qDay) && (!qSym || (t.symbol + ' ' + t.sid).toUpperCase().includes(qSym))).sort((a, b) => b.at - a.at);
+
   const warnings = [], rows = led.rows, cnt = f => rows.filter(r => r.flags.includes(f)).length;
   const mism = rows.filter(r => r.needsReview);
   if (mism.length) warnings.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${mism.length}일: ${mism.slice(-5).map(r => `${r.day}(${anUsd(r.diffMicro, { sign: true })})`).join(', ')}` });
@@ -77,8 +89,17 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
   if (cnt('has-estimates')) warnings.push({ type: 'has-estimates', text: `추정 수수료·펀딩이 있는 날 ${cnt('has-estimates')}일(기본 손익 미포함)` });
   for (const f of led.flags) warnings.push({ type: f.type, text: `범위 밖 입력 ${f.count}건(${f.type})` });
   const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').sort((a, b) => b.data.at - a.data.at).slice(0, 10).map(cr => { const c = cr.data; return { cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId, cr.rev) }; });
-  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
+  return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, confirmedEntries: confirmedEntries.slice(0, JOURNAL_SEARCH_LIMIT), confirmedEntriesTotal: confirmedEntries.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
+}
+
+
+/** 10초 복기 작성·수정. 실제 체결된 신호에만 허용하고 기존 R3 감사 이력을 그대로 사용한다. */
+export function journalSaveReview(env, { sid, plan, mind, memo } = {}, { actor = 'ui:journal' } = {}) {
+  if (typeof sid !== 'string' || !sid.trim() || sid.length > 80) jvFail('복기할 거래를 선택해 주세요');
+  const se = env.storeEnv();
+  if (!storeList(se, 'fill').some(row => row.data.sid === sid)) jvFail('실제 체결 기록이 없는 신호는 복기를 저장할 수 없습니다');
+  return storeSaveReview(se, { sid, plan, mind, memo: typeof memo === 'string' && memo.trim() ? memo.trim().slice(0, 500) : undefined }, { actor });
 }
 
 // ── 수정 ──

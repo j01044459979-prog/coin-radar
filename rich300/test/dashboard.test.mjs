@@ -1,4 +1,4 @@
-// 메인 화면(숫자 중심, 그래프 없음) 뷰 모델·렌더 테스트. 모든 데이터는 합성이다.
+// 집중형 메인 화면(자산·5% 목표·복기) 뷰 모델·렌더 테스트. 모든 데이터는 합성이다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dashBuildModel, dashSampleInputs, dashSampleModel, dashBuildFromStore, dashUsd, dashPct } from '../lib/dashboard.mjs';
@@ -19,15 +19,20 @@ test('표시 형식: 금액·퍼센트 부호와 천 단위, 0은 부호 없음'
   assert.equal(dashUsd(1234567890n, { sign: true }), '+1,234.57'); assert.equal(dashUsd(-5000000n, { sign: true }), '−5.00'); assert.equal(dashUsd(0n, { sign: true }), '0.00');
   assert.equal(dashPct(52000n, { sign: true }), '+5.20%'); assert.equal(dashPct(-10000n), '−1.00%'); assert.equal(dashPct(null), '—');
 });
-test('메인 화면 항목 순서: 현재 총자산 → 누적 손익 → 누적 수익률 → 오늘 시작 → 오늘 목표 → 오늘 실현손익 → 목표까지 → 날짜별 표', () => {
+test('집중형 홈 항목 순서: 실제 자산 → 누적 성과 → 일일 목표 → 성장 그래프 → 매매일지', () => {
   const m = dashSampleModel(NOW), t = text(dashRenderHtml(m, { appUrl: 'https://script.google.com/macros/s/X/exec' }));
-  const order = ['현재 총자산', '시작 자금 대비 누적 손익', '시작 자금 대비 누적 수익률', '오늘 시작 자산', '오늘 목표 자산', '오늘 실현손익', '목표까지 남은 금액', '날짜별 마감 자산'].map(k => t.indexOf(k));
+  const order = ['내 실제 총자산', '누적 손익', '누적 수익률', '오늘 복리 목표', '목표까지 남은 수익', '내 자산 증식 현황', '최근 매매일지'].map(k => t.indexOf(k));
   assert.ok(order.every(i => i >= 0), JSON.stringify(order)); assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.match(t, /목표 = 전일 실제 마감 자산/); assert.match(t, /수익을 보장하지 않으며/);
 });
-test('그래프 완전 제거: svg·canvas·script·차트 문구가 없다', () => {
+test('성장 그래프: 실제 입력일만 연결하고, 5% 이상 목표와 별개로 표시한다', () => {
   const html = dashRenderHtml(dashSampleModel(NOW));
-  assert.ok(!/<svg|<canvas|<script|<img|<polyline|성장선|chart|차트|복리선/i.test(html)); assert.equal(dashSampleModel(NOW).series, undefined);
+  assert.match(html, /<svg/); assert.match(html, /이상 5% 복리 목표/);
+  assert.ok(!/<canvas|<script|<img/i.test(html));
+  const m = build(simple(), '2026-10-03');
+  assert.equal(m.daily[0].actualMicro, null);
+  assert.ok(m.daily.every(d => d.actualMicro === null));
+  assert.equal(m.today.progress, null);
 });
 test('현재 총자산·누적: 입력 평가액 기준, 입출금은 손익에서 제외(시작 300·입금 50·평가액 590.62 → +240.62, +80.21%)', () => {
   const m = dashSampleModel(NOW); assert.equal(m.current.label, '590.62'); assert.equal(m.current.pnlLabel, '+240.62'); assert.equal(m.current.returnLabel, '+80.21%'); assert.equal(m.current.cashflowLabel, '+50.00');
@@ -38,8 +43,8 @@ test('현재 총자산·누적: 입력 평가액 기준, 입출금은 손익에�
 });
 test('평가액을 한 번도 입력하지 않으면 임의 잔액을 만들지 않고 "미입력" 표시(누적·남은 금액 포함)', () => {
   const m = build(simple(), '2026-10-03'); assert.equal(m.current, null); assert.equal(m.today.remainingLabel, null); assert.equal(m.today.achieved, false);
-  const html = dashRenderHtml(m, { appUrl: 'https://x.test/exec' }), t = text(html); assert.match(t, /현재 총자산 미입력/); assert.equal((t.match(/미입력/g) || []).length >= 4, true);
-  assert.ok(!/\b300\.00\b/.test(t.split('시작 자금 대비')[0]));                                   // 현재 자산 자리에 시작 자금(300)을 대신 넣지 않는다
+  const html = dashRenderHtml(m, { appUrl: 'https://x.test/exec' }), t = text(html); assert.match(t, /내 실제 총자산 \(입력 평가액\) 미입력/); assert.equal((t.match(/미입력/g) || []).length >= 4, true);
+  assert.ok(!/내 실제 총자산 \(입력 평가액\) 300\.00/.test(t));            // 시작 자금을 입력 평가액으로 둔갑시키지 않는다
   assert.match(html, /평가액 입력하기/); assert.match(html, /p=assets/);
 });
 test('오늘 값: 시작 자산=전일 실제 마감, 목표=전일 마감×1.05, 목표 초과 시 남은 금액 0과 달성 표시(별도)', () => {
@@ -52,7 +57,7 @@ test('오늘 평가액이 없고 이전 입력만 있으면 입력일을 밝히�
   const i = simple(); i.equityInputs = [{ day: '2026-10-01', equity: '400' }]; let m = build(i, '2026-10-02');
   assert.equal(m.current.stale, true); assert.equal(m.current.day, '2026-10-01'); assert.equal(m.today.achieved, false); assert.match(text(dashRenderHtml(m)), /2026-10-01 입력 기준/);
   i.cashflows = [{ cfId: 'w', at: dayStartMs('2026-10-02') + 3600000, amount: '-100' }]; m = build(i, '2026-10-03');      // 출금 후 오늘 목표(315)가 낮아져 예전 입력(400)이 목표를 넘는 경우
-  assert.equal(m.today.achieved, false); assert.equal(m.today.achievedStale, true); assert.match(text(dashRenderHtml(m)), /오늘 평가액 없음/); assert.ok(!/오늘 목표 달성/.test(text(dashRenderHtml(m))));
+  assert.equal(m.today.achieved, false); assert.equal(m.today.achievedStale, false); assert.equal(m.today.remainingLabel, null); assert.equal(m.today.progress, null); assert.match(text(dashRenderHtml(m)), /오늘 평가액 없음/); assert.ok(!/오늘 목표 달성/.test(text(dashRenderHtml(m))));
 });
 test('오늘 실현손익: 오늘 체결의 순손익(수수료·펀딩 반영, 입력된 것만), 입출금과 무관', () => {
   const i = simple(); const day = '2026-10-02', at = dayStartMs(day) + 36000000;
@@ -84,8 +89,8 @@ test('설정 전: 샘플로 대체하지 않는다(없는 잔액 금지). 시작
 test('샘플 화면에는 샘플 배너, 실제 모델에는 없다', () => {
   assert.match(dashRenderHtml(dashSampleModel(NOW)), /샘플 데이터/); const i = simple(); i.equityInputs = [{ day: '2026-10-01', equity: '300' }]; assert.ok(!/샘플/.test(dashRenderHtml(build(i, '2026-10-01'))));
 });
-test('메뉴: 홈·일지·추천·성적·자산 링크(target=_top), appUrl 이 안전하지 않으면 링크 없음, 오류 화면은 내부 정보 없음', () => {
-  const nav = dashNav('dash', 'https://script.google.com/macros/s/X/exec'); for (const p of ['dash', 'journal', 'signals', 'stats', 'assets']) assert.ok(nav.includes(`p=${p}`)); assert.match(nav, /aria-current="page">홈/); assert.match(nav, /target="_top"/);
+test('메뉴: 홈·매매일지 단 두 개, 고급 메뉴는 별도 접근하며 링크 안전성 유지', () => {
+  const nav = dashNav('dash', 'https://script.google.com/macros/s/X/exec'); for (const p of ['dash', 'journal']) assert.ok(nav.includes(`p=${p}`)); for (const p of ['signals', 'stats', 'assets', 'strat']) assert.ok(!nav.includes(`p=${p}`)); assert.match(nav, /aria-current="page">홈/); assert.match(nav, /target="_top"/);
   assert.ok(!/href=/.test(dashNav('dash', 'javascript:alert(1)'))); assert.ok(!/href=/.test(dashNav('dash', undefined))); assert.ok(!dashNav('dash', 'https://x.test/exec"onclick="x').includes('onclick="x'));
   const err = dashRenderError(); assert.match(err, /불러오지 못했습니다/); assert.ok(!/stack|Error|at /.test(text(err)));
   assert.equal(dashEsc('<a href="x">&\'</a>'), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;');
@@ -93,5 +98,55 @@ test('메뉴: 홈·일지·추천·성적·자산 링크(target=_top), appUrl �
 test('결정적: 같은 입력이면 같은 HTML, 외부 리소스·인라인 이벤트 없음', () => {
   const a = dashRenderHtml(dashSampleModel(NOW), { appUrl: 'https://x.test/exec' }), b = dashRenderHtml(dashSampleModel(NOW), { appUrl: 'https://x.test/exec' }); assert.equal(a, b);
   assert.ok(!/ on\w+=|src=|https?:\/\/(?!x\.test)[^"' ]*\.(js|css|woff)/i.test(a));
+});
+
+test('오늘의 실제 평가액 없이는 목표까지 남은 금액과 달성률을 계산하지 않는다', () => {
+  const i = simple(); i.equityInputs = [{day:'2026-10-01',equity:'800'}];
+  const m = build(i,'2026-10-02');
+  assert.equal(m.today.remainingLabel,null); assert.equal(m.today.progress,null);
+  assert.match(dashRenderHtml(m), /오늘 평가액 없음/);
+});
+test('매일 정확히 전일 실제 마감의 5%: $300→$315, 실제 마감 $350이면 다음 날 $367.50', () => {
+  const inputs = simple();
+  let m = build(inputs,'2026-10-01');
+  assert.equal(m.today.startLabel,'300.00');
+  assert.equal(m.today.targetLabel,'315.00');
+  assert.equal(m.today.startRemainingLabel,'15.00');
+  assert.equal(m.today.remainingLabel,null);
+  assert.match(dashRenderHtml(m), /15\.00/);
+  inputs.equityInputs=[{day:'2026-10-01',equity:'350'}];
+  m=build(inputs,'2026-10-02');
+  assert.equal(m.today.startLabel,'350.00');
+  assert.equal(m.today.targetLabel,'367.50');
+  assert.equal(m.today.startRemainingLabel,'17.50');
+  assert.equal(m.today.startConfirmed,true);
+  assert.equal(m.today.remainingLabel,null);
+  inputs.equityInputs.push({day:'2026-10-02',equity:'360'});
+  m=build(inputs,'2026-10-02');
+  assert.equal(m.today.remainingLabel,'7.50');
+  assert.equal(m.today.todayPnlLabel,'+10.00');
+});
+test('전일 실제 마감이 없으면 당일 시작·5% 목표가 임시 추정임을 명시한다', () => {
+  const m=build(simple(),'2026-10-03');
+  assert.equal(m.today.startConfirmed,false);
+  assert.match(dashRenderHtml(m), /전일 실제 마감 평가액 미입력/);
+});
+test('최근 거래는 실체결 장부 기준이며 시뮬레이션 기록을 표시하지 않는다', () => {
+  const noFills = build(simple(),'2026-10-03');
+  assert.deepEqual(noFills.recentTrades, []);
+  const withFill = simple(); const at = dayStartMs('2026-10-01')+3600000;
+  withFill.fills=[{origin:'real',fillId:'a',sid:'realS1',kind:'entry',dir:'LONG',at,price:'100',qty:'1',margin:'10',leverage:'10',fee:{state:'entered',amount:'0.1'},funding:{state:'entered',amount:'0'}}];
+  const m=build(withFill,'2026-10-03');
+  assert.equal(m.recentTrades.length,1);assert.equal(m.recentTrades[0].sid,'realS1');
+  assert.match(dashRenderHtml(m), /realS1/);
+});
+test('입금만으로 목표 5% 달성률이 높아지지 않는다(입출금은 손익과 분리)', () => {
+  const i=simple();i.cashflows=[{cfId:'deposit',at:dayStartMs('2026-10-01')+3600000,amount:'100'}];
+  i.equityInputs=[{day:'2026-10-01',equity:'400'}];
+  const m=build(i,'2026-10-01');
+  assert.equal(m.today.targetProfitLabel,'+15.00');
+  assert.equal(m.today.remainingLabel,'15.00');
+  assert.equal(m.today.progress,0);
+  assert.equal(m.today.achieved,false);
 });
 void ledgerBuildDaily; void decFormat; void addDays; void StoreError;

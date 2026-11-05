@@ -6,7 +6,7 @@ export const dashEsc = v => String((v != null ? v : '')).replace(/[&<>"']/g, c =
 const DASH_ARROW = (pos, neg) => (pos ? '▲' : neg ? '▼' : '■');
 const dashTone = (pos, neg) => (pos ? 'pos' : neg ? 'neg' : 'zero');
 
-export const DASH_PAGES = Object.freeze([['strat', '전략'], ['dash', '홈'], ['pos', '포지션'], ['journal', '일지'], ['signals', '추천'], ['stats', '성적'], ['assets', '자산']]);
+export const DASH_PAGES = Object.freeze([['dash', '홈'], ['journal', '매매일지']]);
 
 export const DASH_CSS = `
 :root{color-scheme:light;--bg:#f6f7f9;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#3f3e3b;--mute:#5c5b57;--line:#dcdbd6;--accent:#2a78d6;--good:#17794f;--bad:#c62828;--warnbg:#fff4d6;--warnink:#6b4a00;--track:#e8e7e2}
@@ -32,6 +32,37 @@ td .sub{display:block}
 .warn{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}.warn li{margin:3px 0}
 .cta{display:inline-block;margin-top:8px;padding:10px 14px;border:1px solid var(--accent);border-radius:10px;color:var(--ink);text-decoration:none;font-size:14px}
 footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
+
+/* Focus UI: only Home and Journal are primary navigation. Other routes remain accessible to owner. */
+main{padding-bottom:96px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;margin:0;justify-content:center;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));gap:10px}
+nav.tabs a{flex:1 1 0;max-width:260px;border-radius:12px;min-height:48px;font-size:16px;display:flex;align-items:center;justify-content:center}
+.focus-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.focus-brand{letter-spacing:-.4px;font-size:23px;font-weight:750}
+.focus-eyebrow{font-size:12px;color:var(--mute)}
+.focus-panel{margin-top:14px}.focus-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.focus-primary{font-size:42px;font-weight:750;letter-spacing:-1px;line-height:1.17;word-break:break-word}
+.focus-unit{font-size:16px;color:var(--mute);font-weight:500}
+.focus-label{font-size:13px;color:var(--mute)}
+.focus-sub{font-size:12px;color:var(--mute);margin-top:7px}
+.focus-mini{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:15px;min-width:0}
+.focus-mini .v{font-size:22px;overflow-wrap:anywhere}
+.focus-target{font-size:28px;font-weight:730}
+.focus-progress{height:11px;border-radius:999px;background:var(--track);overflow:hidden;margin:14px 0 3px}
+.focus-progress span{display:block;background:var(--accent);height:100%;border-radius:999px}
+.focus-progress.empty span{display:none}
+.focus-graph{width:100%;height:auto;display:block;margin:8px 0 0}
+.focus-legend{display:flex;gap:16px;font-size:12px;color:var(--mute);flex-wrap:wrap}
+.focus-legend i{display:inline-block;width:17px;height:3px;vertical-align:middle;margin-right:4px;background:var(--ink2)}
+.focus-legend i.ideal{background:var(--accent);border-top:2px dashed var(--surface)}
+.focus-trade{border-bottom:1px solid var(--line);padding:11px 0}
+.focus-trade:last-child{border-bottom:0}
+.focus-cta{display:block;text-align:center;min-height:44px;margin-top:12px;padding:11px 12px;border-radius:10px;background:var(--accent);color:#fff;text-decoration:none;font-weight:700}
+.focus-secondary{display:block;text-align:center;margin:10px 0;color:var(--ink2);font-size:13px;text-decoration:underline}
+.focus-collapse{margin:14px 0}.focus-collapse summary{cursor:pointer;font-weight:650;min-height:44px;padding:12px}
+.focus-collapse .card{margin-top:4px}
+.focus-note{font-size:12px;line-height:1.5;color:var(--mute)}
+@media(max-width:360px){.focus-primary{font-size:32px}.focus-target{font-size:24px}.focus-mini .v{font-size:19px}}
 `;
 export const dashHead = title => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${dashEsc(title)}</title><style>${DASH_CSS}</style></head>`;
 const dashUrl = (appUrl, p) => (typeof appUrl === 'string' && /^https:\/\/\S+$/.test(appUrl) ? `${appUrl}${appUrl.includes('?') ? '&' : '?'}p=${p}` : null);
@@ -44,36 +75,47 @@ export const dashFooter = m => `<footer>기록 전용 · 자동 주문 없음 ·
 export function dashRenderError(appUrl) {
   return `${dashHead('RICH300')}<body><main><header><h1>RICH 300</h1></header>${dashNav('dash', appUrl)}<section class="card"><p>화면을 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
 }
+function dashGrowthSvg(daily) {
+  const rows = (daily || []).slice().reverse();
+  const values = rows.flatMap(r => [Number(r.idealMicro),r.actualMicro === null ? NaN : Number(r.actualMicro)]).filter(Number.isFinite);
+  if (!rows.length || values.length < 2) return '<div class="focus-sub">기록이 쌓이면 실제 자산과 복리 목표의 성장선이 표시됩니다.</div>';
+  const hi=Math.max(...values),lo=Math.min(...values),span=Math.max(hi-lo,1),x=i=>14+292*(rows.length===1?0.5:i/(rows.length-1)),y=v=>108-(v-lo)/span*92;
+  const ideal=rows.map((r,i)=>`${x(i).toFixed(1)},${y(Number(r.idealMicro)).toFixed(1)}`).join(' ');
+  const parts=[];let current=[];
+  for(let i=0;i<rows.length;i++){const r=rows[i],val=r.actualMicro===null?NaN:Number(r.actualMicro);if(!Number.isFinite(val)){if(current.length>1)parts.push(current.join(' '));current=[];}else current.push(`${x(i).toFixed(1)},${y(val).toFixed(1)}`);}
+  if(current.length>1)parts.push(current.join(' '));
+  const dots=rows.map((r,i)=>r.actualMicro!==null&&Number.isFinite(Number(r.actualMicro))?`<circle cx="${x(i).toFixed(1)}" cy="${y(Number(r.actualMicro)).toFixed(1)}" r="2.5" fill="currentColor"><title>${dashEsc(r.day)} · 실제 입력</title></circle>`:'').join('');
+  return `<svg class="focus-graph" viewBox="0 0 320 124" role="img" aria-label="최근 ${rows.length}일간 실제 입력 평가액(입출금 제외)과 이상 복리 목표 비교"><path d="M14 16H306 M14 62H306 M14 108H306" fill="none" stroke="currentColor" stroke-opacity=".14" stroke-dasharray="3 5"/><polyline points="${ideal}" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="5 5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>${parts.map(p=>`<polyline points="${p}" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}${dots}</svg>`;
+}
 export function dashRenderHtml(m, { appUrl } = {}) {
-  const title = 'RICH300', head = `<header><h1>RICH 300</h1></header>${dashNav('dash', appUrl)}`, sampleBox = m.sample ? '<div class="sample" role="note"><strong>샘플 데이터</strong> — 화면 검증용 예시입니다. 실제 계좌와 무관합니다.</div>' : '';
-  if (m.noChallenge) return `${dashHead(title)}<body><main>${head}<section class="card"><p>챌린지가 아직 설정되지 않았습니다.</p><p class="sub">Apps Script에서 설치 함수를 실행하면 시작 자금 300 USDT로 설정됩니다.</p></section></main></body></html>`;
-  if (m.empty) return `${dashHead(title)}<body><main>${head}${sampleBox}<section class="card"><p>아직 시작 전입니다. 시작일: ${dashEsc(m.startDay)}</p></section></main></body></html>`;
-  const c = m.current, t = m.today, assetsUrl = dashUrl(appUrl, 'assets');
-  const input = assetsUrl ? `<a class="cta" target="_top" href="${dashEsc(assetsUrl)}">평가액 입력하기</a>` : '';
-  const hero = c
-    ? `<div class="k">현재 총자산 (입력 평가액)</div><div class="big">${dashEsc(c.label)}<small>USDT</small></div><div class="sub">${c.today ? '오늘 입력' : `${dashEsc(c.day)} 입력 기준 — 오늘 평가액은 아직 없습니다`}${c.cashflowLabel ? ` · 입출금 ${dashEsc(c.cashflowLabel)}(손익과 분리)` : ''}</div>`
-    : `<div class="k">현재 총자산</div><div class="big zero">미입력<small>USDT</small></div><div class="sub">거래소 평가액을 입력하면 표시됩니다. 입력이 없을 때 임의의 잔액을 만들어 보여 주지 않습니다.</div>${input}`;
-  const goalNote = c && t.achieved ? '<span class="badge ok">✔ 오늘 목표 달성</span>' : c && t.achievedStale ? '<span class="badge">입력 시점 기준 목표 초과(오늘 평가액 없음)</span>' : '';
-  return `${dashHead(title)}<body><main>
-${head}
-${sampleBox}
-<section aria-label="현재 자산"><div class="card hero">${hero}</div></section>
-<section aria-label="시작 자금 대비 성과"><div class="card"><div class="grid2">
-<div><div class="k">시작 자금 대비 누적 손익</div>${c ? `<div class="v ${dashTone(c.pnlPositive, c.pnlNegative)}">${DASH_ARROW(c.pnlPositive, c.pnlNegative)} ${dashEsc(c.pnlLabel)} <small>USDT</small></div>` : '<div class="v zero">미입력</div>'}</div>
-<div><div class="k">시작 자금 대비 누적 수익률</div>${c ? `<div class="v ${dashTone(c.pnlPositive, c.pnlNegative)}">${DASH_ARROW(c.pnlPositive, c.pnlNegative)} ${dashEsc(c.returnLabel)}</div>` : '<div class="v zero">미입력</div>'}</div></div>
-<div class="sub" style="margin-top:8px">시작 자금 ${dashEsc(m.startEquity)} USDT · 입출금은 손익에서 제외</div></div></section>
-<section aria-labelledby="h-today"><h2 id="h-today">오늘 (${dashEsc(t.day)}) · ${t.n}일차</h2><div class="card"><div class="grid2">
-<div><div class="k">오늘 시작 자산</div><div class="v">${dashEsc(t.startLabel)} <small>USDT</small></div></div>
-<div><div class="k">오늘 목표 자산 (+${dashEsc(t.rate)})</div><div class="v">${dashEsc(t.targetLabel)} <small>${dashEsc(t.targetProfitLabel)}</small></div></div>
-<div><div class="k">오늘 실현손익</div><div class="v ${dashTone(t.realizedPositive, t.realizedNegative)}">${DASH_ARROW(t.realizedPositive, t.realizedNegative)} ${dashEsc(t.realizedLabel)} <small>USDT</small></div></div>
-<div><div class="k">목표까지 남은 금액</div>${t.remainingLabel === null ? '<div class="v zero">미입력</div>' : `<div class="v">${dashEsc(t.remainingLabel)} <small>USDT</small></div>`}</div></div>
-${goalNote ? `<div style="margin-top:8px">${goalNote}</div>` : ''}
-${t.needsReview ? `<div class="alert" role="alert">⚠ 장부와 입력 평가액의 차이 ${dashEsc(t.diffLabel)} USDT — 확인이 필요합니다(자동으로 손익에 반영하지 않음).</div>` : ''}
-<div class="sub" style="margin-top:8px">목표 = 전일 실제 마감 자산 × (1+${dashEsc(t.rate)}). 목표치일 뿐 수익을 보장하지 않으며 실제 성과는 입력 평가액 기준입니다.</div></div></section>
-<section aria-labelledby="h-daily"><h2 id="h-daily">날짜별 마감 자산 · 일간 손익${m.dailyTotal > m.daily.length ? ` <span class="sub">(최근 ${m.daily.length}일)</span>` : ''}</h2><div class="card"><table><thead><tr><th>날짜</th><th>마감 자산</th><th>일간 손익</th></tr></thead><tbody>
-${m.daily.map(d => `<tr><td>${dashEsc(d.day.slice(5))}${d.today ? ' <span class="sub">오늘·진행 중</span>' : ''}${d.met ? ' <span class="badge ok">달성</span>' : ''}</td><td>${d.input ? dashEsc(d.closeLabel) : '<span class="sub">미입력</span>'}${d.review ? ' <span class="sub">⚠ 장부 차이</span>' : ''}</td><td class="${dashTone(d.pnlPositive, d.pnlNegative)}">${DASH_ARROW(d.pnlPositive, d.pnlNegative)} ${dashEsc(d.pnlLabel)}${d.input ? '' : '<span class="sub">장부상 실현손익</span>'}</td></tr>`).join('')}
-</tbody></table></div></section>
-${m.warnings.length ? `<section aria-labelledby="h-w"><h2 id="h-w">데이터 확인</h2><div class="card"><ul class="warn">${m.warnings.map(w => `<li>${dashEsc(w.text)}</li>`).join('')}</ul></div></section>` : ''}
-${dashFooter(m)}
+  const head = `<header class="focus-title"><span class="focus-brand">RICH 300</span><span class="focus-eyebrow">MY TRADING JOURNAL</span></header>`;
+  const nav = dashNav('dash',appUrl);
+  const sample = m.sample ? '<div class="sample"><strong>샘플 데이터</strong> · 실제 자산 아님</div>' : '';
+  if (m.noChallenge) return `${dashHead('RICH300')}<body><main>${head}${sample}<section class="card"><p>챌린지가 아직 설정되지 않았습니다.</p><p class="focus-note">계좌 정보 없이 금액을 임의로 표시하지 않습니다.</p></section>${nav}</main></body></html>`;
+  if (m.empty) return `${dashHead('RICH300')}<body><main>${head}${sample}<section class="card">아직 시작 전입니다. 시작일: ${dashEsc(m.startDay)}</section>${nav}</main></body></html>`;
+  const c=m.current,t=m.today,assets=dashUrl(appUrl,'assets'),journal=dashUrl(appUrl,'journal'),ops=dashUrl(appUrl,'ops');
+  const currentHtml=c?`<div class="focus-primary">${dashEsc(c.label)} <span class="focus-unit">USDT</span></div><div class="focus-sub">${c.today?'오늘 입력':`${dashEsc(c.day)} 입력 기준 · 오늘 평가액 없음`}${c.cashflowLabel?` · 입출금 ${dashEsc(c.cashflowLabel)}(손익 별도)`:''}</div>`:`<div class="focus-primary">미입력</div><div class="focus-sub">실제 계좌 평가액을 입력해야 표시됩니다.</div>`;
+  const pnl=c?`<div class="v ${dashTone(c.pnlPositive,c.pnlNegative)}">${DASH_ARROW(c.pnlPositive,c.pnlNegative)} ${dashEsc(c.pnlLabel)}</div>`:'<div class="v">미입력</div>';
+  const ret=c?`<div class="v ${dashTone(c.pnlPositive,c.pnlNegative)}">${DASH_ARROW(c.pnlPositive,c.pnlNegative)} ${dashEsc(c.returnLabel)}</div>`:'<div class="v">미입력</div>';
+  const remaining=t.remainingLabel===null
+    ? `<span class="focus-target">${dashEsc(t.startRemainingLabel)} <span class="focus-unit">USDT</span></span><div class="focus-sub">오늘 평가액 미입력 · 당일 시작 기준 필요 수익 (실시간 잔여 아님)</div>`
+    : `<span class="focus-target">${dashEsc(t.remainingLabel)} <span class="focus-unit">USDT</span></span><div class="focus-sub">오늘 입력 평가액 기준 · 입출금은 수익에서 제외</div>`;
+  const achieved=t.achieved?'<span class="badge ok">오늘 목표 달성</span>':'';
+  const progress=t.progress===null?'<div class="focus-progress empty"><span></span></div><div class="focus-sub">오늘 평가액 없음 · 달성률 계산 대기</div>':`<div class="focus-progress"><span style="width:${Math.max(0,Math.min(100,t.progress)).toFixed(2)}%"></span></div><div class="focus-sub">오늘 수익 목표 달성률 ${dashEsc(t.progressLabel)}${achieved?' · '+achieved:''}</div>`;
+  const realTrades=(m.recentTrades||[]).map(tr=>`<div class="focus-trade"><div class="focus-row"><strong>${dashEsc(tr.symbol||tr.sid)} · ${dashEsc(tr.dir || '')}</strong><strong class="${dashTone(tr.pnlPositive,tr.pnlNegative)}">${tr.status==='unconfirmed'?'체결정보 대기':tr.status==='closed'?dashEsc(tr.netLabel)+' USDT':'보유 중'}</strong></div><div class="focus-sub">${tr.status==='unconfirmed'?'텔레그램 진입 확인 · 손익 집계 제외':tr.status==='closed'?'실제 체결 종료':'실제 체결 기록'}${tr.status==='unconfirmed'?'':' · '+(tr.reviewed?'복기 완료':'복기 필요')}</div></div>`).join('');
+  const tradeSection=realTrades||'<div class="focus-sub">아직 진입 확인 또는 실제 체결 기록이 없습니다. 가상 전략은 표시하지 않습니다.</div>';
+  const history=(m.daily||[]).map(d=>`<tr><td>${dashEsc(d.day.slice(5))}${d.today?' 오늘·진행 중':''}</td><td>${d.input?dashEsc(d.closeLabel):'미입력'}</td><td class="${dashTone(d.pnlPositive,d.pnlNegative)}">${dashEsc(d.pnlLabel)}${d.input?'':' <span class="sub">장부상 실현손익</span>'}</td></tr>`).join('');
+  const records=m.dailyTotal>m.daily.length?` · 최근 ${m.daily.length}일`:'';
+  return `${dashHead('RICH300')}<body><main>${head}${sample}
+<section class="focus-panel" aria-label="내 실제 자산"><div class="card hero"><div class="focus-label">내 실제 총자산 (입력 평가액)</div>${currentHtml}</div></section>
+<section class="focus-panel" aria-label="누적 성과"><div class="grid2"><div class="focus-mini"><div class="focus-label">누적 손익</div>${pnl}</div><div class="focus-mini"><div class="focus-label">누적 수익률</div>${ret}</div></div><p class="focus-sub">시작 자금 ${dashEsc(m.startEquity)} USDT · 입출금 제외 · 실제 평가액 기준</p></section>
+<section class="focus-panel" aria-label="오늘 복리 목표"><div class="card"><div class="focus-row"><h2>오늘 복리 목표 +${dashEsc(t.rate)}</h2><span class="focus-label">${dashEsc(t.day)} · ${t.n}일차</span></div><div class="focus-row"><span class="focus-label">오늘 시작 자산</span><strong>${dashEsc(t.startLabel)} USDT</strong></div><div class="focus-row" style="margin-top:10px"><span class="focus-label">오늘 목표 자산</span><strong>${dashEsc(t.targetLabel)} USDT</strong></div><div class="focus-row" style="margin-top:10px"><span class="focus-label">오늘 목표 수익 (+5%)</span><strong>${dashEsc(t.targetProfitLabel)} USDT</strong></div>${!t.startConfirmed?'<div class="alert">전일 실제 마감 평가액 미입력 · 시작 자산과 목표는 장부 추정치입니다.</div>':''}<div class="focus-label" style="margin-top:18px">목표까지 남은 수익</div>${remaining}${t.todayPnlLabel!==null?`<div class="focus-sub">오늘 실제 손익 ${dashEsc(t.todayPnlLabel)} USDT</div>`:''}${progress}${t.needsReview?`<div class="alert">장부와 입력 평가액의 차이 ${dashEsc(t.diffLabel)} USDT — 확인 필요</div>`:''}<p class="focus-note">목표 = 전일 실제 마감 자산 × (1+${dashEsc(t.rate)}). 목표일 뿐 수익을 보장하지 않으며, 미입력일에는 달성 여부를 추정하지 않습니다.</p></div></section>
+<section class="focus-panel" aria-label="자산 성장"><div class="card"><h2>내 자산 증식 현황</h2>${dashGrowthSvg(m.daily)}<div class="focus-legend"><span><i></i>실제 평가액 (입출금 제외)</span><span><i class="ideal"></i>이상 5% 복리 목표</span></div><div class="focus-row" style="margin-top:14px"><span class="focus-label">이상 복리 목표 자산</span><strong>${dashEsc(m.idealTodayLabel)} USDT</strong></div><div class="focus-row" style="margin-top:8px"><span class="focus-label">이상 복리선까지 격차</span><strong>${m.idealGapLabel===null?'오늘 평가액 미입력':dashEsc(m.idealGapLabel)+' USDT'}</strong></div><p class="focus-note">실제 평가액을 입력한 날짜만 실선으로 표시합니다. 차트는 참고용 목표와 실제 기록을 구분합니다.</p></div></section>
+<section class="focus-panel" aria-label="최근 매매일지"><div class="card"><div class="focus-row"><h2>최근 매매일지</h2>${journal?`<a class="focus-secondary" target="_top" href="${dashEsc(journal)}">전체 보기</a>`:''}</div>${tradeSection}</div></section>
+${assets?`<a class="focus-cta" target="_top" href="${dashEsc(assets)}">오늘 평가액 입력하기</a>`:''}
+<details class="focus-collapse"><summary>날짜별 마감 자산 · 일간 손익${records}</summary><div class="card"><table><thead><tr><th>날짜</th><th>마감 자산</th><th>손익</th></tr></thead><tbody>${history}</tbody></table></div></details>
+${m.warnings.length?`<details class="focus-collapse"><summary>데이터 확인 (${m.warnings.length})</summary><div class="card"><ul class="warn">${m.warnings.map(w=>`<li>${dashEsc(w.text)}</li>`).join('')}</ul></div></details>`:''}
+${ops?`<a class="focus-secondary" target="_top" href="${dashEsc(ops)}">운영 관리</a>`:''}
+${dashFooter(m)}${nav}
 </main></body></html>`;
 }

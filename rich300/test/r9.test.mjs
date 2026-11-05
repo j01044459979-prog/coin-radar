@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeTg, OWNER, STRANGER } from './helpers/faketg.mjs';
 import { tgPoll, tgPairCreate, tgSubmitFillForm, tgParseAt } from '../lib/tg.mjs';
-import { r9ParseSignal, r9StripLine } from '../lib/r9.mjs';
+import { r9ParseSignal, r9StripLine, r9ReasonSummary } from '../lib/r9.mjs';
 import { storeList } from '../lib/store.mjs';
 import { pnlComputeTrade } from '../lib/pnl.mjs';
 import { r9Line, r9Tail } from '../../radar-service/signal/rich300.mjs';
@@ -24,15 +24,23 @@ test('계약: radar가 만든 R9 줄을 앱이 그대로 읽는다(전략·점�
   assert.equal(r9ParseSignal('아무 글'), null); assert.equal(r9ParseSignal(RADAR_TEXT.replace('v1', 'v2')), null); assert.equal(r9ParseSignal(RADAR_TEXT.replace('ETHUSDT LONG', 'ETHUSDT BUY')), null);
   const shown = r9StripLine(RADAR_TEXT); assert.ok(!/R9 v1/.test(shown)); assert.ok(shown.includes('🆔 ' + SID)); assert.ok(shown.includes('진입 관심가'));
 });
-test('[진입했어]: 신호·응답이 저장되고 메시지는 결과로 바뀌며 입력 화면 링크가 온다(기계 줄은 숨김)', () => {
+test('원래 레이더 추천 이유 3줄을 추출해 신호에 보존한다(상세 근거 없는 메시지는 추정 금지)', () => {
+  const text = '🟢 ETH · LONG\n📈 근거\n• 4H 하락 · 1H 저항 눌림\n• 15분 지지 이탈 · 거래량 ×1.5\n• 손절=고점 · 목표=확정 구간\n\n⚠️ 위험' + r9Tail('ETHUSDT',EV).plain;
+  const why = r9ReasonSummary(text);
+  assert.equal(why, '4H 하락 · 1H 저항 눌림 / 15분 지지 이탈 · 거래량 ×1.5 / 손절=고점 · 목표=확정 구간');
+  assert.equal(r9ReasonSummary('근거 없는 메시지'), null);
+  const x = setup(); press(x, 'e', { text });
+  assert.equal(rows(x, 'signal')[0].summary, why);
+});
+test('[진입했어]: 신호·응답과 1시간 추적 상태가 저장되고 Fill과 추가 메시지는 생기지 않는다', () => {
   const x = setup(); const r = press(x, 'e');
   assert.equal(r.handled, 1); const sg = rows(x, 'signal'); assert.equal(sg.length, 1);
   assert.deepEqual({ ...sg[0] }, { sid: SID, strategy: 'S', symbolId: 'ETHUSDT', dir: 'LONG', signalAt: EV.triggerT, entry: '3012.5', stop: '2980', tp1: '3075', tp2: '3120', score: 72 });
   assert.deepEqual(rows(x, 'response').map(r => [r.sid, r.choice]), [[SID, 'entered']]); assert.equal(rows(x, 'fill').length, 0);
-  const ed = x.tele.edits[0]; assert.match(ed.text, /→ 진입했어/); assert.ok(!/R9 v1/.test(ed.text)); assert.deepEqual(ed.reply_markup, { inline_keyboard: [] });
-  const link = x.tele.last().reply_markup.inline_keyboard[0][0].url; assert.ok(link.includes(`sid=${SID}`) && link.includes('entry=3012.5'));
+  const ed = x.tele.edits[0]; assert.match(ed.text, /1시간 분석 등록/); assert.ok(!/R9 v1/.test(ed.text)); assert.deepEqual(ed.reply_markup, { inline_keyboard: [] });
+  assert.equal(x.tele.sent.length, 0); assert.ok(x.kv.get('follow:'+SID));
 });
-test('[관망했어]·[놓쳤어]: 추천 기록에만 남고 체결·손익에는 들어가지 않는다', () => {
+test('[안 했어]와 과거 코드 [놓쳤어]는 체결·손익·1시간 추적을 만들지 않는다', () => {
   for (const [act, ch] of [['w', 'watched'], ['m', 'missed']]) {
     const x = setup(); press(x, act); assert.deepEqual(rows(x, 'response').map(r => r.choice), [ch]); assert.equal(rows(x, 'fill').length, 0); assert.equal(x.tele.sent.length, 0);
   }
@@ -41,7 +49,7 @@ test('중복 클릭·다른 버튼 재클릭·같은 callback 재전달: 신호 
   const x = setup(); const msg = radarMsg(x);
   press(x, 'e', { msg, cbId: 'same' }); press(x, 'e', { msg, cbId: 'same' }); press(x, 'e', { msg, cbId: 'other' }); press(x, 'w', { msg });
   assert.equal(rows(x, 'signal').length, 1); assert.deepEqual(rows(x, 'response').map(r => r.choice), ['entered']);
-  assert.equal(x.tele.sent.filter(m => /진입 기록/.test(m.text)).length, 1);                          // 입력 안내도 한 번만
+  assert.equal(x.tele.sent.filter(m => /진입 기록/.test(m.text)).length, 0); // 진입 응답에는 후속 입력 안내 발송 없음
 });
 test('거부: 낯선 사용자·sid 불일치·값이 잘못된 줄은 아무것도 저장하지 않는다', () => {
   const x = setup(); x.tele.click(STRANGER, radarMsg(x), `r1:${SID}:e`, { text: RADAR_TEXT }); tgPoll(x.env); assert.equal(rows(x, 'signal').length, 0);
@@ -51,7 +59,7 @@ test('거부: 낯선 사용자·sid 불일치·값이 잘못된 줄은 아무것
 });
 test('사진 추천 메시지: 설명(caption)을 읽고 editMessageCaption 으로 결과를 표시한다', () => {
   const x = setup(); x.tele.click(OWNER, radarMsg(x), `r1:${SID}:e`, { caption: RADAR_TEXT, photo: true }); tgPoll(x.env);
-  assert.equal(rows(x, 'signal').length, 1); const ed = x.tele.edits[0]; assert.equal(ed.viaCaption, true); assert.match(ed.text, /→ 진입했어/);
+  assert.equal(rows(x, 'signal').length, 1); const ed = x.tele.edits[0]; assert.equal(ed.viaCaption, true); assert.match(ed.text, /1시간 분석 등록/);
   assert.ok(x.tele.calls.every(c => c.method !== 'editMessageText'));
 });
 test('같은 신호가 재전송돼도 신호는 처음 저장된 값 그대로(불변), 응답만 새로 가능', () => {

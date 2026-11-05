@@ -8,7 +8,7 @@ import { dec, decMul, decFormat, decRoundDiv, decToMicro } from './decimal.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
 import { kstDayOf, dayStartMs, addDays } from './time.mjs';
 import { StoreError } from './schema.mjs';
-import { storeLoadLedgerInputs } from './store.mjs';
+import { storeLoadLedgerInputs, storeList } from './store.mjs';
 
 
 const dashGroup = s => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -44,18 +44,37 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
       returnLabel: dashPct(ppm, { sign: true }), cashflowLabel: curCash === BigInt(0) ? null : dashUsd(curCash, { sign: true }) };
   } else model.current = null;
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
-  const rem = cur ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
+  // 오늘 입력이 없으면 과거 평가액으로 오늘 목표 달성률·남은 금액을 계산하지 않는다.
+  const rem = todayInput ? dashZeroFloor(t.targetProfitMicro - t.pnlMicro) : null, met = todayInput ? t.pnlMicro >= t.targetProfitMicro : null;
+  const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv(t.pnlMicro * BigInt(1000000), t.targetProfitMicro) : null;
+  const progress = progressPpm === null ? null : Math.max(0, Math.min(100, Number(progressPpm) / 10000));
   const real = t.realizedNetMicro;
-  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
+  const previous = rows.length > 1 ? rows[rows.length - 2] : null, startConfirmed = previous === null || previous.closeSource === 'input';
+  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }), startRemainingLabel: dashUsd(t.targetProfitMicro), startConfirmed, todayPnlLabel: todayInput ? dashUsd(t.pnlMicro, { sign: true }) : null,
     realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
-    needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions };
+    needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions, progress, progressLabel: progressPpm === null ? null : dashPct(progressPpm) };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
-  model.daily = rows.slice(-DASH_DAILY_LIMIT).reverse().map(r => {
+  let cashRunning = BigInt(0);
+  const plottingRows = rows.map(r => { cashRunning += r.cashflowMicro; return { r, adjusted: r.closeMicro - cashRunning }; });
+  model.daily = plottingRows.slice(-DASH_DAILY_LIMIT).reverse().map(({ r, adjusted }) => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
     return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > BigInt(0), pnlNegative: p < BigInt(0), pnlBasis: input ? 'equity' : 'realized',
-      targetLabel: dashUsd(r.targetCloseMicro), met: input && r.closeMicro >= r.targetCloseMicro, review: r.needsReview };
+      targetLabel: dashUsd(r.targetCloseMicro), idealMicro: String(r.idealMicro), actualMicro: input ? String(adjusted) : null, met: input && r.pnlMicro >= r.targetProfitMicro, review: r.needsReview };
   });
   model.dailyTotal = rows.length;
+  model.idealTodayLabel = dashUsd(t.idealMicro);
+  model.idealGapLabel = todayInput ? dashUsd(dashZeroFloor(t.idealMicro - (t.closeMicro - cashRunning))) : null;
+  // 장부의 실제 체결만 최근 3건으로 요약. 신호 버튼/가상 전략은 여기에 넣지 않는다.
+  model.recentTrades = [...led.trades.values()].sort((a, b) => {
+    const at = t => t.events.length ? t.events[t.events.length - 1].at : 0;
+    return at(b) - at(a);
+  }).slice(0, 3).map(tr => ({
+    sid: tr.sid, symbol: null, dir: tr.dir, status: tr.status,
+    at: tr.events.length ? tr.events[tr.events.length - 1].at : null,
+    netLabel: dashUsd(tr.totals.netEnteredMicro, { sign: true }),
+    pnlPositive: tr.totals.netEnteredMicro > BigInt(0), pnlNegative: tr.totals.netEnteredMicro < BigInt(0),
+    reviewed: false
+  }));
   // ── 데이터 품질 경고(숨기지 않음) ──
   const w = [], cnt = f => rows.filter(r => r.flags.includes(f)).length;
   if (cnt('ledger-mismatch')) w.push({ type: 'ledger-mismatch', text: `장부와 입력 평가액의 차이가 큰 날 ${cnt('ledger-mismatch')}일(확인 필요, 자동으로 손익에 반영하지 않음)` });
@@ -69,7 +88,26 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
 export function dashBuildFromStore(env, { now }) {
   let inputs;
   try { inputs = storeLoadLedgerInputs(env); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
-  return dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
+  const model = dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
+  {
+    const signals = new Map(storeList(env, 'signal').map(r => [r.data.sid, r.data]));
+    const reviews = new Set(storeList(env, 'review').map(r => r.data.sid));
+    for (const tr of model.recentTrades) {
+      const sig = signals.get(tr.sid);
+      tr.symbol = sig && typeof sig.symbolId === 'string' ? sig.symbolId.replace(/USDT$/, '') : null;
+      tr.reviewed = reviews.has(tr.sid);
+    }
+    const filled = new Set(storeList(env, 'fill').map(r => r.data.sid));
+    const responses = storeList(env, 'response').map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
+    const pending = responses.map(r => {
+      const sig = signals.get(r.sid);
+      return { sid: r.sid, symbol: sig && sig.symbolId ? sig.symbolId.replace(/USDT$/, '') : r.sid,
+        dir: sig ? sig.dir : null, status: 'unconfirmed', at: r.at, reviewed: false,
+        netLabel: null, pnlPositive: false, pnlNegative: false };
+    });
+    model.recentTrades = [...model.recentTrades, ...pending].sort((a,b) => b.at - a.at).slice(0, 3);
+  }
+  return model;
 }
 
 // ── 샘플 데이터(화면 검증용, 결정적) ──

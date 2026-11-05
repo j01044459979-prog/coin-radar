@@ -45,21 +45,22 @@ test('페어링: 비페어링 발신자는 무응답·무기록, 코드 1회용�
 });
 
 // ───────────── 신호 버튼 ─────────────
-test('버튼: 3택 callback_data는 64바이트 이내, 진입/관망/놓침 1회 기록·재클릭·재전달·다른 선택은 중복 없이 처리', () => {
+test('버튼: 2택 진입/안 했어만 노출, 중복 저장 없이 일지 기록과 텔레그램 종료', () => {
   const x = setup({ uiUrl: 'https://example.com/exec' }), m = prompt(x);
   assert.equal(m.text.split('\n').length, 3);
-  const kb = m.reply_markup.inline_keyboard[0]; assert.deepEqual(kb.map(b => b.text), ['진입했어', '관망했어', '놓쳤어']);
+  const kb = m.reply_markup.inline_keyboard[0]; assert.deepEqual(kb.map(b => b.text), ['진입했어', '안 했어']);
+  const beforeSent = x.tele.sent.length;
   for (const b of kb) assert.ok(Buffer.byteLength(b.callback_data) <= 64);
   const u = x.tele.click(OWNER, m, btn(m, '진입했어')); let r = poll(x); assert.equal(r.handled, 1);
   assert.equal(rows(x, 'response').length, 1); assert.equal(rows(x, 'response')[0].choice, 'entered');
   assert.equal(x.tele.answers.at(-1).text, '기록: 진입했어'); assert.deepEqual(x.tele.edits.at(-1).reply_markup, { inline_keyboard: [] });           // 키보드 제거
-  const g = lastSent(x); assert.match(g.text, /\/fill A-BTC-1 증거금 레버리지 100 98/); assert.match(g.reply_markup.inline_keyboard[0][0].url, /^https:\/\/example\.com\/exec\?p=fill&sid=A-BTC-1&dir=LONG&entry=100&stop=98$/);
+  assert.equal(x.tele.sent.length, beforeSent); assert.match(x.tele.edits.at(-1).text, /웹앱 매매일지 기록 · 1시간 분석 등록/); assert.equal(rows(x, 'fill').length, 0);
   const auditN = x.mem.sheets.get('Audit').length, sentN = x.tele.sent.length;
   // 같은 update 재전달(오프셋 유실)·같은 버튼 다시 클릭(새 callback id)
   x.kv.del('offset'); r = poll(x); assert.equal(r.duplicate >= 1, true); assert.equal(x.mem.sheets.get('Audit').length, auditN); assert.equal(x.tele.sent.length, sentN);
   r = click(x, m, btn(m, '진입했어')); assert.equal(rows(x, 'response').length, 1); assert.equal(x.tele.sent.length, sentN);                                    // 안내 재발송 없음
   // 다른 선택은 기존 기록을 바꾸지 않음
-  click(x, m, btn(m, '관망했어')); assert.equal(rows(x, 'response')[0].choice, 'entered'); assert.match(x.tele.answers.at(-1).text, /이미 '진입했어'로 기록됨/);
+  click(x, m, btn(m, '안 했어')); assert.equal(rows(x, 'response')[0].choice, 'entered'); assert.match(x.tele.answers.at(-1).text, /이미 '진입했어'로 기록됨/);
   assert.equal(rows(x, 'tgupdate').length >= 3, true);
 });
 test('버튼: 알 수 없는 신호·잘못된 버튼·긴 sid·형식 오류 처리, 관망/놓침은 후속 입력 없음', () => {
@@ -173,7 +174,7 @@ test('tgCall: 429(retry_after) 대기 후 재시도, 긴 대기는 재시도 가
   assert.equal(tgClassify(0), 'network'); assert.equal(tgClassify(200, ''), 'other');
 });
 test('폴링: 처리 실패(LOCK)는 오프셋을 올리지 않고 다음 틱에 재처리, 3회 연속 실패는 건너뜀, 락 선점 중 중복 실행 방지', () => {
-  const x = setup(); const m = prompt(x); x.tele.click(OWNER, m, btn(m, '관망했어'));
+  const x = setup(); const m = prompt(x); x.tele.click(OWNER, m, btn(m, '안 했어'));
   x.mem.setLockBusy(true); let r = poll(x); assert.equal(r.retry, 1); assert.equal(rows(x, 'response').length, 0);
   r = poll(x); assert.equal(r.retry, 1); x.mem.setLockBusy(false); r = poll(x); assert.equal(r.handled, 1); assert.equal(rows(x, 'response')[0].choice, 'watched');
   // 포이즌: 같은 update가 계속 실패하면 3번째에 건너뛰고 다음 update를 처리
