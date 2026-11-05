@@ -97,7 +97,7 @@ export function dashBuildFromStore(env, { now }) {
       tr.symbol = sig && typeof sig.symbolId === 'string' ? sig.symbolId.replace(/USDT$/, '') : null;
       tr.reviewed = reviews.has(tr.sid);
     }
-    const filled = new Set(model.recentTrades.map(t => t.sid));
+    const filled = new Set(storeList(env, 'fill').map(r => r.data.sid));
     const responses = storeList(env, 'response').map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
     const pending = responses.map(r => {
       const sig = signals.get(r.sid);
