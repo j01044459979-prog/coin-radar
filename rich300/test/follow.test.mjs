@@ -31,7 +31,7 @@ test('최초 진입 확인부터 1시간 뒤 첫 보고, 5분 재실행은 중�
   const x=setup(),r=followStart(x.kv,SIG.sid,AT);
   assert.equal(r.status,'added');assert.equal(followStart(x.kv,SIG.sid,AT).status,'duplicate');
   let out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,1);
-  assert.match(x.calls[0].msg,/4H 추세·1H 눌림/);assert.match(x.calls[0].msg,/실제 체결 미확인/);
+  assert.match(x.calls[0].msg,/추천 세부 설명 미저장/);assert.match(x.calls[0].msg,/실제 체결 미확인/);
   assert.match(x.calls[0].msg,/손절/);assert.match(x.calls[0].msg,/TP1/);
   assert.equal(storeList(x.m.env,'fill').length,0); // fake Telegram entry != exchange execution
   x.setNow(NOW+5*60000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
