@@ -57,7 +57,7 @@ test('오늘 평가액이 없고 이전 입력만 있으면 입력일을 밝히�
   const i = simple(); i.equityInputs = [{ day: '2026-10-01', equity: '400' }]; let m = build(i, '2026-10-02');
   assert.equal(m.current.stale, true); assert.equal(m.current.day, '2026-10-01'); assert.equal(m.today.achieved, false); assert.match(text(dashRenderHtml(m)), /2026-10-01 입력 기준/);
   i.cashflows = [{ cfId: 'w', at: dayStartMs('2026-10-02') + 3600000, amount: '-100' }]; m = build(i, '2026-10-03');      // 출금 후 오늘 목표(315)가 낮아져 예전 입력(400)이 목표를 넘는 경우
-  assert.equal(m.today.achieved, false); assert.equal(m.today.achievedStale, true); assert.equal(m.today.remainingLabel, null); assert.equal(m.today.progress, null); assert.match(text(dashRenderHtml(m)), /오늘 평가액 없음/); assert.ok(!/오늘 목표 달성/.test(text(dashRenderHtml(m))));
+  assert.equal(m.today.achieved, false); assert.equal(m.today.achievedStale, false); assert.equal(m.today.remainingLabel, null); assert.equal(m.today.progress, null); assert.match(text(dashRenderHtml(m)), /오늘 평가액 없음/); assert.ok(!/오늘 목표 달성/.test(text(dashRenderHtml(m))));
 });
 test('오늘 실현손익: 오늘 체결의 순손익(수수료·펀딩 반영, 입력된 것만), 입출금과 무관', () => {
   const i = simple(); const day = '2026-10-02', at = dayStartMs(day) + 36000000;
@@ -114,5 +114,14 @@ test('최근 거래는 실체결 장부 기준이며 시뮬레이션 기록을 �
   const m=build(withFill,'2026-10-03');
   assert.equal(m.recentTrades.length,1);assert.equal(m.recentTrades[0].sid,'realS1');
   assert.match(dashRenderHtml(m), /realS1/);
+});
+test('입금만으로 목표 5% 달성률이 높아지지 않는다(입출금은 손익과 분리)', () => {
+  const i=simple();i.cashflows=[{cfId:'deposit',at:dayStartMs('2026-10-01')+3600000,amount:'100'}];
+  i.equityInputs=[{day:'2026-10-01',equity:'400'}];
+  const m=build(i,'2026-10-01');
+  assert.equal(m.today.targetProfitLabel,'+15.00');
+  assert.equal(m.today.remainingLabel,'15.00');
+  assert.equal(m.today.progress,0);
+  assert.equal(m.today.achieved,false);
 });
 void ledgerBuildDaily; void decFormat; void addDays; void StoreError;
