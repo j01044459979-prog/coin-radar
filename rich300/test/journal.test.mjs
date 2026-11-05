@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { memEnv } from './helpers/memenv.mjs';
 import { storeInit, storeCreate, storeSetupChallenge, storeGet, storeList, storeIntegrityCheck, storeBuildLedger } from '../lib/store.mjs';
 import { StoreError } from '../lib/schema.mjs';
-import { journalBuild, journalHistory, journalDiff, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, JOURNAL_FILL_EDITABLE } from '../lib/journal.mjs';
+import { journalBuild, journalHistory, journalDiff, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, JOURNAL_FILL_EDITABLE, journalSaveReview } from '../lib/journal.mjs';
 import { closeRun } from '../lib/close.mjs';
 import { dayStartMs } from '../lib/time.mjs';
 
@@ -22,6 +22,18 @@ function setup() {
 }
 const fills = x => storeList(x.m.env, 'fill').map(r => r.data);
 
+test('웹 매매일지에서 기존 실제 체결의 복기를 수정하고 감사 이력을 유지한다', () => {
+  const x = setup(), before = storeGet(x.m.env, 'review', 'A-1').rev;
+  const r = journalSaveReview(x.env, { sid: 'A-1', plan: 'early_exit', mind: 'anxious_rushed', memo: '다음에는 손절을 지키자' });
+  assert.equal(r.status, 'revised');
+  const saved = storeGet(x.m.env, 'review', 'A-1');
+  assert.equal(saved.rev, before + 1);
+  assert.equal(saved.data.memo, '다음에는 손절을 지키자');
+  assert.deepEqual([journalBuild(x.env).trades[0].review.planKey, journalBuild(x.env).trades[0].review.mindKey], ['early_exit', 'anxious_rushed']);
+  assert.equal(journalSaveReview(x.env, { sid: 'A-1', plan: 'early_exit', mind: 'anxious_rushed', memo: '다음에는 손절을 지키자' }).status, 'unchanged');
+  assert.throws(() => journalSaveReview(x.env, { sid: 'NO_FILL', plan: 'plan_ok', mind: 'calm' }), e => e instanceof StoreError && e.code === 'VALIDATION');
+  assert.equal(storeIntegrityCheck(x.m.env).ok, true);
+});
 test('일지 조회: 거래·체결 타임라인·응답·복기·마감 상태·통계·경고가 한 모델에 나온다', () => {
   const x = setup(); closeRun(x.env); const j = journalBuild(x.env);
   assert.equal(j.empty, false); assert.deepEqual([j.tradesTotal, j.tradesOpen, j.voidedCount, j.startDay], [1, 0, 0, D1]); const t = j.trades[0];
