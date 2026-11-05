@@ -16,7 +16,8 @@ h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 8px;color:var(--ink2);fo
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}.pos{color:var(--good)}.neg{color:var(--bad)}.zero{color:var(--ink2)}
 .badge{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--ink2);white-space:nowrap}.badge.warn{background:var(--warnbg);color:var(--warnink);border-color:transparent}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center}.day{padding:8px 0;border-top:1px solid var(--line)}.day:first-of-type{border-top:0}
-label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px}input,select,textarea{width:100%;padding:10px 12px;font:inherit;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-width:0}
+textarea{min-height:90px;resize:vertical}
 button.act{font:inherit;font-size:15px;min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--s1);background:var(--s1);color:#fff;margin-top:10px}button.act.alt{background:none;color:var(--ink);border-color:var(--line)}button.act:disabled{opacity:.5}
 .out{margin-top:8px;font-size:13px;white-space:pre-wrap}.out.bad{color:var(--bad)}.out.ok{color:var(--good)}
 .stat dl,.mini dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}.stat dt,.mini dt{color:var(--mute)}.stat dd,.mini dd{margin:0;text-align:right}.stat h3{font-size:14px;margin:0 0 6px}
@@ -56,6 +57,22 @@ function jvTradeHtml(t) {
   return `<details class="trade" data-dir="${jvE(t.dir)}"><summary><span><span class="pill">${jvE(t.dir)}</span><strong>${jvE((t.symbol != null ? t.symbol : t.sid))}</strong>${t.strategy ? ` <span class="badge">${jvE(t.strategy)}전략</span>` : ''}<div class="sub">${jvE(t.openedLabel)}${t.closedLabel ? ` → ${jvE(t.closedLabel)}` : ' · 보유 중'}</div></span><span class="${dirTone}"><strong>${t.status === 'open' ? '진행' : `${JV_ARROW(t.win, t.loss)} ${jvE(t.netLabel)}`}</strong></span></summary>
 <div class="sub">${t.response ? `응답: ${jvE(t.response.label)}` : '응답 기록 없음'} · 신호 ${jvE(t.sid)}</div>
 ${t.review ? `<div class="sub">복기: ${jvE(t.review.plan)} · ${jvE(t.review.mind)}${t.review.memo ? ` · ${jvE(t.review.memo)}` : ''} (${jvE(t.review.savedLabel)})</div>${edits(t.review.edits)}` : '<div class="sub">복기 안 함</div>'}
+<details class="edit"><summary>${t.review ? '복기 수정하기' : '10초 복기 작성하기'}</summary>
+<form class="reviewForm" data-sid="${jvE(t.sid)}">
+<label>계획 준수 여부</label><select name="plan" required><option value="">선택하세요</option>
+<option value="plan_ok"${t.review && t.review.planKey==='plan_ok'?' selected':''}>계획대로 진입·청산</option>
+<option value="early_exit"${t.review && t.review.planKey==='early_exit'?' selected':''}>조기 청산</option>
+<option value="chase_or_average_down"${t.review && t.review.planKey==='chase_or_average_down'?' selected':''}>추격 진입·물타기</option>
+<option value="other_violation"${t.review && t.review.planKey==='other_violation'?' selected':''}>기타 위반</option></select>
+<label>매매 당시 감정</label><select name="mind" required><option value="">선택하세요</option>
+<option value="calm"${t.review && t.review.mindKey==='calm'?' selected':''}>침착</option>
+<option value="anxious_rushed"${t.review && t.review.mindKey==='anxious_rushed'?' selected':''}>불안·조급</option>
+<option value="revenge"${t.review && t.review.mindKey==='revenge'?' selected':''}>손실 복구 욕심</option>
+<option value="greedy"${t.review && t.review.mindKey==='greedy'?' selected':''}>욕심</option></select>
+<label>진입 이유·다음에 개선할 점 (최대 500자)</label><textarea name="memo" maxlength="500" placeholder="왜 들어갔고, 다음 거래에서 무엇을 바꿀까요?">${jvE(t.review && t.review.memo ? t.review.memo : '')}</textarea>
+<button class="act" type="submit">복기 저장하기</button><div class="out" role="status"></div>
+</form></details>
+
 ${t.fills.map(fill).join('')}${t.voidedFills.length ? `<div class="sub" style="margin-top:6px">취소된 체결(손익에서 제외됨)</div>${t.voidedFills.map(v => `<div class="fill"><div>${jvE(v.kindLabel)} · ${jvE(v.atLabel)} · ${jvE(v.price)} × ${jvE(v.qty)}</div>${edits(v.edits)}</div>`).join('')}` : ''}</details>`;
 }
 export const JV_TABS = Object.freeze(['journal', 'stats', 'assets']);
@@ -91,6 +108,7 @@ document.addEventListener('submit',function(e){e.preventDefault();var f=e.target
 if(f.id==='eqForm'){var out=$('#eqOut');lock(f);call('rich300EquitySubmit',[{day:$('#eqDay').value,equity:$('#eqVal').value.trim(),unrealized:$('#eqUn').value.trim(),reason:$('#eqWhy').value.trim()}],out)}
 else if(f.id==='cfForm'){var out2=$('#cfOut');lock(f);call('rich300CashflowSubmit',[{formId:cfId,amount:$('#cfAmt').value.trim(),note:$('#cfNote').value.trim()}],out2,function(){cfId=id()})}
 else if(f.classList.contains('cfVoid')){var o3=$('.out',f);if(!f.elements.reason.value.trim()){say(o3,'사유를 입력해 주세요',false);return}lock(f);call('rich300CashflowVoid',[f.getAttribute('data-cf'),f.elements.reason.value.trim()],o3)}
+else if(f.classList.contains('reviewForm')){var o5=$('.out',f);if(!f.elements.plan.value||!f.elements.mind.value){say(o5,'계획과 감정을 선택해 주세요',false);return}lock(f);call('rich300JournalReviewSubmit',[{sid:f.getAttribute('data-sid'),plan:f.elements.plan.value,mind:f.elements.mind.value,memo:f.elements.memo.value.trim()}],o5)}
 else if(f.classList.contains('fillForm')){var o4=$('.out',f),act=e.submitter&&e.submitter.getAttribute('data-act'),reason=f.elements.reason.value.trim();
 if(!reason){say(o4,'사유를 입력해 주세요',false);return}lock(f);
 if(act==='void'){call('rich300JournalVoidFill',[f.getAttribute('data-fill'),reason],o4)}
