@@ -8,7 +8,7 @@ import { kstDayOf, isDayString } from './time.mjs';
 import { ledgerBuildDaily } from './ledger.mjs';
 import { pnlComputeTrade } from './pnl.mjs';
 import { StoreError, ENTITIES, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecString } from './schema.mjs';
-import { storeLoadLedgerInputs, storeList, storeGet, storeCreate, storeRevise, storeVoid, storeReadAudit } from './store.mjs';
+import { storeLoadLedgerInputs, storeList, storeGet, storeCreate, storeRevise, storeVoid, storeReadAudit, storeSaveReview } from './store.mjs';
 import { anBuild, anUsd } from './analytics.mjs';
 import { closeStatus, closeDiagnose, CLOSE_WARNING_TEXT } from './close.mjs';
 import { nullishOr } from './nullish.mjs';
@@ -79,6 +79,15 @@ export function journalBuild(env, { now = env.now(), limit = JOURNAL_LIMIT, day 
   const closes = closeStatus(env, { now, days: 14 }), cash = storeList(se, 'cashflow').sort((a, b) => b.data.at - a.data.at).slice(0, 10).map(cr => { const c = cr.data; return { cfId: c.cfId, atLabel: jvKst(c.at), amount: c.amount, note: (c.note != null ? c.note : ''), edits: edits('cashflow', c.cfId, cr.rev) }; });
   return { empty: false, generatedAt: now, today: throughDay, startDay: inputs.challenge.startDay, startEquity: inputs.challenge.startEquity, trades: found.slice(0, qDay || qSym ? JOURNAL_SEARCH_LIMIT : limit), tradesTotal: found.length, tradesOpen: found.filter(t => t.status === 'open').length, searched: !!(qDay || qSym), voidedCount: voided.length,
     closes, presetDay: (nullishOr(nullishOr(closes.find(c => c.closed && c.equity === null), closes[0]), { day: throughDay })).day, cashflows: cash, analytics: anBuild({ ledgerTrades: led.trades, fills: inputs.fills, signals, reviews, startMicro: decToMicro(dec(inputs.challenge.startEquity)) }), warnings, warningText: CLOSE_WARNING_TEXT };
+}
+
+
+/** 10초 복기 작성·수정. 실제 체결된 신호에만 허용하고 기존 R3 감사 이력을 그대로 사용한다. */
+export function journalSaveReview(env, { sid, plan, mind, memo } = {}, { actor = 'ui:journal' } = {}) {
+  if (typeof sid !== 'string' || !sid.trim() || sid.length > 80) jvFail('복기할 거래를 선택해 주세요');
+  const se = env.storeEnv();
+  if (!storeList(se, 'fill').some(row => row.data.sid === sid)) jvFail('실제 체결 기록이 없는 신호는 복기를 저장할 수 없습니다');
+  return storeSaveReview(se, { sid, plan, mind, memo: typeof memo === 'string' && memo.trim() ? memo.trim().slice(0, 500) : undefined }, { actor });
 }
 
 // ── 수정 ──
