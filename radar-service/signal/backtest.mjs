@@ -74,7 +74,7 @@ export function collectSignalEvents(symbol, c15, btc15 = null, { from = SBT.warm
       const res = {};
       for (const model of ['close', 'wick']) { res[model] = pathOutcome(c15, i, e.dir, e.stop, t1, { stopModel: model, horizon }); res[`${model}T2`] = pathOutcome(c15, i, e.dir, e.stop, t2 ?? t1, { stopModel: model, horizon }); }
       if (!res.wick || res.wick.skipped) continue;                                              // 다음 봉 시가가 이미 손절 기준을 넘음
-      bucket.push({ symbol, i, t: closeT, dir: e.dir, stage: a.stage, score: a.score?.total ?? null, volRel: e.volRel, rr1: e.t1.rr, net1: e.t1.net, hasT2: Boolean(e.t2), riskPct: e.riskPct, btcAlign: a.metrics.btcAlign, res });
+      bucket.push({ symbol, i, t: closeT, dir: e.dir, strategy: 'S', stop: e.stop, stage: a.stage, score: a.score?.total ?? null, volRel: e.volRel, rr1: e.t1.rr, net1: e.t1.net, hasT2: Boolean(e.t2), riskPct: e.riskPct, btcAlign: a.metrics.btcAlign, res });
     }
   }
   return out;
