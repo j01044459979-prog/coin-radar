@@ -54,7 +54,7 @@ test('버튼: 2택 진입/안 했어만 노출, 중복 저장 없이 일지 기�
   const u = x.tele.click(OWNER, m, btn(m, '진입했어')); let r = poll(x); assert.equal(r.handled, 1);
   assert.equal(rows(x, 'response').length, 1); assert.equal(rows(x, 'response')[0].choice, 'entered');
   assert.equal(x.tele.answers.at(-1).text, '기록: 진입했어'); assert.deepEqual(x.tele.edits.at(-1).reply_markup, { inline_keyboard: [] });           // 키보드 제거
-  assert.equal(x.tele.sent.length, beforeSent); assert.match(x.tele.edits.at(-1).text, /웹앱 매매일지에 기록됨/); assert.equal(rows(x, 'fill').length, 0);
+  assert.equal(x.tele.sent.length, beforeSent); assert.match(x.tele.edits.at(-1).text, /웹앱 매매일지 기록 · 1시간 분석 등록/); assert.equal(rows(x, 'fill').length, 0);
   const auditN = x.mem.sheets.get('Audit').length, sentN = x.tele.sent.length;
   // 같은 update 재전달(오프셋 유실)·같은 버튼 다시 클릭(새 callback id)
   x.kv.del('offset'); r = poll(x); assert.equal(r.duplicate >= 1, true); assert.equal(x.mem.sheets.get('Audit').length, auditN); assert.equal(x.tele.sent.length, sentN);
