@@ -5,6 +5,8 @@ on:
       - fix/tg-ack-diag
     paths:
       - 'rich300/**'
+      - 'radar-service/signal/rich300.mjs'
+      - 'radar-service/test/rich300-buttons.test.mjs'
       - '.github/workflows/rich300-ui-preview.yml'
   workflow_dispatch:
 concurrency:
@@ -27,5 +29,7 @@ jobs:
         run: |
           cp rich300/dist/apps-script/Code.gs rich300/apps-script/Code.gs
           cp rich300/dist/apps-script/MANIFEST.txt rich300/apps-script/MANIFEST.txt
+      - name: Radar-side Telegram two-button regression
+        run: node --test radar-service/test/rich300-buttons.test.mjs
       - name: Focused dashboard, journal and GAS regression tests
         run: node --test rich300/test/dashboard.test.mjs rich300/test/dashboard-browser.test.mjs rich300/test/journal.test.mjs rich300/test/journalview.test.mjs rich300/test/journal-gas.test.mjs rich300/test/journal-browser.test.mjs rich300/test/deploy-gas.test.mjs rich300/test/tg.test.mjs
