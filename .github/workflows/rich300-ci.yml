@@ -1,0 +1,38 @@
+name: RICH300 CI
+# main 으로 가는 PR 에서 RICH300 앱(Apps Script 번들·텔레그램 처리·웹앱 화면)과 레이더 쪽 버튼 변경을 전부 검증한다.
+# 운영 배포·Script Properties·시트·텔레그램 전송은 하지 않는다(읽기 전용 검증).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rich300/**'
+      - 'radar-service/**'
+      - '.github/workflows/rich300-ci.yml'
+  workflow_dispatch:
+concurrency:
+  group: rich300-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  rich300:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: GAS 번들 생성·문법 검사
+        run: node rich300/deploy/make-bundle.mjs
+      - name: 모바일 브라우저(Chromium) 준비
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null && npm i --no-audit --no-fund playwright@1.49.1
+          npx playwright install --with-deps chromium
+          echo "RICH300_PLAYWRIGHT=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
+          echo "RICH300_CHROMIUM=/nonexistent" >> "$GITHUB_ENV"
+      - name: 레이더 쪽 텔레그램 버튼·분할 계획 시험
+        run: node --test radar-service/test/*.test.mjs
+      - name: RICH300 전체 시험(번들 일치 포함)
+        run: node --test --test-timeout=180000 rich300/test/*.test.mjs

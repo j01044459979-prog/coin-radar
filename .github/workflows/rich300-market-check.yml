@@ -1,0 +1,20 @@
+# RICH300 시세 연결 점검(읽기 전용): 감시가 쓰는 OKX·Bybit 공개 API 주소·해석·판정을 실제로 호출해 본다. 시크릿·Telegram·주문 없음, GET 만.
+# 전용 브랜치(test/rich300-market-check)에 push 하거나 수동 실행(workflow_dispatch: 기본 브랜치에 병합된 뒤)할 때만 돈다. 정기 실행 없음.
+name: rich300-market-check
+on:
+  workflow_dispatch:
+  push:
+    branches: ['test/rich300-market-check']
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 시세 연결 점검 (ETHUSDT, BTCUSDT)
+        run: node rich300/perf/market-check.mjs ETHUSDT BTCUSDT
