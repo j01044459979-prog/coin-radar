@@ -46,14 +46,14 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
   // 오늘 입력이 없으면 과거 평가액으로 오늘 목표 달성률·남은 금액을 계산하지 않는다.
   const rem = cur && todayInput ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
-  const progressPpm = todayInput && t.targetProfitMicro > 0n ? decRoundDiv((t.closeMicro - t.startMicro) * 1000000n, t.targetProfitMicro) : null;
+  const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv((t.closeMicro - t.startMicro) * BigInt(1000000), t.targetProfitMicro) : null;
   const progress = progressPpm === null ? null : Math.max(0, Math.min(100, Number(progressPpm) / 10000));
   const real = t.realizedNetMicro;
   model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
     realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
     needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions, progress, progressLabel: progressPpm === null ? null : dashPct(progressPpm) };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
-  let cashRunning = 0n;
+  let cashRunning = BigInt(0);
   const plottingRows = rows.map(r => { cashRunning += r.cashflowMicro; return { r, adjusted: r.closeMicro - cashRunning }; });
   model.daily = plottingRows.slice(-DASH_DAILY_LIMIT).reverse().map(({ r, adjusted }) => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
@@ -71,7 +71,7 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
     sid: tr.sid, symbol: null, dir: tr.dir, status: tr.status,
     at: tr.events.length ? tr.events[tr.events.length - 1].at : null,
     netLabel: dashUsd(tr.totals.netEnteredMicro, { sign: true }),
-    pnlPositive: tr.totals.netEnteredMicro > 0n, pnlNegative: tr.totals.netEnteredMicro < 0n,
+    pnlPositive: tr.totals.netEnteredMicro > BigInt(0), pnlNegative: tr.totals.netEnteredMicro < BigInt(0),
     reviewed: false
   }));
   // ── 데이터 품질 경고(숨기지 않음) ──
