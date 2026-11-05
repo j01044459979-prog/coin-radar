@@ -21,7 +21,7 @@ test('표시 형식: 금액·퍼센트 부호와 천 단위, 0은 부호 없음'
 });
 test('집중형 홈 항목 순서: 실제 자산 → 누적 성과 → 일일 목표 → 성장 그래프 → 매매일지', () => {
   const m = dashSampleModel(NOW), t = text(dashRenderHtml(m, { appUrl: 'https://script.google.com/macros/s/X/exec' }));
-  const order = ['내 실제 총자산', '누적 손익', '누적 수익률', '오늘 복리 목표', '목표까지 남은 금액', '내 자산 증식 현황', '최근 매매일지'].map(k => t.indexOf(k));
+  const order = ['내 실제 총자산', '누적 손익', '누적 수익률', '오늘 복리 목표', '목표까지 남은 수익', '내 자산 증식 현황', '최근 매매일지'].map(k => t.indexOf(k));
   assert.ok(order.every(i => i >= 0), JSON.stringify(order)); assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.match(t, /목표 = 전일 실제 마감 자산/); assert.match(t, /수익을 보장하지 않으며/);
 });
