@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - fix/tg-ack-diag
+      - ui/rich300-focus-home-journal
     paths:
       - 'rich300/**'
       - 'radar-service/signal/rich300.mjs'
@@ -32,4 +33,4 @@ jobs:
       - name: Radar-side Telegram two-button regression
         run: node --test radar-service/test/rich300-buttons.test.mjs
       - name: Focused dashboard, journal and GAS regression tests
-        run: node --test rich300/test/dashboard.test.mjs rich300/test/dashboard-browser.test.mjs rich300/test/journal.test.mjs rich300/test/journalview.test.mjs rich300/test/journal-gas.test.mjs rich300/test/journal-browser.test.mjs rich300/test/deploy-gas.test.mjs rich300/test/tg.test.mjs
+        run: node --test rich300/test/dashboard.test.mjs rich300/test/dashboard-browser.test.mjs rich300/test/journal.test.mjs rich300/test/journalview.test.mjs rich300/test/journal-gas.test.mjs rich300/test/journal-browser.test.mjs rich300/test/deploy-gas.test.mjs rich300/test/tg.test.mjs rich300/test/r9.test.mjs rich300/test/follow.test.mjs rich300/test/follow-tg.test.mjs rich300/test/watch.test.mjs
