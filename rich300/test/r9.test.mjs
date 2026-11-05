@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeTg, OWNER, STRANGER } from './helpers/faketg.mjs';
 import { tgPoll, tgPairCreate, tgSubmitFillForm, tgParseAt } from '../lib/tg.mjs';
-import { r9ParseSignal, r9StripLine } from '../lib/r9.mjs';
+import { r9ParseSignal, r9StripLine, r9ReasonSummary } from '../lib/r9.mjs';
 import { storeList } from '../lib/store.mjs';
 import { pnlComputeTrade } from '../lib/pnl.mjs';
 import { r9Line, r9Tail } from '../../radar-service/signal/rich300.mjs';
@@ -23,6 +23,14 @@ test('계약: radar가 만든 R9 줄을 앱이 그대로 읽는다(전략·점�
   const no2 = r9ParseSignal(r9Line('BTCUSDT', { ...EV, t2: null, score: null, dir: 'SHORT' })); assert.equal(no2.tp2, undefined); assert.equal(no2.score, undefined); assert.equal(no2.dir, 'SHORT');
   assert.equal(r9ParseSignal('아무 글'), null); assert.equal(r9ParseSignal(RADAR_TEXT.replace('v1', 'v2')), null); assert.equal(r9ParseSignal(RADAR_TEXT.replace('ETHUSDT LONG', 'ETHUSDT BUY')), null);
   const shown = r9StripLine(RADAR_TEXT); assert.ok(!/R9 v1/.test(shown)); assert.ok(shown.includes('🆔 ' + SID)); assert.ok(shown.includes('진입 관심가'));
+});
+test('원래 레이더 추천 이유 3줄을 추출해 신호에 보존한다(상세 근거 없는 메시지는 추정 금지)', () => {
+  const text = '🔴 ONDO · SHORT\\n📈 근거\\n• 4H 하락 · 1H 저항 눌림\\n• 15분 지지 이탈 · 거래량 ×1.5\\n• 손절=고점 · 목표=확정 구간\\n\\n⚠️ 위험' + r9Tail('ETHUSDT',EV).plain;
+  const why = r9ReasonSummary(text);
+  assert.equal(why, '4H 하락 · 1H 저항 눌림 / 15분 지지 이탈 · 거래량 ×1.5 / 손절=고점 · 목표=확정 구간');
+  assert.equal(r9ReasonSummary('근거 없는 메시지'), null);
+  const x = setup(); press(x, 'e', { text });
+  assert.equal(rows(x, 'signal')[0].summary, why);
 });
 test('[진입했어]: 신호·응답과 1시간 추적 상태가 저장되고 Fill과 추가 메시지는 생기지 않는다', () => {
   const x = setup(); const r = press(x, 'e');
