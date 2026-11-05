@@ -25,6 +25,12 @@ details.trade{border-top:1px solid var(--line);padding:8px 0}details.trade:first
 .fill{border-top:1px dashed var(--line);padding:8px 0;font-size:13px}.fill:first-child{border-top:0}.edits{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--ink2)}.edits li{margin:2px 0}.chg{color:var(--mute)}
 details.edit{margin-top:6px}details.edit>summary{cursor:pointer;min-height:36px;display:flex;align-items:center;font-size:13px;color:var(--s1)}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
 ul.plain{margin:0;padding-left:18px;font-size:13px;color:var(--ink2)}ul.plain li{margin:3px 0}footer{font-size:11px;color:var(--mute);margin:18px 0 0;text-align:center}
+
+/* Focus navigation: keep advanced pages by direct URL, show only daily work tabs. */
+main{padding-bottom:96px}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:10;display:flex;justify-content:center;gap:10px;background:var(--surface);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+nav.tabs a{flex:1 1 0;max-width:260px;min-height:48px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:12px;color:var(--ink2);font-size:16px;font-weight:600;text-decoration:none;background:var(--surface)}
+nav.tabs a[aria-current="page"]{border-color:var(--s1);color:var(--s1)}
 `;
 const jvHead = t => `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${jvE(t)}</title><style>${JV_CSS}</style></head>`;
 export const journalRenderError = () => `${jvHead('RICH300 일지')}<body><main><header><h1>RICH 300 일지</h1></header><section class="card"><p>일지를 불러오지 못했습니다. 잠시 후 다시 열어 주세요.</p></section></main></body></html>`;
@@ -69,7 +75,7 @@ ${m.cashflows.length ? `<div class="card">${m.cashflows.map(c => `<div class="da
   const order = tab === 'assets' ? ['close', 'cf', 'warn'] : tab === 'stats' ? ['stat', 'rv'] : tab === 'journal' ? ['search', 'jr', 'warn'] : ['close', 'stat', 'rv', 'cf', 'jr', 'warn'];
   const title = tab === 'assets' ? '자산 관리' : tab === 'stats' ? '전략별 성적' : '매매일지';
   return `${jvHead('RICH300 ' + title)}<body><main>
-<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">${jvE(m.startDay)} 시작 · 시작 자금 ${jvE(m.startEquity)} USDT</span></header>
+<header><h1>RICH 300 · ${jvE(title)}</h1><span class="sub">실제 체결 기준 · ${jvE(m.startDay)} 시작</span></header>
 ${dashNav(tab === 'all' ? 'journal' : tab === 'journal' ? 'journal' : tab, appUrl)}
 ${order.map(k => sec[k]).join('\n')}
 <footer>기록 전용 · 자동 주문 없음 · 수정은 사유와 함께 이력으로 남습니다 · 갱신 ${jvE(new Date(m.generatedAt + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' '))} KST</footer></main><script>${JV_JS}</script></body></html>`;
