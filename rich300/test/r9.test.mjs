@@ -25,7 +25,7 @@ test('계약: radar가 만든 R9 줄을 앱이 그대로 읽는다(전략·점�
   const shown = r9StripLine(RADAR_TEXT); assert.ok(!/R9 v1/.test(shown)); assert.ok(shown.includes('🆔 ' + SID)); assert.ok(shown.includes('진입 관심가'));
 });
 test('원래 레이더 추천 이유 3줄을 추출해 신호에 보존한다(상세 근거 없는 메시지는 추정 금지)', () => {
-  const text = '🔴 ONDO · SHORT\\n📈 근거\\n• 4H 하락 · 1H 저항 눌림\\n• 15분 지지 이탈 · 거래량 ×1.5\\n• 손절=고점 · 목표=확정 구간\\n\\n⚠️ 위험' + r9Tail('ETHUSDT',EV).plain;
+  const text = '🟢 ETH · LONG\n📈 근거\n• 4H 하락 · 1H 저항 눌림\n• 15분 지지 이탈 · 거래량 ×1.5\n• 손절=고점 · 목표=확정 구간\n\n⚠️ 위험' + r9Tail('ETHUSDT',EV).plain;
   const why = r9ReasonSummary(text);
   assert.equal(why, '4H 하락 · 1H 저항 눌림 / 15분 지지 이탈 · 거래량 ×1.5 / 손절=고점 · 목표=확정 구간');
   assert.equal(r9ReasonSummary('근거 없는 메시지'), null);
