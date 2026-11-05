@@ -34,6 +34,19 @@ test('웹 매매일지에서 기존 실제 체결의 복기를 수정하고 감�
   assert.throws(() => journalSaveReview(x.env, { sid: 'NO_FILL', plan: 'plan_ok', mind: 'calm' }), e => e instanceof StoreError && e.code === 'VALIDATION');
   assert.equal(storeIntegrityCheck(x.m.env).ok, true);
 });
+test('진입 확인만 한 신호는 일지에 체결정보 미입력으로 보이고 안 했어는 숨긴다', () => {
+  const x = setup(), at = dayStartMs(D1) + 12 * H;
+  storeCreate(x.m.env, 'signal', { sid: 'CONFIRMED', strategy: 'A', symbolId: 'ONDOUSDT', dir: 'SHORT', signalAt: at, entry: '0.7', stop: '0.73', tp1: '0.65' }, A);
+  storeCreate(x.m.env, 'signal', { sid: 'NOTENTERED', strategy: 'A', symbolId: 'ETHUSDT', dir: 'LONG', signalAt: at, entry: '2300', stop: '2200', tp1: '2500' }, A);
+  storeCreate(x.m.env, 'response', { sid: 'CONFIRMED', choice: 'entered', at }, A);
+  storeCreate(x.m.env, 'response', { sid: 'NOTENTERED', choice: 'watched', at: at + H }, A);
+  const j = journalBuild(x.env);
+  assert.equal(j.trades.length,1); assert.equal(j.confirmedEntries.length,1);
+  assert.deepEqual([j.confirmedEntries[0].sid, j.confirmedEntries[0].symbol, j.confirmedEntries[0].dir], ['CONFIRMED','ONDO','SHORT']);
+  assert.equal(j.tradesTotal, 1);
+  assert.equal(j.confirmedEntries.find(e => e.sid === 'NOTENTERED'), undefined);
+  assert.equal(storeList(x.m.env, 'fill').length, 3); // 버튼만으로 추가 체결 생성 금지
+});
 test('일지 조회: 거래·체결 타임라인·응답·복기·마감 상태·통계·경고가 한 모델에 나온다', () => {
   const x = setup(); closeRun(x.env); const j = journalBuild(x.env);
   assert.equal(j.empty, false); assert.deepEqual([j.tradesTotal, j.tradesOpen, j.voidedCount, j.startDay], [1, 0, 0, D1]); const t = j.trades[0];
