@@ -45,8 +45,8 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   } else model.current = null;
   // ── 4~7. 오늘: 시작 자산·목표 자산·실현손익·목표까지 남은 금액(달성 여부는 따로 표시) ──
   // 오늘 입력이 없으면 과거 평가액으로 오늘 목표 달성률·남은 금액을 계산하지 않는다.
-  const rem = cur && todayInput ? dashZeroFloor(t.targetCloseMicro - cur.closeMicro) : null, met = cur ? cur.closeMicro >= t.targetCloseMicro : null;
-  const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv((t.closeMicro - t.startMicro) * BigInt(1000000), t.targetProfitMicro) : null;
+  const rem = todayInput ? dashZeroFloor(t.targetProfitMicro - t.pnlMicro) : null, met = todayInput ? t.pnlMicro >= t.targetProfitMicro : null;
+  const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv(t.pnlMicro * BigInt(1000000), t.targetProfitMicro) : null;
   const progress = progressPpm === null ? null : Math.max(0, Math.min(100, Number(progressPpm) / 10000));
   const real = t.realizedNetMicro;
   model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
