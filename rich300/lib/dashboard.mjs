@@ -49,7 +49,8 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   const progressPpm = todayInput && t.targetProfitMicro > BigInt(0) ? decRoundDiv(t.pnlMicro * BigInt(1000000), t.targetProfitMicro) : null;
   const progress = progressPpm === null ? null : Math.max(0, Math.min(100, Number(progressPpm) / 10000));
   const real = t.realizedNetMicro;
-  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }),
+  const previous = rows.length > 1 ? rows[rows.length - 2] : null, startConfirmed = previous === null || previous.closeSource === 'input';
+  model.today = { day: t.day, n: t.n, rate: dashRatePct(t.rate), startLabel: dashUsd(t.startMicro), targetLabel: dashUsd(t.targetCloseMicro), targetProfitLabel: dashUsd(t.targetProfitMicro, { sign: true }), startRemainingLabel: dashUsd(t.targetProfitMicro), startConfirmed,
     realizedLabel: dashUsd(real, { sign: true }), realizedPositive: real > BigInt(0), realizedNegative: real < BigInt(0), remainingLabel: rem === null ? null : dashUsd(rem), achieved: met === true && todayInput, achievedStale: met === true && !todayInput,
     needsReview: t.needsReview, diffLabel: t.diffMicro === null ? null : dashUsd(t.diffMicro, { sign: true }), ledgerLabel: dashUsd(t.ledgerWalletMicro), openPositions: t.openPositions, progress, progressLabel: progressPpm === null ? null : dashPct(progressPpm) };
   // ── 8. 날짜별 마감 자산·일간 손익(표). 평가액이 없는 날은 마감 자산을 '미입력'으로 두고 장부상 실현손익만 보여 준다 ──
@@ -88,7 +89,7 @@ export function dashBuildFromStore(env, { now }) {
   let inputs;
   try { inputs = storeLoadLedgerInputs(env); } catch (e) { if (e instanceof StoreError && e.code === 'NOT_FOUND') return { sample: false, empty: true, noChallenge: true, generatedAt: now, daily: [], warnings: [] }; throw e; }
   const model = dashBuildModel({ inputs, throughDay: kstDayOf(now), now });
-  if (model.recentTrades.length) {
+  {
     const signals = new Map(storeList(env, 'signal').map(r => [r.data.sid, r.data]));
     const reviews = new Set(storeList(env, 'review').map(r => r.data.sid));
     for (const tr of model.recentTrades) {
@@ -96,6 +97,15 @@ export function dashBuildFromStore(env, { now }) {
       tr.symbol = sig && typeof sig.symbolId === 'string' ? sig.symbolId.replace(/USDT$/, '') : null;
       tr.reviewed = reviews.has(tr.sid);
     }
+    const filled = new Set(model.recentTrades.map(t => t.sid));
+    const responses = storeList(env, 'response').map(r => r.data).filter(r => r.choice === 'entered' && !filled.has(r.sid));
+    const pending = responses.map(r => {
+      const sig = signals.get(r.sid);
+      return { sid: r.sid, symbol: sig && sig.symbolId ? sig.symbolId.replace(/USDT$/, '') : r.sid,
+        dir: sig ? sig.dir : null, status: 'unconfirmed', at: r.at, reviewed: false,
+        netLabel: null, pnlPositive: false, pnlNegative: false };
+    });
+    model.recentTrades = [...model.recentTrades, ...pending].sort((a,b) => b.at - a.at).slice(0, 3);
   }
   return model;
 }
