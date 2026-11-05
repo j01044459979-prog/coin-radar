@@ -1,0 +1,28 @@
+name: RICH300 Focus UI preflight
+on:
+  pull_request:
+    branches:
+      - fix/tg-ack-diag
+    paths:
+      - 'rich300/**'
+      - '.github/workflows/rich300-ui-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate fresh GAS bundle and check syntax
+        run: node rich300/deploy/make-bundle.mjs
+      - name: Use generated bundle in test sandbox (not production)
+        run: |
+          cp rich300/dist/apps-script/Code.gs rich300/apps-script/Code.gs
+          cp rich300/dist/apps-script/MANIFEST.txt rich300/apps-script/MANIFEST.txt
+      - name: Full RICH300 unit and integration regression tests
+        run: node --test rich300/test/*.test.mjs
