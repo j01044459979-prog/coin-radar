@@ -34,11 +34,11 @@ function rich300Html_(html, title) { return HtmlService.createHtmlOutput(html).s
  *  · 페이지 함수가 예외를 던지면 오류 코드와 '다시 시도' 버튼이 있는 화면. 처리 시간은 최근 기록(?p=health)에 남긴다.
  */
 function doGet(e) {
-  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'strat', out;
+  var t0 = Date.now(), name = e && e.parameter && e.parameter.p, page = 'dash', out;
   if (name === 'ping') return rich300Ping_();
   try {
     if (rich300UiWho_() !== 'owner') return rich300Html_(RICH300_ENGINE.shellRenderDenied({ appUrl: rich300AppUrl_() }), '접근 제한');
-    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'strat';
+    page = name && Object.prototype.hasOwnProperty.call(RICH300_PAGES_, name) ? name : 'dash';
     var fn = globalThis[RICH300_PAGES_[page]];
     if (typeof fn !== 'function') throw new Error('page-missing');
     out = fn(e);
