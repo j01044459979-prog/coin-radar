@@ -106,6 +106,31 @@ test('오늘의 실제 평가액 없이는 목표까지 남은 금액과 달성�
   assert.equal(m.today.remainingLabel,null); assert.equal(m.today.progress,null);
   assert.match(dashRenderHtml(m), /오늘 평가액 없음/);
 });
+test('매일 정확히 전일 실제 마감의 5%: $300→$315, 실제 마감 $350이면 다음 날 $367.50', () => {
+  const inputs = simple();
+  let m = build(inputs,'2026-10-01');
+  assert.equal(m.today.startLabel,'300.00');
+  assert.equal(m.today.targetLabel,'315.00');
+  assert.equal(m.today.startRemainingLabel,'15.00');
+  assert.equal(m.today.remainingLabel,null);
+  assert.match(dashRenderHtml(m), /15\.00/);
+  inputs.equityInputs=[{day:'2026-10-01',equity:'350'}];
+  m=build(inputs,'2026-10-02');
+  assert.equal(m.today.startLabel,'350.00');
+  assert.equal(m.today.targetLabel,'367.50');
+  assert.equal(m.today.startRemainingLabel,'17.50');
+  assert.equal(m.today.startConfirmed,true);
+  assert.equal(m.today.remainingLabel,null);
+  inputs.equityInputs.push({day:'2026-10-02',equity:'360'});
+  m=build(inputs,'2026-10-02');
+  assert.equal(m.today.remainingLabel,'7.50');
+  assert.equal(m.today.todayPnlLabel,'+10.00');
+});
+test('전일 실제 마감이 없으면 당일 시작·5% 목표가 임시 추정임을 명시한다', () => {
+  const m=build(simple(),'2026-10-03');
+  assert.equal(m.today.startConfirmed,false);
+  assert.match(dashRenderHtml(m), /전일 실제 마감 평가액 미입력/);
+});
 test('최근 거래는 실체결 장부 기준이며 시뮬레이션 기록을 표시하지 않는다', () => {
   const noFills = build(simple(),'2026-10-03');
   assert.deepEqual(noFills.recentTrades, []);
