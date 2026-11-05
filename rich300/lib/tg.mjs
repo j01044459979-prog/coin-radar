@@ -20,7 +20,7 @@ import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecStri
 import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger, storeWithLock } from './store.mjs';
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
-import { r9ParseSignal, r9StripLine } from './r9.mjs';
+import { r9ParseSignal, r9StripLine, r9ReasonSummary } from './r9.mjs';
 import { splanBuild, splanCheckAdd, splanStatus, splanLines, splanStatusLines, splanReasonText, splanQty } from './scaleplan.mjs';
 import { nullishOr } from './nullish.mjs';
 import { followStart, followChoice, followKeyboard } from './follow.mjs';
@@ -438,6 +438,8 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   if (!sg || sg.void) {                                  // R9: COIN RADAR 메시지의 'R9 v1' 줄에서 신호를 만든다(같은 sid의 메시지만, 이미 있으면 건드리지 않음)
     const parsed = r9ParseSignal(ev.msgText);
     if (parsed && parsed.sid === sid) {
+      const why = r9ReasonSummary(ev.msgText);
+      if (why) parsed.summary = why;
       try { storeCreate(se, 'signal', parsed, { actor: 'tg:r9' }); } catch (e) { if (!(e instanceof StoreError)) throw e; if (e.code === 'LOCK') throw e; }
       sg = storeGet(se, 'signal', sid);
     }
