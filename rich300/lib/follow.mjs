@@ -77,7 +77,9 @@ export function followReport({ signal, market, now, enteredAt }) {
   const time = new Date(now + 9 * FOLLOW_HOUR_MS).toISOString().slice(5, 16).replace('T', ' ');
   const age = Math.round((now - market.priceAt) / 60000);
   const original = typeof signal.summary === 'string' && signal.summary.trim()
-    ? signal.summary.trim().slice(0, 120) : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
+    ? signal.summary.trim().slice(0, 120) : signal.strategy === 'S'
+      ? '4H 추세·1H 눌림 구간·15분 확정 트리거·거래량·비용 반영 손익비가 추천 당시 조건이었습니다.'
+      : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const priceChange = Number.isFinite(entry) && entry > 0 ? (price - entry) * sign / entry * 100 : null;
   return [
     '📊 RICH300 · 1시간 포지션 점검',
