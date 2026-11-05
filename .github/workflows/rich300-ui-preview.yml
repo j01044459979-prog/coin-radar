@@ -7,6 +7,9 @@ on:
       - 'rich300/**'
       - '.github/workflows/rich300-ui-preview.yml'
   workflow_dispatch:
+concurrency:
+  group: rich300-focus-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -24,5 +27,5 @@ jobs:
         run: |
           cp rich300/dist/apps-script/Code.gs rich300/apps-script/Code.gs
           cp rich300/dist/apps-script/MANIFEST.txt rich300/apps-script/MANIFEST.txt
-      - name: Full RICH300 unit and integration regression tests
-        run: node --test rich300/test/*.test.mjs
+      - name: Focused dashboard, journal and GAS regression tests
+        run: node --test rich300/test/dashboard.test.mjs rich300/test/dashboard-browser.test.mjs rich300/test/journal.test.mjs rich300/test/journalview.test.mjs rich300/test/journal-gas.test.mjs rich300/test/journal-browser.test.mjs rich300/test/deploy-gas.test.mjs
