@@ -72,6 +72,8 @@ ${m.strategy && m.strategy.keySet ? '<div class="sub">피드 서명 키: 등록�
 <label for="sphrase">확인 문구: <strong>${dashEsc(OPS_STRAT_PHRASE)}</strong> 를 입력</label><input id="sphrase" autocomplete="off" placeholder="${dashEsc(OPS_STRAT_PHRASE)}">
 <button id="son" class="go" type="button" disabled>전략 추적 시작</button><div id="sonMsg" class="msg" role="status" aria-live="polite"></div>
 <button id="soff" class="go stop" type="button">전략 추적 중지</button><div class="sub">중지하면 <code>RICH300_STRATEGY=off</code> 로 바꾸고, 실전 위치 감시가 꺼져 있을 때만 5분 트리거를 제거합니다. 이미 실행 중이던 1회 실행은 끝까지 진행될 수 있습니다. 진행 중이던 전략은 기록에 남고 추적만 멈춥니다.</div><div id="soffMsg" class="msg" role="status" aria-live="polite"></div></section>
+<section class="card"><div class="k">5. 1시간 포지션 분석 (진입했어 누른 종목만)</div><div class="sub">현재: <strong>${dashEsc(m.follow ? m.follow.property : '확인 불가')}</strong> · 5분 감시 트리거 ${m.follow ? m.follow.triggerCount : '?'}개. 새 트리거를 만들지 않고 기존 5분 감시에서만 실행합니다. 실제 주문·체결 기록은 만들지 않습니다. 순서: ① 미리보기(전송 없음) → ② 켜기.</div>
+<button id="fpv" class="go" type="button">① 미리보기로 설정</button><button id="fon" class="go" type="button">② 켜기</button><button id="foff" class="go stop" type="button">끄기</button><div id="fMsg" class="msg" role="status" aria-live="polite"></div></section>
 <section class="card"><a id="reload" class="cta" hidden target="_top"${self ? ` href="${dashEsc(self)}"` : ''}>새로고침</a>${watchUrl ? ` <a class="cta" target="_top" href="${dashEsc(watchUrl)}">감시 점검 화면</a>` : ''}${posUrl ? ` <a class="cta" target="_top" href="${dashEsc(posUrl)}">포지션 등록</a>` : ''}
 <div class="sub">이 화면은 열기만 해서는 아무것도 바꾸지 않습니다. 임의의 설정은 바꿀 수 없고(허용 목록: 운영 승인·감시 설정), 소유자만 실행됩니다. 기록 전용 · 자동 주문 없음.</div></section>`;
   const css = `<style>[hidden]{display:none!important}label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}input{width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:46px}
@@ -107,6 +109,8 @@ run('rich300OpsStratEnable',[$('sphrase').value.trim()],function(r){busy.son=fal
 else{say('sonMsg','시작하지 않았습니다['+(r.code||'error')+']: '+(CODES[r.code]||'원인을 알 수 없습니다.')+(r.rolledBack?'\\n이전 상태로 되돌렸습니다.':''),'bad');ssync()}},'sonMsg',function(){busy.son=false;ssync()})};
 $('soff').onclick=function(){if(busy.soff)return;busy.soff=true;$('soff').disabled=true;say('soffMsg','중지 중…');
 run('rich300OpsStratDisable',[],function(r){busy.soff=false;$('soff').disabled=false;say('soffMsg',r.ok?'전략 추적을 중지했습니다: 설정 off · 트리거 '+r.triggers+'개.':'중지 확인에 실패했습니다['+(r.code||'error')+'] — 다시 [전략 추적 중지]를 누르세요.',r.ok?'ok':'bad');$('reload').hidden=false},'soffMsg',function(){busy.soff=false;$('soff').disabled=false})};
+$('fpv').onclick=$('fon').onclick=$('foff').onclick=function(){var id=this.id,mode=id==='fpv'?'preview':id==='fon'?'on':'off';if(busy.f)return;busy.f=true;say('fMsg','적용 중…');
+run('rich300OpsFollowSet',[mode],function(r){busy.f=false;if(r.ok){say('fMsg','1시간 분석: '+r.code+' · 상태 '+r.effective+' · 트리거 '+r.triggers+'개.','ok');$('reload').hidden=false}else{say('fMsg','적용하지 않았습니다['+(r.code||'error')+']'+(r.rolledBack?' 이전 상태로 되돌렸습니다.':''),'bad')}},'fMsg',function(){busy.f=false})};
 })()</script>`;
   return `${dashHead('RICH300 실전 감시 관리')}<body><main>${css}${body}</main>${script}</body></html>`;
 }

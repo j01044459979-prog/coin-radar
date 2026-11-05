@@ -2337,6 +2337,8 @@ ${m.strategy && m.strategy.keySet ? '<div class="sub">피드 서명 키: 등록�
 <label for="sphrase">확인 문구: <strong>${dashEsc(OPS_STRAT_PHRASE)}</strong> 를 입력</label><input id="sphrase" autocomplete="off" placeholder="${dashEsc(OPS_STRAT_PHRASE)}">
 <button id="son" class="go" type="button" disabled>전략 추적 시작</button><div id="sonMsg" class="msg" role="status" aria-live="polite"></div>
 <button id="soff" class="go stop" type="button">전략 추적 중지</button><div class="sub">중지하면 <code>RICH300_STRATEGY=off</code> 로 바꾸고, 실전 위치 감시가 꺼져 있을 때만 5분 트리거를 제거합니다. 이미 실행 중이던 1회 실행은 끝까지 진행될 수 있습니다. 진행 중이던 전략은 기록에 남고 추적만 멈춥니다.</div><div id="soffMsg" class="msg" role="status" aria-live="polite"></div></section>
+<section class="card"><div class="k">5. 1시간 포지션 분석 (진입했어 누른 종목만)</div><div class="sub">현재: <strong>${dashEsc(m.follow ? m.follow.property : '확인 불가')}</strong> · 5분 감시 트리거 ${m.follow ? m.follow.triggerCount : '?'}개. 새 트리거를 만들지 않고 기존 5분 감시에서만 실행합니다. 실제 주문·체결 기록은 만들지 않습니다. 순서: ① 미리보기(전송 없음) → ② 켜기.</div>
+<button id="fpv" class="go" type="button">① 미리보기로 설정</button><button id="fon" class="go" type="button">② 켜기</button><button id="foff" class="go stop" type="button">끄기</button><div id="fMsg" class="msg" role="status" aria-live="polite"></div></section>
 <section class="card"><a id="reload" class="cta" hidden target="_top"${self ? ` href="${dashEsc(self)}"` : ''}>새로고침</a>${watchUrl ? ` <a class="cta" target="_top" href="${dashEsc(watchUrl)}">감시 점검 화면</a>` : ''}${posUrl ? ` <a class="cta" target="_top" href="${dashEsc(posUrl)}">포지션 등록</a>` : ''}
 <div class="sub">이 화면은 열기만 해서는 아무것도 바꾸지 않습니다. 임의의 설정은 바꿀 수 없고(허용 목록: 운영 승인·감시 설정), 소유자만 실행됩니다. 기록 전용 · 자동 주문 없음.</div></section>`;
   const css = `<style>[hidden]{display:none!important}label{display:block;font-size:13px;color:var(--mute);margin:12px 0 4px}input{width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:46px}
@@ -2372,6 +2374,8 @@ run('rich300OpsStratEnable',[$('sphrase').value.trim()],function(r){busy.son=fal
 else{say('sonMsg','시작하지 않았습니다['+(r.code||'error')+']: '+(CODES[r.code]||'원인을 알 수 없습니다.')+(r.rolledBack?'\\n이전 상태로 되돌렸습니다.':''),'bad');ssync()}},'sonMsg',function(){busy.son=false;ssync()})};
 $('soff').onclick=function(){if(busy.soff)return;busy.soff=true;$('soff').disabled=true;say('soffMsg','중지 중…');
 run('rich300OpsStratDisable',[],function(r){busy.soff=false;$('soff').disabled=false;say('soffMsg',r.ok?'전략 추적을 중지했습니다: 설정 off · 트리거 '+r.triggers+'개.':'중지 확인에 실패했습니다['+(r.code||'error')+'] — 다시 [전략 추적 중지]를 누르세요.',r.ok?'ok':'bad');$('reload').hidden=false},'soffMsg',function(){busy.soff=false;$('soff').disabled=false})};
+$('fpv').onclick=$('fon').onclick=$('foff').onclick=function(){var id=this.id,mode=id==='fpv'?'preview':id==='fon'?'on':'off';if(busy.f)return;busy.f=true;say('fMsg','적용 중…');
+run('rich300OpsFollowSet',[mode],function(r){busy.f=false;if(r.ok){say('fMsg','1시간 분석: '+r.code+' · 상태 '+r.effective+' · 트리거 '+r.triggers+'개.','ok');$('reload').hidden=false}else{say('fMsg','적용하지 않았습니다['+(r.code||'error')+']'+(r.rolledBack?' 이전 상태로 되돌렸습니다.':''),'bad')}},'fMsg',function(){busy.f=false})};
 })()</script>`;
   return `${dashHead('RICH300 실전 감시 관리')}<body><main>${css}${body}</main>${script}</body></html>`;
 }
@@ -4250,7 +4254,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '5a292e064103';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '63542f513493';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -4962,7 +4966,7 @@ function rich300ManualUpdate(sid, patch) {
  *  · 이 파일은 Telegram 을 보내지 않는다. 자동 주문 없음. 로그·반환값에 토큰·채팅 ID·가격은 없다(개수·코드만).
  */
 var RICH300_OPS_PROD_ = 'RICH300_PROD_APPROVED', RICH300_OPS_WATCH_ = 'RICH300_WATCH_ALERTS', RICH300_OPS_PRE_ = 'ops:precheck', RICH300_OPS_LAST_ = 'ops:last';
-var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'RICH300_STRATEGY': ['on', 'off'], 'RICH300_FEED_KEY': 'secret', 'ops:precheck': 'json', 'ops:sprecheck': 'json', 'ops:last': 'json' };
+var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'RICH300_STRATEGY': ['on', 'off'], 'RICH300_HOURLY_FOLLOW': ['preview', 'on', 'off'], 'RICH300_FEED_KEY': 'secret', 'ops:precheck': 'json', 'ops:sprecheck': 'json', 'ops:last': 'json' };
 function rich300OpsSet_(name, value) {
   if (!Object.prototype.hasOwnProperty.call(RICH300_OPS_ALLOW_, name)) throw new Error('ops-not-allowed');
   var rule = RICH300_OPS_ALLOW_[name];
@@ -4984,6 +4988,7 @@ function rich300OpsState_() {
   var w = rich300WatchState_(), t = rich300TgDiagState_(), props = PropertiesService.getScriptProperties(), n = null, pre = rich300OpsJson_(RICH300_OPS_PRE_), ol = rich300OpsJson_(RICH300_OPS_LAST_);
   try { n = RICH300_ENGINE.watchOpenPositions(rich300WatchEnv_('preview').storeEnv(), { now: Date.now() }).positions.length; } catch (err) { n = null; }
   return { env: t.env, tokenSet: t.tokenSet, paired: t.paired, prodApproved: t.prodApproved, gateSend: t.gateSend, prop: w.prop, mode: w.mode, effective: w.effective, triggers: w.triggers, last: w.last ? { ageMin: Math.round((Date.now() - w.last.at) / 60000), status: w.last.status, mode: w.last.mode, positions: w.last.positions, events: w.last.events, sent: w.last.sent, failed: w.last.failed, marketFail: w.last.marketFail, code: w.last.code || null } : null,
+    follow: (function () { try { return rich300FollowState_(); } catch (err) { return null; } })(),
     strategy: { prop: rich300StrategyMode_(), keySet: !!props.getProperty('RICH300_FEED_KEY'), last: rich300OpsStratLast_(), precheck: rich300OpsAge_(rich300OpsJson_('ops:sprecheck')) }, positions: n, precheck: pre ? { ageMin: Math.round((Date.now() - pre.at) / 60000), ok: !!pre.ok && pre.build === RICH300_BUILD } : null, opsLast: ol ? { ageMin: Math.round((Date.now() - ol.at) / 60000), action: ol.action, code: ol.code } : null };
 }
 /** 페이지(?p=ops): 열기만 해서는 아무것도 바꾸지 않는다. */
@@ -5126,6 +5131,36 @@ function rich300OpsStratDisable() {
     var v = rich300OpsStratVerify_('off'); rich300OpsLog_('strategy-disable', v.ok ? 'ok' : 'verify-failed');
     return { ok: v.ok, code: v.ok ? 'disabled' : 'verify-failed', triggers: v.triggers, lockless: !held };
   } finally { if (held) lock.releaseLock(); }
+}
+
+/** ── 1시간 포지션 분석 스위치(?p=ops): 소유자만. 켜기는 미리보기가 정상이고 5분 감시 트리거가 정확히 1개일 때만. 새 트리거를 만들지 않는다. ── */
+function rich300OpsFollowSet(mode) {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  if (mode !== 'preview' && mode !== 'on' && mode !== 'off') return { ok: false, code: 'bad-mode' };
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  var props = PropertiesService.getScriptProperties(), before = props.getProperty('RICH300_HOURLY_FOLLOW');
+  try {
+    if (mode !== 'off') {
+      var st = rich300FollowState_();
+      if (st.triggerCount !== 1) return { ok: false, code: 'trigger-count', triggers: st.triggerCount };
+      var pv = rich300FollowPreview();
+      if (!pv || pv.status === 'exception' || pv.status === 'busy') return { ok: false, code: 'preview-failed' };
+      if (mode === 'on') {
+        if (before !== 'preview' && before !== 'on') return { ok: false, code: 'preview-first' };
+        var t = rich300TgDiagState_();
+        if (!t.tokenSet || !t.paired || t.env !== 'prod' || !rich300WatchCanSend_()) return { ok: false, code: 'tg-not-ready' };
+      }
+    }
+    rich300OpsSet_('RICH300_HOURLY_FOLLOW', mode);
+    var after = rich300FollowMode_();
+    if (after !== mode) { if (before === null) rich300OpsDel_('RICH300_HOURLY_FOLLOW'); else rich300OpsSet_('RICH300_HOURLY_FOLLOW', before); return { ok: false, code: 'verify-failed', rolledBack: true }; }
+    rich300OpsLog_('follow', mode);
+    var s2 = rich300FollowState_();
+    return { ok: true, code: mode, effective: s2.effective, triggers: s2.triggerCount };
+  } catch (err) {
+    try { if (before === null) rich300OpsDel_('RICH300_HOURLY_FOLLOW'); else rich300OpsSet_('RICH300_HOURLY_FOLLOW', before); } catch (e2) { /* 읽어서 확인 */ }
+    return { ok: false, code: 'exception', rolledBack: true };
+  } finally { lock.releaseLock(); }
 }
 
 // ── gas/Strategy.gs ──

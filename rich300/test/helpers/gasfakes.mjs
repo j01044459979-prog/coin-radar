@@ -7,7 +7,7 @@ import { createHash, createHmac } from 'node:crypto';
 export const gasBytes = (s, charset) => (charset === 'utf8' ? Buffer.from(String(s), 'utf8') : Buffer.from([...String(s)].map(ch => (ch.codePointAt(0) <= 0xff ? ch : '?')).join(''), 'latin1'));
 const signed = buf => [...buf].map(b => (b > 127 ? b - 256 : b));
 export function fakeSheetsServices() {
-  const book = new Map(); let held = false;
+  const book = new Map(); let held = false, uheld = false;
   const mkSheet = name => ({ name, cells: [], fmt: [], frozen: 0, max: 1000,
     getLastRow() { return this.cells.length; }, getLastColumn() { return this.cells.reduce((m, r) => Math.max(m, r.length), 0); }, getMaxRows() { return this.max; }, insertRowsAfter(_, n) { this.max += n; }, setFrozenRows(n) { this.frozen = n; },
     getDataRange() { return this.getRange(1, 1, Math.max(this.getLastRow(), 1), Math.max(this.getLastColumn(), 1)); },
@@ -18,7 +18,7 @@ export function fakeSheetsServices() {
       getValues() { const out = []; for (let i = 0; i < nr; i++) { const row = []; for (let j = 0; j < nc; j++) row.push(sh.cells[r - 1 + i]?.[c - 1 + j] ?? ''); out.push(row); } return out; } }; } });
   const ss = { getSheetByName: n => book.get(n) ?? null, insertSheet: n => { const s = mkSheet(n); book.set(n, s); return s; } };
   return { book, ctx: {
-    SpreadsheetApp: { openById: () => ss, flush() {} }, LockService: { getScriptLock: () => ({ tryLock: () => { if (held) return false; held = true; return true; }, releaseLock() { held = false; } }) },
+    SpreadsheetApp: { openById: () => ss, flush() {} }, LockService: { getScriptLock: () => ({ tryLock: () => { if (held) return false; held = true; return true; }, releaseLock() { held = false; } }), getUserLock: () => ({ tryLock: () => { if (uheld) return false; uheld = true; return true; }, releaseLock() { uheld = false; } }) },
     Utilities: { DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' }, computeDigest: (a, s) => signed(createHash('sha256').update(s, 'utf8').digest()), computeHmacSha256Signature: (message, key, charset) => signed(createHmac('sha256', gasBytes(key, charset)).update(gasBytes(message, charset)).digest()) } } };
 }
 

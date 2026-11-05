@@ -7,7 +7,7 @@
  *  · 이 파일은 Telegram 을 보내지 않는다. 자동 주문 없음. 로그·반환값에 토큰·채팅 ID·가격은 없다(개수·코드만).
  */
 var RICH300_OPS_PROD_ = 'RICH300_PROD_APPROVED', RICH300_OPS_WATCH_ = 'RICH300_WATCH_ALERTS', RICH300_OPS_PRE_ = 'ops:precheck', RICH300_OPS_LAST_ = 'ops:last';
-var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'RICH300_STRATEGY': ['on', 'off'], 'RICH300_FEED_KEY': 'secret', 'ops:precheck': 'json', 'ops:sprecheck': 'json', 'ops:last': 'json' };
+var RICH300_OPS_ALLOW_ = { 'RICH300_PROD_APPROVED': ['yes'], 'RICH300_WATCH_ALERTS': ['on', 'off'], 'RICH300_STRATEGY': ['on', 'off'], 'RICH300_HOURLY_FOLLOW': ['preview', 'on', 'off'], 'RICH300_FEED_KEY': 'secret', 'ops:precheck': 'json', 'ops:sprecheck': 'json', 'ops:last': 'json' };
 function rich300OpsSet_(name, value) {
   if (!Object.prototype.hasOwnProperty.call(RICH300_OPS_ALLOW_, name)) throw new Error('ops-not-allowed');
   var rule = RICH300_OPS_ALLOW_[name];
@@ -29,6 +29,7 @@ function rich300OpsState_() {
   var w = rich300WatchState_(), t = rich300TgDiagState_(), props = PropertiesService.getScriptProperties(), n = null, pre = rich300OpsJson_(RICH300_OPS_PRE_), ol = rich300OpsJson_(RICH300_OPS_LAST_);
   try { n = RICH300_ENGINE.watchOpenPositions(rich300WatchEnv_('preview').storeEnv(), { now: Date.now() }).positions.length; } catch (err) { n = null; }
   return { env: t.env, tokenSet: t.tokenSet, paired: t.paired, prodApproved: t.prodApproved, gateSend: t.gateSend, prop: w.prop, mode: w.mode, effective: w.effective, triggers: w.triggers, last: w.last ? { ageMin: Math.round((Date.now() - w.last.at) / 60000), status: w.last.status, mode: w.last.mode, positions: w.last.positions, events: w.last.events, sent: w.last.sent, failed: w.last.failed, marketFail: w.last.marketFail, code: w.last.code || null } : null,
+    follow: (function () { try { return rich300FollowState_(); } catch (err) { return null; } })(),
     strategy: { prop: rich300StrategyMode_(), keySet: !!props.getProperty('RICH300_FEED_KEY'), last: rich300OpsStratLast_(), precheck: rich300OpsAge_(rich300OpsJson_('ops:sprecheck')) }, positions: n, precheck: pre ? { ageMin: Math.round((Date.now() - pre.at) / 60000), ok: !!pre.ok && pre.build === RICH300_BUILD } : null, opsLast: ol ? { ageMin: Math.round((Date.now() - ol.at) / 60000), action: ol.action, code: ol.code } : null };
 }
 /** 페이지(?p=ops): 열기만 해서는 아무것도 바꾸지 않는다. */
@@ -171,4 +172,34 @@ function rich300OpsStratDisable() {
     var v = rich300OpsStratVerify_('off'); rich300OpsLog_('strategy-disable', v.ok ? 'ok' : 'verify-failed');
     return { ok: v.ok, code: v.ok ? 'disabled' : 'verify-failed', triggers: v.triggers, lockless: !held };
   } finally { if (held) lock.releaseLock(); }
+}
+
+/** ── 1시간 포지션 분석 스위치(?p=ops): 소유자만. 켜기는 미리보기가 정상이고 5분 감시 트리거가 정확히 1개일 때만. 새 트리거를 만들지 않는다. ── */
+function rich300OpsFollowSet(mode) {
+  if (!rich300IsOwner_()) return { ok: false, code: 'forbidden' };
+  if (mode !== 'preview' && mode !== 'on' && mode !== 'off') return { ok: false, code: 'bad-mode' };
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  var props = PropertiesService.getScriptProperties(), before = props.getProperty('RICH300_HOURLY_FOLLOW');
+  try {
+    if (mode !== 'off') {
+      var st = rich300FollowState_();
+      if (st.triggerCount !== 1) return { ok: false, code: 'trigger-count', triggers: st.triggerCount };
+      var pv = rich300FollowPreview();
+      if (!pv || pv.status === 'exception' || pv.status === 'busy') return { ok: false, code: 'preview-failed' };
+      if (mode === 'on') {
+        if (before !== 'preview' && before !== 'on') return { ok: false, code: 'preview-first' };
+        var t = rich300TgDiagState_();
+        if (!t.tokenSet || !t.paired || t.env !== 'prod' || !rich300WatchCanSend_()) return { ok: false, code: 'tg-not-ready' };
+      }
+    }
+    rich300OpsSet_('RICH300_HOURLY_FOLLOW', mode);
+    var after = rich300FollowMode_();
+    if (after !== mode) { if (before === null) rich300OpsDel_('RICH300_HOURLY_FOLLOW'); else rich300OpsSet_('RICH300_HOURLY_FOLLOW', before); return { ok: false, code: 'verify-failed', rolledBack: true }; }
+    rich300OpsLog_('follow', mode);
+    var s2 = rich300FollowState_();
+    return { ok: true, code: mode, effective: s2.effective, triggers: s2.triggerCount };
+  } catch (err) {
+    try { if (before === null) rich300OpsDel_('RICH300_HOURLY_FOLLOW'); else rich300OpsSet_('RICH300_HOURLY_FOLLOW', before); } catch (e2) { /* 읽어서 확인 */ }
+    return { ok: false, code: 'exception', rolledBack: true };
+  } finally { lock.releaseLock(); }
 }
