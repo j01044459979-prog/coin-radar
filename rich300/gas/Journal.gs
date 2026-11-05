@@ -66,6 +66,15 @@ function rich300EquitySubmit(form) {
     return { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 값이 저장돼 있습니다' : '저장됨', detail: detail, flags: r.flags };
   });
 }
+function rich300JournalReviewSubmit(form) {
+  return rich300Guarded_(function (env) {
+    var f = form || {};
+    var r = RICH300_ENGINE.journalSaveReview(env, {
+      sid: String(f.sid || ''), plan: String(f.plan || ''), mind: String(f.mind || ''), memo: f.memo === undefined ? undefined : String(f.memo)
+    }, { actor: 'ui:journal' });
+    return { ok: true, status: r.status, message: r.status === 'unchanged' ? '기존 복기와 같습니다' : '복기 저장됨(새로고침하면 이력이 보입니다)' };
+  });
+}
 function rich300JournalReviseFill(fillId, patch, reason) {
   return rich300Guarded_(function (env) { var r = RICH300_ENGINE.journalReviseFill(env, String(fillId || ''), patch, { actor: 'ui:journal', reason: String(reason || '') }); return { ok: true, status: r.status, message: r.status === 'unchanged' ? '바뀐 값이 없습니다' : '수정 저장됨(새로고침하면 이력이 보입니다)' }; });
 }
