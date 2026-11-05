@@ -474,8 +474,8 @@ function tgOnFollow(env, ev, sid, action, cb, answer) {
   const closed = choice.status === 'closed' || choice.status === 'already-closed';
   const label = closed ? '정리됨 · 1시간 분석 중단' : '유지 중 · 1시간 분석 계속';
   const a = answer(label);
-  const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\\n→ 상태: .+$/, '');
-  const e = tgEdit(env, cb, base.slice(0, 3400) + '\\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
+  const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\n→ 상태: .+$/, '');
+  const e = tgEdit(env, cb, base.slice(0, 3400) + '\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
   return { status: 'handled', action: 'follow-' + choice.status, replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
 function tgOnReview(env, ev, parts, cb, answer) {
