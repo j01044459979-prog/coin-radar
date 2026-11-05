@@ -25,13 +25,16 @@ jobs:
           node-version: '22'
       - name: GAS 번들 생성·문법 검사
         run: node rich300/deploy/make-bundle.mjs
-      - name: 모바일 브라우저(Chromium) 준비
+      - name: 모바일 브라우저 준비 (러너에 설치된 Chrome 사용, apt·브라우저 다운로드 없음)
+        timeout-minutes: 5
         run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          test -n "$CHROME" || { echo "러너에 Chrome이 없습니다"; exit 1; }
+          "$CHROME" --version
           mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
-          npm init -y >/dev/null && npm i --no-audit --no-fund playwright@1.49.1
-          npx playwright install --with-deps chromium
+          npm init -y >/dev/null && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i --no-audit --no-fund playwright@1.49.1
           echo "RICH300_PLAYWRIGHT=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
-          echo "RICH300_CHROMIUM=/nonexistent" >> "$GITHUB_ENV"
+          echo "RICH300_CHROMIUM=$CHROME" >> "$GITHUB_ENV"
       - name: 레이더 쪽 텔레그램 버튼·분할 계획 시험
         run: node --test radar-service/test/*.test.mjs
       - name: RICH300 전체 시험(번들 일치 포함)
