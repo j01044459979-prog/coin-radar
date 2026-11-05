@@ -174,7 +174,7 @@ test('tgCall: 429(retry_after) 대기 후 재시도, 긴 대기는 재시도 가
   assert.equal(tgClassify(0), 'network'); assert.equal(tgClassify(200, ''), 'other');
 });
 test('폴링: 처리 실패(LOCK)는 오프셋을 올리지 않고 다음 틱에 재처리, 3회 연속 실패는 건너뜀, 락 선점 중 중복 실행 방지', () => {
-  const x = setup(); const m = prompt(x); x.tele.click(OWNER, m, btn(m, '관망했어'));
+  const x = setup(); const m = prompt(x); x.tele.click(OWNER, m, btn(m, '안 했어'));
   x.mem.setLockBusy(true); let r = poll(x); assert.equal(r.retry, 1); assert.equal(rows(x, 'response').length, 0);
   r = poll(x); assert.equal(r.retry, 1); x.mem.setLockBusy(false); r = poll(x); assert.equal(r.handled, 1); assert.equal(rows(x, 'response')[0].choice, 'watched');
   // 포이즌: 같은 update가 계속 실패하면 3번째에 건너뛰고 다음 update를 처리
