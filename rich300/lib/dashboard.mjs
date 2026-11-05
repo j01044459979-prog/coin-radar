@@ -59,7 +59,7 @@ export function dashBuildModel({ inputs, throughDay, now, sample = false }) {
   model.daily = plottingRows.slice(-DASH_DAILY_LIMIT).reverse().map(({ r, adjusted }) => {
     const input = r.closeSource === 'input', isToday = r.day === throughDay, p = input ? r.pnlMicro : r.realizedNetMicro;
     return { day: r.day, n: r.n, today: isToday, input, closeLabel: input ? dashUsd(r.closeMicro) : null, pnlLabel: dashUsd(p, { sign: true }), pnlPositive: p > BigInt(0), pnlNegative: p < BigInt(0), pnlBasis: input ? 'equity' : 'realized',
-      targetLabel: dashUsd(r.targetCloseMicro), idealMicro: String(r.idealMicro), actualMicro: input ? String(adjusted) : null, met: input && r.closeMicro >= r.targetCloseMicro, review: r.needsReview };
+      targetLabel: dashUsd(r.targetCloseMicro), idealMicro: String(r.idealMicro), actualMicro: input ? String(adjusted) : null, met: input && r.pnlMicro >= r.targetProfitMicro, review: r.needsReview };
   });
   model.dailyTotal = rows.length;
   model.idealTodayLabel = dashUsd(t.idealMicro);
