@@ -80,7 +80,7 @@ test('잘못된 프로젝트 보호: 원격이 RICH300 부트스트랩/설치 �
 test('확인 절차: 프로젝트 ID 마지막 6글자를 입력해야 진행(틀리거나 입력 불가면 push 없이 중단)', () => {
   let w = setup(), x = run(w, { env: { RICH300_CONFIRM: 'WRONG1' } }); assert.notEqual(x.r.status, 0); assert.ok(!x.cmds.includes('push')); assert.match(x.out, /대상 프로젝트 ID/);              // 표시는 하되 진행하지 않음
   w = setup(); x = run(w, { env: { RICH300_CONFIRM: '' } }); assert.notEqual(x.r.status, 0); assert.ok(!x.cmds.includes('push')); assert.match(x.out, /확인을 입력받을 수 없습니다|확인 값이 다릅니다/);
-  assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'appsscript.json', 'Fill.html', 'Quick.html'].sort());
+  assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'appsscript.json', 'Fill.html'].sort());
 });
 test('실제 사고 재현: "curl | bash"(stdin=스크립트)로 실행해도 로그인 입력은 터미널에서만 받는다 — clasp 가 스크립트 텍스트를 읽지 않는다', () => {
   const w = setup(), x = run(w, { piped: true }); assert.equal(x.r.status, 0, x.out); assert.equal(x.stdin.length, 1); assert.equal(x.stdin[0], `stdin-line: ${URL_OK}`); assert.ok(!/set -euo|#!\/usr\/bin\/env/.test(x.stdin.join('\n')));
