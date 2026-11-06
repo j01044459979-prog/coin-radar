@@ -14,7 +14,7 @@ const entry = (sid, formId, over = {}) => ({ kind: 'entry', formId, sid, margin:
 
 test('예산: 첫 화면·기록 조회·저장이 이력 길이와 무관하게 적은 Sheets 호출로 끝난다(전: 첫 화면 132회·저장 675회)', () => {
   const { g } = world(); g.ctx.RICH300_ENGINE.storeCreate(g.ctx.rich300GasEnv_('sheet'), 'signal', sig('S99999'), { actor: 't' });
-  const dash = measure(g, () => g.ctx.doGet({ parameter: { p: 'dash' } })), dash2 = measure(g, () => g.ctx.doGet({ parameter: { p: 'dash' } })), jr = measure(g, () => g.ctx.doGet({ parameter: { p: 'journal' } }));
+  const dash = measure(g, () => g.ctx.doGet({ parameter: { p: 'classic-dash' } })), dash2 = measure(g, () => g.ctx.doGet({ parameter: { p: 'classic-dash' } })), jr = measure(g, () => g.ctx.doGet({ parameter: { p: 'classic-journal' } }));
   const save = measure(g, () => g.ctx.rich300FillSubmit(entry('S99999', 'p1'))), dup = measure(g, () => g.ctx.rich300FillSubmit(entry('S99999', 'p1'))), exit = measure(g, () => g.ctx.rich300FillSubmit({ kind: 'exit', formId: 'p2', sid: 'S99999', price: '102', qty: '', fee: '0.04', funding: '0', at: '' }));
   assert.ok(dash.calls <= 110 && dash.ms <= 3000, `첫 화면(초기) ${dash.calls}회 ${dash.ms}ms`);
   assert.ok(dash2.calls <= 60 && dash2.ms <= 1500, `첫 화면(재실행) ${dash2.calls}회 ${dash2.ms}ms`);              // 초기화 확인 표시(캐시)로 14개 시트 머리글 재확인을 건너뜀
@@ -26,10 +26,10 @@ test('예산: 첫 화면·기록 조회·저장이 이력 길이와 무관하게
   assert.ok(save.by.lock <= 2 && save.by.flush <= 1, `저장은 락·flush 한 번 (락 ${save.by.lock}, flush ${save.by.flush})`);       // 응답·체결·계획을 한 락 안에서
 });
 test('전체 조회 금지: 기록 조회는 최근 40건만 만들고 감사 로그(Audit) 전체를 읽지 않는다 + 더 보기 링크', () => {
-  const { g } = world(); const m = measure(g, () => g.ctx.doGet({ parameter: { p: 'journal' } })), html = m.r.html;
+  const { g } = world(); const m = measure(g, () => g.ctx.doGet({ parameter: { p: 'classic-journal' } })), html = m.r.html;
   assert.equal((html.match(/class="fill"/g) || []).length > 0, true); assert.match(html, /최근 40건만 표시 \(전체 180건\)/); assert.match(html, /p=journal&amp;n=80/);
-  const more = g.ctx.doGet({ parameter: { p: 'journal', n: '80' } }).html; assert.match(more, /최근 80건만 표시/); assert.match(more, /n=120/);
-  const all = g.ctx.doGet({ parameter: { p: 'journal', n: '999999' } }).html; assert.match(all, /180건/); assert.ok(!/건만 표시/.test(all));          // 상한 200 — 180건이면 전부 보인다
+  const more = g.ctx.doGet({ parameter: { p: 'classic-journal', n: '80' } }).html; assert.match(more, /최근 80건만 표시/); assert.match(more, /n=120/);
+  const all = g.ctx.doGet({ parameter: { p: 'classic-journal', n: '999999' } }).html; assert.match(all, /180건/); assert.ok(!/건만 표시/.test(all));          // 상한 200 — 180건이면 전부 보인다
   assert.ok(m.cells < 30000, `읽은 셀 ${m.cells}`);                                                                       // 전: 약 30만 셀(90일)
 });
 test('정확성: 요청 캐시는 요청 안에서만 — 다음 요청은 다른 요청이 쓴 행을 바로 본다(잔고·체결 상태에 오래된 값 없음)', () => {
@@ -59,7 +59,7 @@ test('무한 로딩 방지: 어떤 경우에도 화면을 돌려준다 — 주�
   const { g } = world(); const home = g.ctx.doGet({}), unknown = g.ctx.doGet({ parameter: { p: 'zzz' } });
   assert.match(home.html, /RICH 300/); assert.match(unknown.html, /RICH 300/); assert.equal(home.text, undefined);
   const other = loadProd({ email: 'other@example.com' }); assert.match(other.ctx.doGet({}).html, /접근 제한/); assert.match(loadProd({ email: '' }).ctx.doGet({}).html, /접근 제한/);
-  const broken = loadProd(); broken.ctx.rich300PageDash_ = () => { throw new Error('시트 값: SECRET-123'); }; const e1 = broken.ctx.doGet({ parameter: { p: 'dash' } }); assert.match(e1.html, /오류 코드/); assert.match(e1.html, /id="retry"/); assert.match(e1.html, /상태 점검/);   // 시트 설정이 없는 상태
+  const broken = loadProd(); broken.ctx.rich300PageDash_ = () => { throw new Error('시트 값: SECRET-123'); }; const e1 = broken.ctx.doGet({ parameter: { p: 'classic-dash' } }); assert.match(e1.html, /오류 코드/); assert.match(e1.html, /id="retry"/); assert.match(e1.html, /상태 점검/);   // 시트 설정이 없는 상태
   assert.ok(!/at Object|stack|TypeError: |SECRET-123/.test(e1.html));          // 오류 메시지 본문은 화면에 내지 않는다(코드만)
 });
 test('상태 점검(?p=health): 시트가 없거나 망가져도 열리고, 정상이면 모든 단계가 PASS 이며 첫 화면·기록 조회 실측 시간을 보여 준다', () => {
@@ -68,7 +68,7 @@ test('상태 점검(?p=health): 시트가 없거나 망가져도 열리고, 정�
   const b = loadProd(); b.ctx.SpreadsheetApp.openById = () => { throw new Error('접근 불가 SECRET-9'); }; const bad = b.ctx.doGet({ parameter: { p: 'health' } }).html; assert.match(bad, />FAIL</); assert.match(bad, /스프레드시트 열기 실패/); assert.ok(!/SECRET-9/.test(bad));
 });
 test('응답시간 기록: 첫 실행/재실행을 구분해 최근 기록에 남긴다', () => {
-  const { g } = world(); g.ctx.doGet({ parameter: { p: 'dash' } }); g.ctx.doGet({ parameter: { p: 'dash' } });
+  const { g } = world(); g.ctx.doGet({ parameter: { p: 'classic-dash' } }); g.ctx.doGet({ parameter: { p: 'classic-dash' } });
   const html = g.ctx.doGet({ parameter: { p: 'health' } }).html; assert.match(html, /첫 실행/); assert.match(html, /재실행/);
 });
 test('입력 화면: 저장 중 즉시 상태·경과 초·중복 클릭 차단·무응답 20초 뒤 재시도 안내(같은 formId 로 재전송)', () => {
