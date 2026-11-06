@@ -101,6 +101,7 @@ const fs=require("fs"),path=require("path"),crypto=require("crypto"),[A,B,V]=pro
 const find=(d,n,ex)=>ex.map(e=>path.join(d,n+"."+e)).find(p=>fs.existsSync(p));
 const norm=s=>s.replace(/\r\n/g,"\n"),h=s=>crypto.createHash("sha256").update(s).digest("hex").slice(0,12),out=[];let bad=0;
 for(const [n,ex] of [["Code",["gs","js"]],["Fill",["html"]],["Quick",["html"]]]){const pa=find(A,n,ex),pb=find(B,n,ex);
+  if(!pa&&!pb)continue;
   if(!pa||!pb){bad++;out.push("  - 다름: "+n+" ("+(pa?"확인 쪽에 파일 없음":"기준 쪽에 파일 없음")+")");continue}
   const sa=norm(fs.readFileSync(pa,"utf8")),sb=norm(fs.readFileSync(pb,"utf8"));
   if(sa!==sb){bad++;const la=sa.split("\n"),lb=sb.split("\n");let i=0;while(i<la.length&&la[i]===lb[i])i++;out.push("  - 다름: "+n+" (기준 "+Buffer.byteLength(sa)+"바이트 sha="+h(sa)+", 확인 "+Buffer.byteLength(sb)+"바이트 sha="+h(sb)+", 첫 차이 "+(i+1)+"번째 줄)")}}
