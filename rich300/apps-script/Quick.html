@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>RICH300 복리 캘린더</title>
+<style>
+:root{color-scheme:dark;--bg:#0f141c;--panel:#1a2330;--line:#344052;--ink:#f1f5f9;--mut:#a5b3c3;--accent:#66d5be}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Noto Sans KR",system-ui,sans-serif}
+main{max-width:610px;margin:0 auto;padding:22px 14px 42px}
+.brand{font-weight:800;letter-spacing:.11em;color:var(--accent);font-size:12px}
+h1{font-size:26px;letter-spacing:-.035em;line-height:1.2;margin:7px 0 8px}
+.lead{color:var(--mut);font-size:13px;margin:0 0 19px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:17px;margin:14px 0}
+.three{display:grid;grid-template-columns:1fr;gap:12px}
+.metric{min-width:0;border-bottom:1px solid var(--line);padding-bottom:11px}
+.metric:last-child{border:0;padding:0}
+.metric .label{font-size:13px;color:var(--mut)}
+.metric strong{display:block;font-size:30px;font-weight:800;letter-spacing:-.035em;line-height:1.25;margin-top:3px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.metric .unit{font-size:14px;color:var(--mut);font-weight:500}
+.metric .sub{font-size:12px;color:var(--mut);margin-top:4px}
+.metric.target strong{color:var(--accent)}
+h2{font-size:17px;margin:0;letter-spacing:-.03em}
+.calTop{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}
+.calBtns{display:flex;align-items:center;gap:4px}
+button{font:inherit;cursor:pointer}
+.calBtns button,.subtle{border:1px solid var(--line);border-radius:9px;background:transparent;color:var(--ink);padding:7px 11px;min-height:36px}
+#monthText{font-weight:750;white-space:nowrap;min-width:104px;text-align:center;font-variant-numeric:tabular-nums}
+.weekdays,.days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.weekdays span{text-align:center;font-size:12px;color:var(--mut);padding:5px 0}
+.day{border:1px solid var(--line);border-radius:9px;background:#18212c;min-height:74px;padding:6px 3px;min-width:0;text-align:left;color:var(--ink);overflow:hidden}
+.day .n{font-size:12px;font-weight:750;display:block;margin-bottom:5px}
+.day .money{font-size:11px;font-weight:750;letter-spacing:-.035em;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.day .kind{font-size:10px;color:var(--mut);display:block;margin-top:2px}
+.day.actual .money{color:var(--accent)}
+.day.selected{outline:2px solid var(--accent);outline-offset:0}
+.day.today .n{text-decoration:underline;text-underline-offset:3px}
+.day:disabled{cursor:default;opacity:0.9}
+.day.before{background:transparent;opacity:.35}
+.empty{min-height:74px}
+.note{font-size:12px;color:var(--mut);margin:12px 0 0}
+input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:17px;min-height:48px}
+form{display:grid;gap:12px;margin-top:12px}
+.field label{display:block;font-size:13px;color:var(--mut);margin-bottom:6px}
+.primary{display:block;border:0;border-radius:11px;background:var(--accent);font-weight:750;color:#10201f;padding:12px;min-height:48px}
+.primary:disabled{opacity:.55}
+.status{min-height:22px;margin-top:10px;color:var(--mut);font-size:13px}
+.status.error{color:#ffa7a7}
+#content{display:none}
+footer{color:var(--mut);font-size:11px;margin:22px 2px}
+@media(min-width:490px){.three{grid-template-columns:repeat(3,minmax(0,1fr));gap:0}.metric{border-bottom:0;border-right:1px solid var(--line);padding:0 11px}.metric:first-child{padding-left:0}.metric:last-child{padding-right:0}.metric strong{font-size:25px}.day{min-height:84px;padding:7px 5px}.day .money{font-size:12px}}
+@media(prefers-reduced-motion:no-preference){button{transition:border-color .15s,opacity .15s}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}}
+</style>
+</head>
+<body>
+<main>
+<div class="brand">RICH300</div>
+<h1>나의 5% 복리 캘린더</h1>
+<p class="lead">하루 마감 금액만 적으면 다음 날 목표가 자동으로 바뀝니다.</p>
+<div class="status" id="loading" role="status">장부를 불러오는 중…</div>
+<div id="content">
+  <section class="card three" aria-label="오늘 자금과 목표">
+    <div class="metric"><div class="label">현재 내돈</div><strong><span id="current">—</span> <span class="unit">USDT</span></strong><div class="sub" id="currentSub">최근 마감 입력 기준</div></div>
+    <div class="metric target"><div class="label">오늘 5% 달성 시</div><strong><span id="target">—</span> <span class="unit">USDT</span></strong><div class="sub">오늘 마감 목표액</div></div>
+    <div class="metric"><div class="label">잔여금액</div><strong><span id="remaining">—</span> <span class="unit">USDT</span></strong><div class="sub" id="remainingSub">목표까지 필요한 금액</div></div>
+  </section>
+  <section class="card" aria-labelledby="calTitle">
+    <div class="calTop"><h2 id="calTitle">매일 5% 복리</h2><div class="calBtns"><button type="button" id="prevMonth" aria-label="이전 달">‹</button><span id="monthText"></span><button type="button" id="nextMonth" aria-label="다음 달">›</button></div></div>
+    <div class="weekdays" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+    <div id="days" class="days" aria-label="월별 복리 캘린더"></div>
+    <p class="note">초록색 금액은 직접 입력한 실제 마감액, 그 외는 매일 5% 달성을 가정한 목표액입니다.</p>
+  </section>
+  <section class="card" aria-labelledby="recordTitle">
+    <h2 id="recordTitle">오늘의 마감 금액 기록</h2>
+    <form id="closeForm">
+      <div class="field"><label for="closeDay">날짜</label><input id="closeDay" type="date" required></div>
+      <div class="field"><label for="closeAmount">최종 마감 금액 (USDT)</label><input id="closeAmount" type="text" inputmode="decimal" placeholder="예: 315.50" autocomplete="off" required></div>
+      <button type="submit" id="save" class="primary">마감 금액 저장</button>
+    </form>
+    <div id="saveStatus" class="status" role="status" aria-live="polite"></div>
+  </section>
+</div>
+<footer>기록은 기존 RICH300 자산 장부에 저장됩니다. 5%는 도전 목표이며 실제 수익을 보장하지 않습니다.</footer>
+</main>
+<script>
+(function(){
+'use strict';
+var state=null, selected=null, viewYear=0, viewMonth=0, saved=false;
+var el=function(id){return document.getElementById(id);};
+var ONE=BigInt(1), HUNDRED=BigInt(100), ZERO=BigInt(0);
+function parseDay(s){return new Date(s+'T00:00:00Z');}
+function iso(d){return d.toISOString().slice(0,10);}
+function add(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);return x;}
+function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var c=(v+BigInt(5000))/BigInt(10000),s=(c/HUNDRED).toString(),d=(c%HUNDRED).toString().padStart(2,'0');return (neg?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
+function targetNext(v){return (v*BigInt(105)+BigInt(50))/HUNDRED;}
+function endOfMonth(y,m){return new Date(Date.UTC(y,m,0));}
+function records(){var o={};(state.closes||[]).forEach(function(x){o[x.day]=x;});return o;}
+function project(endDay){
+ var result={}, rec=records(), d=parseDay(state.startDay), end=parseDay(endDay), bal=BigInt(state.startMicro);
+ for(var count=0;d<=end&&count<4000;count++,d=add(d,1)){
+   var day=iso(d), goal=targetNext(bal), saved=rec[day] ? BigInt(rec[day].micro) : null;
+   result[day]={goal:goal,actual:saved};bal=saved!==null?saved:goal;
+ }
+ return result;
+}
+function setStatus(text,err){el('saveStatus').textContent=text;el('saveStatus').className='status'+(err?' error':'');}
+function choose(day){
+ if(day<state.startDay||day>state.today)return;
+ selected=day;el('closeDay').value=day;
+ var x=records()[day];el('closeAmount').value=x?x.equity:'';
+ setStatus(x?'기존 기록을 수정할 수 있어요.':'',false);
+ renderCalendar();
+}
+function renderNumbers(proj){
+ var list=(state.closes||[]).filter(function(c){return c.day<=state.today;});
+ var last=list.length?list[list.length-1]:null;
+ // Equity는 날짜 키로 정렬된 상태로 오지만 외부 시트의 행 순서에 의존하지 않는다.
+ list.sort(function(a,b){return a.day.localeCompare(b.day);});last=list.length?list[list.length-1]:null;
+ var today=proj[state.today],current=last?BigInt(last.micro):null;
+ el('current').textContent=money(current);
+ el('currentSub').textContent=last?(last.day===state.today?'오늘 마감 입력 기준':last.day+' 최종 마감 기준'):'아직 마감 금액이 없어요';
+ el('target').textContent=today?money(today.goal):'—';
+ el('remaining').textContent=today&&current!==null?money(today.goal>current?today.goal-current:ZERO):'—';
+ el('remainingSub').textContent=!last?'마감 금액을 입력해 주세요':last.day!==state.today?'최근 마감액과 목표액 비교':'오늘 마감액과 목표액 비교';
+}
+function renderCalendar(){
+ var grid=el('days');grid.replaceChildren();
+ var first=new Date(Date.UTC(viewYear,viewMonth-1,1)),end=endOfMonth(viewYear,viewMonth),endDay=iso(end);
+ var maxEnd=endDay>state.today?endDay:state.today,proj=project(maxEnd);
+ el('monthText').textContent=viewYear+'년 '+viewMonth+'월';
+ for(var i=0;i<first.getUTCDay();i++){var blank=document.createElement('div');blank.className='empty';grid.appendChild(blank);}
+ for(var day=1;day<=end.getUTCDate();day++){
+   var key=viewYear+'-'+String(viewMonth).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+   var row=proj[key],b=document.createElement('button');b.type='button';b.className='day';
+   if(key===state.today)b.classList.add('today');if(key===selected)b.classList.add('selected');
+   if(row&&row.actual!==null)b.classList.add('actual');
+   if(key<state.startDay)b.classList.add('before');
+   b.disabled=key>state.today||key<state.startDay;
+   var n=document.createElement('span');n.className='n';n.textContent=String(day);b.appendChild(n);
+   if(row){var a=document.createElement('span');a.className='money';a.textContent=money(row.actual!==null?row.actual:row.goal);a.title=a.textContent;b.appendChild(a);
+     var t=document.createElement('span');t.className='kind';t.textContent=row.actual!==null?'실제 마감':'5% 목표';b.appendChild(t);
+     b.title=key+' '+(row.actual!==null?'실제 마감 ':'목표 ')+money(row.actual!==null?row.actual:row.goal)+' USDT';
+   }
+   if(!b.disabled)b.addEventListener('click',(function(d){return function(){choose(d);};})(key));
+   grid.appendChild(b);
+ }
+ renderNumbers(proj);
+}
+function load(){
+ el('loading').textContent='장부를 불러오는 중…';el('loading').className='status';
+ if(!window.google||!google.script||!google.script.run){el('loading').textContent='Google 웹앱 주소로 접속해야 기록을 읽을 수 있어요.';return;}
+ google.script.run.withSuccessHandler(function(r){
+   if(!r||!r.ok){el('loading').textContent=r&&r.message?r.message:'장부를 불러오지 못했어요. 새로고침해 주세요.';return;}
+   if(!r.configured){el('loading').textContent='RICH300 초기 자금 설정이 아직 없어요.';return;}
+   state=r;selected=r.today;var d=parseDay(r.today);viewYear=d.getUTCFullYear();viewMonth=d.getUTCMonth()+1;
+   el('closeDay').min=r.startDay;el('closeDay').max=r.today;el('closeDay').value=r.today;
+   var todayClose=records()[r.today];el('closeAmount').value=todayClose?todayClose.equity:'';
+   el('loading').style.display='none';el('content').style.display='block';renderCalendar();
+ }).withFailureHandler(function(){el('loading').textContent='일시적으로 불러오지 못했어요. 새로고침해 주세요.';}).rich300QuickModel();
+}
+el('prevMonth').addEventListener('click',function(){viewMonth--;if(viewMonth<1){viewMonth=12;viewYear--;}renderCalendar();});
+el('nextMonth').addEventListener('click',function(){viewMonth++;if(viewMonth>12){viewMonth=1;viewYear++;}renderCalendar();});
+el('closeDay').addEventListener('change',function(){choose(el('closeDay').value);});
+el('closeForm').addEventListener('submit',function(e){
+ e.preventDefault();if(saved||!state)return;
+ var day=el('closeDay').value,amount=el('closeAmount').value.trim().replace(/,/g,'');
+ if(day<state.startDay||day>state.today){setStatus('시작일 이후부터 오늘까지만 기록할 수 있어요.',true);return;}
+ if(!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(amount)){setStatus('0 이상의 숫자를 소수점 최대 6자리까지 입력해 주세요.',true);return;}
+ saved=true;el('save').disabled=true;setStatus('저장 중…',false);
+ var slow=setTimeout(function(){if(saved)setStatus('응답이 늦어지고 있어요. 중복 입력하지 말고 저장 결과를 확인해 주세요.',true);},25000);
+ google.script.run.withSuccessHandler(function(r){
+   clearTimeout(slow);saved=false;el('save').disabled=false;
+   if(!r||!r.ok){setStatus(r&&r.message?r.message:'저장에 실패했어요.',true);return;}
+   state=r.model;selected=day;renderCalendar();setStatus(r.message||'저장했어요.',false);
+ }).withFailureHandler(function(){clearTimeout(slow);saved=false;el('save').disabled=false;setStatus('저장 응답을 확인하지 못했어요. 새로고침 후 기록을 확인해 주세요.',true);}).rich300QuickSave({day:day,equity:amount});
+});
+load();
+})();
+</script>
+</body>
+</html>

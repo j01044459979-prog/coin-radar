@@ -4254,8 +4254,8 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '63542f513493';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
-var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageDash_', journal: 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
+var RICH300_BUILD = '7536a5407372';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
     var owner = String(PropertiesService.getScriptProperties().getProperty('RICH300_OWNER_EMAIL') || '').trim().toLowerCase();
@@ -5467,4 +5467,42 @@ function rich300FollowState_() {
   try { last = JSON.parse(props.getProperty('follow:last') || 'null'); } catch (err) { last = null; }
   return { property: raw === null ? 'unset' : mode, mode: mode, triggerCount: count, canSend: canSend,
     effective: mode === 'off' || count !== 1 ? 'disabled' : (canSend ? 'active' : 'preview-only'), last: last };
+}
+
+// ── gas/Quick.gs ──
+/**
+ * RICH300 간편 마감 화면: 기존 Equity 감사 로그를 그대로 사용한다.
+ * GET 첫 화면은 Sheets를 열지 않음(소유자 확인은 Api.gs에서 선행).
+ * 실제 수치 로딩은 소유자 전용 google.script.run 1회로 처리.
+ */
+function rich300PageQuick_() {
+  return HtmlService.createHtmlOutputFromFile('Quick').setTitle('RICH300 복리 캘린더').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+function rich300QuickData_() {
+  var now = Date.now(), today = RICH300_ENGINE.kstDayOf(now);
+  var sheetId = PropertiesService.getScriptProperties().getProperty('RICH300_SHEET_ID');
+  if (!sheetId) return { ok: false, error: 'setup', message: '연결된 자산 장부가 없습니다.' };
+  var se = rich300GasEnv_(sheetId); // 이미 운영 중인 시트: 매번 17개 시트 초기화를 검사하지 않는다
+  var audit = RICH300_ENGINE.storeReadAuditTail(se);
+  var ch = RICH300_ENGINE.storeList(se, 'challenge', { audit: audit }).filter(function (x) { return x.key === 'challenge'; })[0];
+  if (!ch) return { ok: true, configured: false, today: today };
+  var startDay = ch.data.startDay;
+  var equity = RICH300_ENGINE.storeList(se, 'equity', { audit: audit });
+  var closes = equity.filter(function (x) { return x.data.day >= startDay && x.data.day <= today; }).map(function (x) {
+    return { day: x.data.day, micro: String(RICH300_ENGINE.decToMicro(RICH300_ENGINE.dec(x.data.equity))), equity: x.data.equity };
+  });
+  return { ok: true, configured: true, today: today, startDay: startDay, startMicro: String(RICH300_ENGINE.decToMicro(RICH300_ENGINE.dec(ch.data.startEquity))), closes: closes };
+}
+function rich300QuickModel() {
+  return rich300Guarded_(function () { return rich300QuickData_(); });
+}
+function rich300QuickSave(form) {
+  return rich300Guarded_(function (env) {
+    var f = form || {}, day = String(f.day || ''), equity = String(f.equity || '').trim();
+    // 기존 마감의 미실현손익 필드는 이 간편 화면에서 표시하지 않더라도 보존한다.
+    var se = env.storeEnv(), prev = RICH300_ENGINE.storeGet(se, 'equity', day);
+    var un = prev && prev.data ? prev.data.unrealized : undefined;
+    var r = RICH300_ENGINE.closeSubmitEquity(env, { day: day, equity: equity, unrealized: un, reason: '마감 금액 수정' }, { actor: 'ui:quick' });
+    return { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 금액이 저장되어 있어요.' : '마감 금액을 저장했어요.', model: rich300QuickData_() };
+  });
 }

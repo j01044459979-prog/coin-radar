@@ -33,12 +33,12 @@ test('자가 점검: 정상 상태는 실패 0·경고 0, 각 위험은 해당 �
   const json = JSON.stringify(deploySelfTest(ok())); assert.ok(!/@|AAF|secret/i.test(json));
 });
 test('배포 묶음: Code.gs 한 파일(엔진+gas)·HTML·매니페스트, 문법 유효, S0 프로브·비밀값 없음, 필요한 진입 함수 포함, 해시 목록', () => {
-  const { files, gasFiles } = makeBundle(); assert.deepEqual(Object.keys(files).sort(), ['Code.gs', 'Fill.html', 'MANIFEST.txt', 'appsscript.json']);
+  const { files, gasFiles } = makeBundle(); assert.deepEqual(Object.keys(files).sort(), ['Code.gs', 'Fill.html', 'MANIFEST.txt', 'Quick.html', 'appsscript.json']);
   assert.deepEqual(gasFiles.filter(f => BUNDLE_GAS_ORDER.includes(f)), BUNDLE_GAS_ORDER.filter(f => gasFiles.includes(f))); assert.ok(gasFiles.includes('Deploy.gs') && gasFiles.includes('Backup.gs') && gasFiles.includes('Telegram.gs'));
   const code = files['Code.gs']; assert.doesNotThrow(() => new vm.Script(code));
   for (const fn of ['doGet', 'doPost', 'rich300TgPoll', 'rich300FillSubmit', 'rich300BackupRun', 'rich300SetupTest', 'rich300SetupProd', 'rich300SelfTest', 'rich300InstallAllTriggers', 'rich300BackupSwitchFromProps', 'rich300TgGate_']) assert.match(code, new RegExp(`function ${fn}\\(`), fn);
   assert.ok(!/\bs0(Compat|EngineBench|Tick|Daily|Report|InstallTriggers|RemoveTriggers)\b/.test(code)); assert.ok(!/S0_TEST_KEY|s0-throwaway/.test(code)); assert.ok(!/\b\d{6,}:[A-Za-z0-9_-]{30,}/.test(code));
-  assert.match(files['MANIFEST.txt'], /^[0-9a-f]{64}  +\d+  Code\.gs$/m); assert.ok(code.length < 600000);
+  assert.match(files['MANIFEST.txt'], /^[0-9a-f]{64}  +\d+  Code\.gs$/m); assert.ok(code.length < 750000);
   const names = [...code.matchAll(/^function ([A-Za-z0-9_$]+)\(/gm)].map(m => m[1]); const dup = names.filter((n, i) => names.indexOf(n) !== i); assert.deepEqual(dup, []);              // 전역 함수 이름 충돌 없음
 });
 test('매니페스트: 시간대 Asia/Seoul·V8·최소 권한 범위(스프레드시트·트리거·외부 요청·이메일·drive.file), 넓은 권한 없음', () => {
@@ -69,7 +69,7 @@ test('배포 묶음: 문법 유효·함수 이름 충돌 없음·설치·검증 
 });
 
 test('apps-script(사용자가 붙여 넣는 파일)는 현재 코드의 운영 묶음과 같다 — 다르면: node rich300/deploy/make-bundle.mjs rich300/apps-script', () => {
-  const { files } = makeBundle(); for (const n of ['Code.gs', 'Fill.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../apps-script/${n}`, import.meta.url), 'utf8'), files[n], n);
+  const { files } = makeBundle(); for (const n of ['Code.gs', 'Fill.html', 'Quick.html', 'appsscript.json', 'MANIFEST.txt']) assert.equal(readFileSync(new URL(`../apps-script/${n}`, import.meta.url), 'utf8'), files[n], n);
 });
 
 test('Apps Script V8 호환 보수 점검: ES2021 이후 API(Object.hasOwn·replaceAll·.at()·findLast·toSorted·structuredClone 등)와 Node 전용 API를 번들이 쓰지 않는다', () => {

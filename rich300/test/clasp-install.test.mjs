@@ -48,14 +48,14 @@ function run(w, { args = [ID, FAKE_COMMIT], env = {}, ttyLines = [URL_OK], piped
   return { r, log, scopes: extra('scopes'), stdin: extra('stdin'), out: r.stdout + r.stderr, cmds: log.map(l => l.split(' ')[0]), backups: readdirSync(w.home).filter(n => n.startsWith('rich300-backup-')) };
 }
 const remoteFiles = w => Object.fromEntries(readdirSync(w.rem).map(n => [n, readFileSync(`${w.rem}/${n}`, 'utf8')]));
-const fixManifest = d => { const rows = ['Code.gs', 'Fill.html', 'appsscript.json'].map(n => `${sha(readFileSync(`${d}/${n}`))}  ${String(readFileSync(`${d}/${n}`).length).padStart(8)}  ${n}`); writeFileSync(`${d}/MANIFEST.txt`, `RICH300 Apps Script bundle\n${rows.join('\n')}\n`); };
+const fixManifest = d => { const rows = ['Code.gs', 'Fill.html', 'Quick.html', 'appsscript.json'].map(n => `${sha(readFileSync(`${d}/${n}`))}  ${String(readFileSync(`${d}/${n}`).length).padStart(8)}  ${n}`); writeFileSync(`${d}/MANIFEST.txt`, `RICH300 Apps Script bundle\n${rows.join('\n')}\n`); };
 
 test('정상: 백업 → 대상·변경 표시 → 확인 → push(이 프로젝트 ID 로만) → 다시 내려받아 일치 → 로그아웃, 허용된 clasp 명령만', () => {
   const w = setup({ remote: { 'Code.gs': BOOT, 'appsscript.json': '{}', 'Fill.html': '<x>', 'Extra.gs': 'old' } }), x = run(w); assert.equal(x.r.status, 0, x.out);
   assert.match(x.out, new RegExp(`대상 프로젝트 ID: ${ID}`)); assert.match(x.out, /현재 원격 파일/); assert.match(x.out, /교체: Code\.gs/); assert.match(x.out, /교체: Fill\.html/); assert.match(x.out, /교체: appsscript\.json/); assert.match(x.out, /삭제\(이 프로젝트에서만\): Extra\.gs/); assert.match(x.out, /\[PASS\] 반영 완료/);
   assert.deepEqual(x.cmds, ['login', 'pull', 'push', 'pull', 'logout']); assert.ok(x.log.every(l => l.endsWith(`[id=${ID}]`) || l.startsWith('login') || l.startsWith('logout')));      // 모든 clasp 호출이 지정한 ID 의 .clasp.json 으로만
   assert.equal(x.backups.length, 1); const bdir = `${w.home}/${x.backups[0]}`; assert.ok(x.backups[0].endsWith(LAST6)); assert.equal(readFileSync(`${bdir}/Code.gs`, 'utf8'), BOOT); assert.equal(readFileSync(`${bdir}/Extra.gs`, 'utf8'), 'old'); assert.equal(existsSync(`${w.home}/.clasprc.json`), false);
-  assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'Fill.html', 'appsscript.json']); assert.equal(remoteFiles(w)['Code.gs'], readFileSync(`${DIST}/Code.gs`, 'utf8'));
+  assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'Fill.html', 'Quick.html', 'appsscript.json']); assert.equal(remoteFiles(w)['Code.gs'], readFileSync(`${DIST}/Code.gs`, 'utf8'));
 });
 test('기본값 없음: 프로젝트 ID·커밋 인자가 없거나 형식이 틀리면 로그인 전에 중단(clasp 호출 0건)', () => {
   for (const args of [[], [ID], [ID, 'main'], [ID, FAKE_COMMIT.slice(0, 12)], ['', FAKE_COMMIT], ['bad id; rm -rf /', FAKE_COMMIT], ['short', FAKE_COMMIT]]) { const x = run(setup(), { args }); assert.notEqual(x.r.status, 0, JSON.stringify(args)); assert.equal(x.log.length, 0, JSON.stringify(args)); assert.match(x.out, /\[FAIL\]/); }
@@ -127,7 +127,7 @@ test('설치 파일 손상(끝 잘림·해시·문법·열린 매니페스트)�
     d => { writeFileSync(`${d}/Code.gs`, 'function broken( {\n}\n'); fixManifest(d); }, d => { const m = JSON.parse(readFileSync(`${d}/appsscript.json`, 'utf8')); m.webapp = { executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' }; writeFileSync(`${d}/appsscript.json`, JSON.stringify(m)); fixManifest(d); }];
   for (const [i, mutate] of cases.entries()) { const x = run(setup({ mutate })); assert.notEqual(x.r.status, 0, `case ${i}`); assert.equal(x.log.length, 0, `case ${i}`); }
 });
-const INSTALLED = { 'Code.gs': readFileSync(`${DIST}/Code.gs`, 'utf8'), 'Fill.html': readFileSync(`${DIST}/Fill.html`, 'utf8'), 'appsscript.json': readFileSync(`${DIST}/appsscript.json`, 'utf8') };
+const INSTALLED = { 'Code.gs': readFileSync(`${DIST}/Code.gs`, 'utf8'), 'Fill.html': readFileSync(`${DIST}/Fill.html`, 'utf8'), 'Quick.html': readFileSync(`${DIST}/Quick.html`, 'utf8'), 'appsscript.json': readFileSync(`${DIST}/appsscript.json`, 'utf8') };
 test('상태 판별: 원격이 부트스트랩/설치 완료/기타 중 무엇인지, 크기·해시(앞 12자리)와 함께 표시한다', () => {
   let x = run(setup()); assert.match(x.out, /현재 원격 상태: 부트스트랩 상태\(설치 전\) — Code \d+바이트 sha256=[0-9a-f]{12}/); assert.match(x.out, /설치할 파일: +Code \d+바이트 sha256=[0-9a-f]{12}/);
   x = run(setup({ remote: { ...INSTALLED, 'Code.gs': INSTALLED['Code.gs'] + '\n// 로컬 수정\n' } }), { env: { RICH300_FORCE: '1' } }); assert.match(x.out, /현재 원격 상태: 설치 완료 상태\(rich300Install 있음\)/);
@@ -175,7 +175,7 @@ test('push 실패 → 실제 Google API 오류 본문(상태·message)을 그대
 test('clasp push 만 실패하고 API 는 성공(clasp 쪽 문제) → API 직접 반영 후 다시 내려받아 일치 확인 → PASS', async () => {
   const w = setup(), api = await startApi(w, 'ok'); try {
     const x = run(w, { env: { ...apiEnv(api, w), FAKE_PUSH_REJECT: '1' }, ttyLines: [] });
-    assert.equal(x.r.status, 0, x.out); assert.match(x.out, /clasp 대신 API 직접 호출로 반영/); assert.match(x.out, /HTTP 200/); assert.match(x.out, /\[PASS\] 반영 완료/); assert.equal(remoteFiles(w)['Code.gs'], readFileSync(`${DIST}/Code.gs`, 'utf8')); assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'Fill.html', 'appsscript.json']);
+    assert.equal(x.r.status, 0, x.out); assert.match(x.out, /clasp 대신 API 직접 호출로 반영/); assert.match(x.out, /HTTP 200/); assert.match(x.out, /\[PASS\] 반영 완료/); assert.equal(remoteFiles(w)['Code.gs'], readFileSync(`${DIST}/Code.gs`, 'utf8')); assert.deepEqual(Object.keys(remoteFiles(w)).sort(), ['Code.gs', 'Fill.html', 'Quick.html', 'appsscript.json']);
   } finally { api.child.kill(); }
 });
 test('clasp 선택: PATH 의 clasp 3.x 를 우선 쓰고, 없으면 3.4.1 로 고정한 npx 를 쓴다(스크립트 기본값은 더 이상 3.3.0 이 아님)', () => {
