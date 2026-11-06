@@ -18,6 +18,34 @@ const ev = (a = mkA(), c15 = mk15(), now = NOW, o = OPT) => evaluateSignal({ a, 
 const close = (x, y, e = 1e-9) => Math.abs(x - y) < e;
 
 // ── 판정 ──
+// 안전 기준(순손익비 1.5R/손절/확정 봉)은 유지한 채 트리거·거래량만 소폭 완화한 3일 관찰 설정.
+test('미세 완화: 거래량 1.1배, 최근 7봉 돌파만 허용하되 기존 8봉·1.2배 대조군은 보류', () => {
+  assert.equal(SIG.trigBars, 7);
+  assert.equal(SIG.volMult, 1.1);
+  const oldP = { ...SIG, trigBars: 8, volMult: 1.2 };
+  const lowVol = mk15({ volLast: 1150 });
+  const liveVol = ev(mkA(), lowVol);
+  const oldVol = ev(mkA(), lowVol, NOW, { ...OPT, P: oldP });
+  assert.equal(liveVol.status, 'CANDIDATE', liveVol.blockers?.join(' / '));
+  assert.equal(oldVol.status, 'OBSERVE');
+  assert.ok(oldVol.tags.includes('volume'));
+  assert.ok(liveVol.t1.net >= OPT.minRR, '1차 목표 비용 반영 최소 1.5R 유지');
+
+  // 과거 8번째 봉만 돌파값보다 높고, 최신 7봉은 돌파한 상황.
+  const eightBarHigh = mk15({ mutate: bars => { bars[bars.length - 9].h = 100.2; } });
+  const liveBreak = ev(mkA(), eightBarHigh);
+  const oldBreak = ev(mkA(), eightBarHigh, NOW, { ...OPT, P: oldP });
+  assert.equal(liveBreak.status, 'CANDIDATE', liveBreak.blockers?.join(' / '));
+  assert.equal(oldBreak.status, 'OBSERVE');
+  assert.ok(oldBreak.tags.includes('trigger'));
+  assert.ok(liveBreak.entry > liveBreak.stop && liveBreak.t1.price > liveBreak.entry);
+
+  // 주요 안전 제한은 완화하지 않음.
+  assert.equal(ev(mkA(), mk15({ volLast: 1050 })).status, 'OBSERVE');
+  assert.equal(ev(mkA({ invalidation: 95.0 })).status, 'OBSERVE');
+  assert.equal(ev(mkA({ obstacles: [] })).status, 'OBSERVE');
+});
+
 test('진입 후보: 모든 조건 충족 시 진입 관심가·손절·1·2차 목표·손익비·유효시간을 계산한다', () => {
   const r = ev(); assert.equal(r.status, 'CANDIDATE', r.blockers?.join(' / ')); assert.deepEqual(r.blockers, []);
   assert.ok(close(r.entry, 100.15)); assert.equal(r.stop, 97.5); assert.ok(close(r.riskAbs, 2.65)); assert.ok(close(r.riskPct, 2.65 / 100.15 * 100));
