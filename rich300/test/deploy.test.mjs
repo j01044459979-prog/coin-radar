@@ -33,7 +33,7 @@ test('자가 점검: 정상 상태는 실패 0·경고 0, 각 위험은 해당 �
   const json = JSON.stringify(deploySelfTest(ok())); assert.ok(!/@|AAF|secret/i.test(json));
 });
 test('배포 묶음: Code.gs 한 파일(엔진+gas)·HTML·매니페스트, 문법 유효, S0 프로브·비밀값 없음, 필요한 진입 함수 포함, 해시 목록', () => {
-  const { files, gasFiles } = makeBundle(); assert.deepEqual(Object.keys(files).sort(), ['Code.gs', 'Fill.html', 'Quick.html', 'MANIFEST.txt', 'appsscript.json']);
+  const { files, gasFiles } = makeBundle(); assert.deepEqual(Object.keys(files).sort(), ['Code.gs', 'Fill.html', 'MANIFEST.txt', 'Quick.html', 'appsscript.json']);
   assert.deepEqual(gasFiles.filter(f => BUNDLE_GAS_ORDER.includes(f)), BUNDLE_GAS_ORDER.filter(f => gasFiles.includes(f))); assert.ok(gasFiles.includes('Deploy.gs') && gasFiles.includes('Backup.gs') && gasFiles.includes('Telegram.gs'));
   const code = files['Code.gs']; assert.doesNotThrow(() => new vm.Script(code));
   for (const fn of ['doGet', 'doPost', 'rich300TgPoll', 'rich300FillSubmit', 'rich300BackupRun', 'rich300SetupTest', 'rich300SetupProd', 'rich300SelfTest', 'rich300InstallAllTriggers', 'rich300BackupSwitchFromProps', 'rich300TgGate_']) assert.match(code, new RegExp(`function ${fn}\\(`), fn);
