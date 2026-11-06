@@ -45,14 +45,49 @@ const dayKey = now => new Date(now).toISOString().slice(0, 10);
 const dayRec = (sg, now) => (sg.daily[dayKey(now)] ||= { candidates: 0, invalidated: 0, failures: 0, assumed: 0 });
 const instOf = symbol => symbol.replace(/USDT$/, '-USDT-SWAP');
 
-// 관찰 후보 목록: 기회 레이더가 저장한 2단계 이상 코인 + 활성 신호가 있는 코인
-export function watchlist(state, sg, now, paper = null) {
-  const set = new Set();
-  for (const t of paper?.open ?? []) set.add(t.symbol);                                              // 모의 거래가 열려 있는 코인은 결과 확정을 위해 계속 15분봉을 받는다
-  for (const [sym, c] of Object.entries(paper?.coins ?? {})) if (c.status === 'active') set.add(sym);
-  for (const [sym, c] of Object.entries(state.opportunity?.coins ?? {})) if (c && c.stage >= 2 && c.dir && now - (c.lastBarT || 0) <= 6 * H1 && /^[A-Z0-9]+USDT$/.test(sym)) set.add(sym);
-  for (const [sym, c] of Object.entries(sg.coins)) if (c.status === 'active') set.add(sym);
-  return [...set].sort();
+// 신호 정밀 감시: 활성 신호 > 2단계 눌림 > 1단계 접근 > 기본 레이더 상위 점수 > 기회 레이더 시세 상위.
+// 15분봉 요청은 별도 필요 판정(stage >= 2) 뒤에만 수행한다. 감시 후보가 늘어도 손절·손익비/확정봉 게이트는 그대로다.
+// API/시간 예산 때문에 새로운 감시 후보의 총수는 16개로 제한한다(활성 신호·모의 열린 포지션은 만료/무효화 판정을 위해 우선 보존).
+export const SIGNAL_WATCH_LIMIT = 16;
+const validWatchSymbol = sym => typeof sym === 'string' && /^[A-Z0-9]+USDT$/.test(sym);
+export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT) {
+  const max = Number.isInteger(limit) && limit >= 1 ? limit : SIGNAL_WATCH_LIMIT;
+  const watch = [], seen = new Set();
+  const add = (sym, pinned = false) => {
+    if (!validWatchSymbol(sym) || seen.has(sym) || (!pinned && watch.length >= max)) return;
+    seen.add(sym); watch.push(sym);
+  };
+  // 핀 고정: 현재 활성 신호와 모의 포지션은 알림 후 손절/무효화 판정이 누락되지 않아야 한다.
+  for (const [sym, c] of Object.entries(sg.coins ?? {})) if (c?.status === 'active') add(sym, true);
+  for (const t of paper?.open ?? []) add(t?.symbol, true);
+  for (const [sym, c] of Object.entries(paper?.coins ?? {})) if (c?.status === 'active') add(sym, true);
+
+  const recent = (t, age) => Number.isFinite(t) && t <= now && now - t <= age;
+  const opp = Object.entries(state.opportunity?.coins ?? {}).filter(([sym, c]) =>
+    validWatchSymbol(sym) && c && c.dir && recent(c.lastBarT, 6 * H1));
+  // 실제 눌림 진행 종목 우선, 그다음 근접 단계: 1단계 종목은 1H·4H 추적만 하고 15분봉은 stage >=2에서 요청.
+  opp.filter(([, c]) => c.stage >= 2)
+    .sort((a, b) => b[1].stage - a[1].stage || b[1].lastBarT - a[1].lastBarT || a[0].localeCompare(b[0]))
+    .forEach(([sym]) => add(sym));
+  opp.filter(([, c]) => c.stage === 1 && recent(c.lastBarT, 2 * H1))
+    .sort((a, b) => b[1].lastBarT - a[1].lastBarT || a[0].localeCompare(b[0]))
+    .forEach(([sym]) => add(sym));
+
+  // 매 5분 기본 레이더가 실제 점검한 최대 40종목 중 유망 후보를 추가.
+  // 상태 캐시가 지연/손상된 때 오래된 종목을 재활용하지 않도록 최근 15분 자료만 사용한다.
+  if (recent(state.lastSuccess, 15 * 60000) && Array.isArray(state.rows)) {
+    state.rows.filter(r => validWatchSymbol(r?.symbol) && Number.isFinite(r.score) && r.score >= 40)
+      .sort((a, b) => Number(Boolean(b.strong)) - Number(Boolean(a.strong)) ||
+        b.score - a.score || a.symbol.localeCompare(b.symbol))
+      .forEach(r => add(r.symbol));
+  }
+  // 남는 슬롯은 최근 시간대 기회 레이더가 수집한 거래대금 상위 코인으로 채운다.
+  if (recent(state.opportunity?.lastScanAt, 2 * H1) && Array.isArray(state.opportunity?.universe)) {
+    for (const id of state.opportunity.universe) {
+      if (typeof id === 'string' && /^[A-Z0-9]+-USDT-SWAP$/.test(id)) add(id.replace('-USDT-SWAP', 'USDT'));
+    }
+  }
+  return watch;
 }
 
 export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {

@@ -257,9 +257,37 @@ test('실행: 관찰 후보가 없으면 아무것도 하지 않는다 / 기존 
   const q = run({ state: { ...oppState(), quiet: { hour: Math.floor(NOW / 3600000) } } }); assert.equal((await signalStep(q.args)).skipped, 'quiet'); assert.equal(q.calls.length, 0);
   const b = run({ state: { ...oppState(), retryAt: NOW + 1000 } }); assert.equal((await signalStep(b.args)).skipped, 'shared-backoff'); assert.equal(b.calls.length, 0);
   const old = run({ state: oppState(['ETHUSDT'], 'LONG', 3, NOW - 7 * 3600000) }); assert.equal((await signalStep(old.args)).skipped, 'no-watchlist', '6시간 넘은 관찰 후보는 쓰지 않음');
-  const s1 = run({ state: oppState(['ETHUSDT'], 'LONG', 1) }); assert.equal((await signalStep(s1.args)).skipped, 'no-watchlist', '1단계 후보는 대상 아님');
+  const s1 = run({ state: oppState(['ETHUSDT'], 'LONG', 1) }); assert.deepEqual(watchlist(s1.st, normalizeSignal(undefined), NOW), ['ETHUSDT'], '1단계 후보도 1H·4H 사전 감시');
   assert.deepEqual(watchlist({ opportunity: { coins: { BADname: { stage: 3, dir: 'LONG', lastBarT: NOW } } } }, normalizeSignal(undefined), NOW), []);
 });
+test('확장 감시: 활성 알림과 최근 2·1단계를 우선하고, 최신 기본 레이더 고점수 종목으로 16개까지 채운다', () => {
+  const st = {
+    lastSuccess: NOW,
+    rows: [
+      { symbol: 'AAAUSDT', score: 95, strong: false },
+      { symbol: 'BBBUSDT', score: 80, strong: true },
+      { symbol: 'CCCUSDT', score: 75, strong: false },
+      { symbol: 'bad name', score: 99, strong: true },
+    ],
+    opportunity: {
+      coins: {
+        ZZZUSDT: { dir: 'LONG', stage: 2, lastBarT: NOW },
+        YYYUSDT: { dir: 'LONG', stage: 1, lastBarT: NOW },
+        OLDUSDT: { dir: 'SHORT', stage: 2, lastBarT: NOW - 7 * 3600000 },
+      },
+      universe: ['BTC-USDT-SWAP', 'ETH-USDT-SWAP'],
+      lastScanAt: NOW,
+    },
+  };
+  const sg = normalizeSignal(undefined); sg.coins.ACTUSDT = { status: 'active' };
+  assert.deepEqual(watchlist(st, sg, NOW, null, 4), ['ACTUSDT', 'ZZZUSDT', 'YYYUSDT', 'BBBUSDT']);
+  assert.deepEqual(watchlist(st, sg, NOW, null, 6), ['ACTUSDT', 'ZZZUSDT', 'YYYUSDT', 'BBBUSDT', 'AAAUSDT', 'CCCUSDT']);
+  assert.deepEqual(watchlist(st, sg, NOW, null, 8), ['ACTUSDT', 'ZZZUSDT', 'YYYUSDT', 'BBBUSDT', 'AAAUSDT', 'CCCUSDT', 'BTCUSDT', 'ETHUSDT']);
+  assert.deepEqual(watchlist({ lastSuccess: NOW - 16 * 60000, rows: st.rows }, normalizeSignal(undefined), NOW), [], '오래된 스캔 점수로 임의 추가하지 않음');
+  const two = normalizeSignal(undefined); two.coins.ACTUSDT = { status: 'active' }; two.coins.ETHUSDT = { status: 'active' };
+  assert.deepEqual(watchlist({}, two, NOW, null, 1), ['ACTUSDT', 'ETHUSDT'], '활성 신호는 감시 상한보다 우선');
+});
+
 test('실행: 15분봉이 확정 전/오래됨이면 신호를 만들지 않는다(미완성 봉 사용 금지)', async () => {
   for (const status15 of ['pending', 'stale', 'error']) { const r = run({ status15 }); const o = await signalStep(r.args); assert.equal(o.candidates, 0); assert.equal(r.sd.calls, 0, status15); }
 });
