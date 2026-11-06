@@ -70,8 +70,8 @@ else
   [[ "$(git -C "$WORK/repo" rev-parse HEAD)" == "$COMMIT" ]] || fail "받은 커밋이 지정한 커밋과 다릅니다"
   SRC="$WORK/repo/rich300/apps-script"
 fi
-for f in Code.gs Fill.html appsscript.json MANIFEST.txt; do [[ -s "$SRC/$f" ]] || fail "설치 파일이 없습니다: $f"; done
-mkdir -p "$WORK/push"; for f in Code.gs Fill.html appsscript.json; do
+for f in Code.gs Fill.html Quick.html appsscript.json MANIFEST.txt; do [[ -s "$SRC/$f" ]] || fail "설치 파일이 없습니다: $f"; done
+mkdir -p "$WORK/push"; for f in Code.gs Fill.html Quick.html appsscript.json; do
   want="$(awk -v n="$f" '$3==n {print $1}' "$SRC/MANIFEST.txt")"; got="$(sha256sum "$SRC/$f" | cut -d' ' -f1)"
   [[ -n "$want" && "$want" == "$got" ]] || fail "$f 가 MANIFEST 와 다릅니다(잘렸거나 손상)"; cp "$SRC/$f" "$WORK/push/$f"; done
 node -e "process.exit(require('fs').readFileSync('$WORK/push/Code.gs','utf8').endsWith('\n}\n')?0:1)" || fail "Code.gs 끝부분이 완결되지 않았습니다"
@@ -79,7 +79,7 @@ node -e "new (require('vm').Script)(require('fs').readFileSync('$WORK/push/Code.
 [[ -f "$SRC/../deploy/gas-compat.mjs" ]] || fail "Apps Script 호환 검사 도구(rich300/deploy/gas-compat.mjs)가 이 커밋에 없습니다"
 COMPAT_OUT="$(node "$SRC/../deploy/gas-compat.mjs" "$WORK/push/Code.gs" 2>&1)" || fail "Code.gs 에 Apps Script 가 거부할 수 있는 최신 문법이 있습니다(push 하면 'Syntax error: ParseError' 로 실패): $(printf '%s' "$COMPAT_OUT" | head -n 5 | tr '\n' ' ')"
 node -e "const m=JSON.parse(require('fs').readFileSync('$WORK/push/appsscript.json','utf8'));const w=m.webapp||{};if(w.access!=='MYSELF'||w.executeAs!=='USER_ACCESSING'||m.runtimeVersion!=='V8')process.exit(1)" || fail "매니페스트가 '나만 접근·접속한 사용자로 실행·V8' 이 아닙니다"
-say "[PASS] 설치 파일 3개(커밋 ${COMMIT:0:12}): SHA-256·문법·매니페스트 확인"
+say "[PASS] 설치 파일 4개(커밋 ${COMMIT:0:12}): SHA-256·문법·매니페스트 확인"
 # ② 로그인(이미 되어 있으면 건너뜀)
 if [[ -s "$HOME/.clasprc.json" ]]; then say "(이미 clasp 로그인 상태입니다 — 기존 로그인을 사용하며 끝나도 지우지 않습니다)"
 else
@@ -100,7 +100,7 @@ cmp_dirs() {  # $1=기준 폴더 $2=확인 폴더 $3=verbose(1이면 차이 설�
 const fs=require("fs"),path=require("path"),crypto=require("crypto"),[A,B,V]=process.argv.slice(1);
 const find=(d,n,ex)=>ex.map(e=>path.join(d,n+"."+e)).find(p=>fs.existsSync(p));
 const norm=s=>s.replace(/\r\n/g,"\n"),h=s=>crypto.createHash("sha256").update(s).digest("hex").slice(0,12),out=[];let bad=0;
-for(const [n,ex] of [["Code",["gs","js"]],["Fill",["html"]]]){const pa=find(A,n,ex),pb=find(B,n,ex);
+for(const [n,ex] of [["Code",["gs","js"]],["Fill",["html"]],["Quick",["html"]]]){const pa=find(A,n,ex),pb=find(B,n,ex);
   if(!pa||!pb){bad++;out.push("  - 다름: "+n+" ("+(pa?"확인 쪽에 파일 없음":"기준 쪽에 파일 없음")+")");continue}
   const sa=norm(fs.readFileSync(pa,"utf8")),sb=norm(fs.readFileSync(pb,"utf8"));
   if(sa!==sb){bad++;const la=sa.split("\n"),lb=sb.split("\n");let i=0;while(i<la.length&&la[i]===lb[i])i++;out.push("  - 다름: "+n+" (기준 "+Buffer.byteLength(sa)+"바이트 sha="+h(sa)+", 확인 "+Buffer.byteLength(sb)+"바이트 sha="+h(sb)+", 첫 차이 "+(i+1)+"번째 줄)")}}
@@ -138,12 +138,12 @@ say ""; say "대상 프로젝트 ID: $SCRIPT_ID"; say "현재 원격 상태: $(s
 say "현재 원격 파일(백업됨: $BACKUP):"
 ( cd "$BACKUP" && for f in $(ls -A | grep -v '^\.clasp\.json$'); do printf '  - %s (%s바이트)\n' "$f" "$(wc -c < "$f")"; done )
 if cmp_dirs "$WORK/push" "$BACKUP" 0; then
-  say "[PASS] 이미 설치 완료 상태입니다 — 원격 Code·Fill·매니페스트가 설치 파일과 같아 변경하지 않았습니다(push 안 함). 백업: $BACKUP"
+  say "[PASS] 이미 설치 완료 상태입니다 — 원격 Code·Fill·Quick·매니페스트가 설치 파일과 같아 변경하지 않았습니다(push 안 함). 백업: $BACKUP"
   say "다음: Apps Script 편집기를 새로 고침 → 함수 rich300Install 실행."; exit 0
 fi
 say "변경 계획:"
-for n in Code:Code.gs Fill:Fill.html appsscript:appsscript.json; do b="${n%%:*}"; f="${n##*:}"; if ls "$BACKUP/$b."* >/dev/null 2>&1; then say "  - 교체: $f"; else say "  - 추가: $f"; fi; done
-( cd "$BACKUP" && for f in $(ls -A | grep -v '^\.clasp\.json$'); do case "${f%.*}" in Code|Fill|appsscript) ;; *) say "  - 삭제(이 프로젝트에서만): $f";; esac; done )
+for n in Code:Code.gs Fill:Fill.html Quick:Quick.html appsscript:appsscript.json; do b="${n%%:*}"; f="${n##*:}"; if ls "$BACKUP/$b."* >/dev/null 2>&1; then say "  - 교체: $f"; else say "  - 추가: $f"; fi; done
+( cd "$BACKUP" && for f in $(ls -A | grep -v '^\.clasp\.json$'); do case "${f%.*}" in Code|Fill|Quick|appsscript) ;; *) say "  - 삭제(이 프로젝트에서만): $f";; esac; done )
 EXPECT="${SCRIPT_ID: -6}"
 if [[ "${RICH300_CONFIRM:-}" == "$EXPECT" ]]; then say "(확인 값이 환경 변수로 전달됨)"
 else
