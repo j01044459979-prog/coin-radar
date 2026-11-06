@@ -6,9 +6,9 @@ import { execFileSync } from 'node:child_process';
 import { ALLOWED, checkVariable } from '../variable-guard.mjs';
 
 const wf = readFileSync(new URL('../../.github/workflows/set-variable.yml', import.meta.url), 'utf8');
-test('허용 목록: 버튼·조용한 모드 on/off, FIB off/preview 만. FIB on·목록 밖 변수·목록 밖 값은 거부', () => {
+test('허용 목록: 버튼·조용한 모드·3분할 계획 on/off, FIB off/preview 만. FIB on·목록 밖 변수·목록 밖 값은 거부', () => {
   for (const [n, vs] of Object.entries(ALLOWED)) for (const v of vs) assert.equal(checkVariable(n, v).ok, true, `${n}=${v}`);
-  assert.equal(checkVariable('RADAR_FIB_PULLBACK', 'on').ok, false);
+  assert.equal(checkVariable('RADAR_FIB_PULLBACK', 'on').ok, false); assert.equal(checkVariable('RADAR_SCALE_PLAN', 'on').ok, true); assert.equal(checkVariable('RADAR_SCALE_PLAN', 'preview').ok, false); assert.equal(checkVariable('RADAR_PLAN_EQUITY', '300').ok, false);
   for (const n of ['RADAR_SCHEDULER', 'RADAR_OPPORTUNITY', 'RADAR_OPPORTUNITY_TOP', 'RADAR_SIGNAL', 'RADAR_RICH300_FEED', 'DISPATCH_ENABLED', 'TELEGRAM_BOT_TOKEN', '__proto__', 'toString', '']) assert.equal(checkVariable(n, 'on').ok, false, n);
   for (const v of ['ON', ' on', 'true', '1', '', undefined, 'on;rm']) assert.equal(checkVariable('RADAR_RICH300_BUTTONS', v).ok, false, String(v));
 });
@@ -38,4 +38,11 @@ test('YAML 불리언 함정: value 옵션과 기본값이 따옴표 문자열이
 test('워크플로: Secret 은 환경변수로만, 출력·디버그 없음, 다른 Secret·Telegram·Cloudflare 미접촉', () => {
   assert.match(wf, /GH_TOKEN: \$\{\{ secrets\.RADAR_VARS_PAT \}\}/); assert.equal((wf.match(/secrets\./g) || []).length, 1);
   assert.doesNotMatch(wf, /echo "?\$GH_TOKEN|set -x|--verbose|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|CLOUDFLARE|RICH300_FEED_KEY|continue-on-error/);
+});
+
+test('차트 테스트 발송 워크플로: 수동·main·확인 문구·최소 권한, 비밀은 토큰·채팅 ID 만, 장부·변수·배포 미접촉', () => {
+  const cw = readFileSync(new URL('../../.github/workflows/telegram-chart-test.yml', import.meta.url), 'utf8');
+  assert.match(cw, /on:\n  workflow_dispatch:/); assert.doesNotMatch(cw, /\n  (push|schedule|pull_request)/); assert.match(cw, /github\.ref == 'refs\/heads\/main'/); assert.match(cw, /confirm == 'send-chart-test'/);
+  assert.match(cw, /permissions:\n  contents: read/); assert.doesNotMatch(cw, /: write/); assert.deepEqual([...cw.matchAll(/secrets\.(\w+)/g)].map(m => m[1]).sort(), ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']);
+  assert.doesNotMatch(cw, /echo "?\$TELEGRAM|set -x|--verbose|RADAR_VARS_PAT|CLOUDFLARE|continue-on-error|gh variable|clasp|script\.google/);
 });

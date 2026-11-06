@@ -153,7 +153,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
       let timer;
       try {
-        const png = await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol]), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]);
+        const png = await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol], x.m.scale ? { plan: x.m.scale.plan } : {}), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]);
         const caption = scaleCaption(signalCaption(x.i.symbol, x.i.event.ev, { now }), x.m, x.m.r9 ? x.m.r9.plain.length : 0);
         const mergedCaption = r9Caption(caption, x.m);
         if (mergedCaption === null) { x.m.chartError = 'RICH300 button caption too long; text fallback'; x.m.photo = undefined; }
