@@ -117,7 +117,7 @@ const PAGE = `function rich300PageFill_(e) { return ContentService.createTextOut
 test('doGet 라우터: 소유자 이메일 미설정·방문자 이메일 불명·타인이면 접근 안내(빈 화면 아님·데이터 없음), 소유자만 페이지, 모르는 페이지·프로토타입 이름은 메인(strat 추천 전략)으로', () => {
   const get = (a, p) => { const o = a.ctx.doGet({ parameter: { p } }); return o.text !== undefined ? o.text : o.html; }, DENIED = /접근 제한/;
   const owner = loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'Me@Example.com' }, email: 'me@example.com', extra: PAGE });
-  assert.equal(get(owner, 'fill'), 'FILL-PAGE'); assert.equal(get(owner, 'dash'), 'DASH-PAGE');
+  assert.equal(get(owner, 'fill'), 'FILL-PAGE'); assert.equal(get(owner, 'dash'), 'QUICK-PAGE'); assert.equal(get(owner, 'journal'), 'QUICK-PAGE'); assert.equal(get(owner, 'classic-dash'), 'DASH-PAGE');
   assert.equal(get(owner, 'strat'), 'STRAT-PAGE'); for (const p of ['nope', 'constructor', '__proto__', undefined]) assert.equal(get(owner, p), 'QUICK-PAGE', String(p)); assert.equal(owner.ctx.doGet().text, 'QUICK-PAGE'); assert.equal(owner.ctx.doGet({}).text, 'QUICK-PAGE');         // 빈 화면 대신 메인(홈). 전략 화면은 ?p=strat 로 별도 접근
   for (const email of ['', 'other@example.com', 'me@example.com.evil.io']) assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY, RICH300_OWNER_EMAIL: 'me@example.com' }, email, extra: PAGE }), 'dash'), DENIED, email || '(익명)');
   assert.match(get(loadApi({ keys: { RICH300_INGEST_KEY: KEY }, email: 'me@example.com', extra: PAGE }), 'dash'), DENIED);                     // 소유자 이메일 미설정 → 닫힘(접근 안내)
