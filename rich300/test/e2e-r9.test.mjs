@@ -39,19 +39,19 @@ for (const photo of [false, true]) test(`종단 간(${photo ? '사진' : '텍스
   assert.ok(g.tele.sent.some(m => /복기/.test(m.text)));                                                                                               // 청산 뒤 10초 복기 안내
   // 평가액 입력(실제 계좌 값) 후 웹앱
   assert.equal(g.ctx.rich300EquitySubmit({ day, equity: '312.5' }).ok, true);
-  const dash = text(g.ctx.doGet({ parameter: { p: 'dash' } }).html);
+  const dash = text(g.ctx.doGet({ parameter: { p: 'classic-dash' } }).html);
   assert.match(dash, /내 실제 총자산 \(입력 평가액\) 312\.50 USDT/); assert.match(dash, /\+12\.50/); assert.match(dash, /\+4\.17%/); assert.match(dash, /오늘 시작 자산 300\.00/); assert.match(dash, /오늘 목표 자산 315\.00/); assert.match(dash, /목표까지 남은 수익 2\.50/);
-  assert.match(dash, /최근 매매일지/); assert.match(g.ctx.doGet({ parameter: { p: 'dash' } }).html, /<svg/);
+  assert.match(dash, /최근 매매일지/); assert.match(g.ctx.doGet({ parameter: { p: 'classic-dash' } }).html, /<svg/);
   const sg = text(g.ctx.doGet({ parameter: { p: 'signals' } }).html); assert.match(sg, /진입했어/); assert.match(sg, /실제 매매 있음/); assert.match(sg, /결과 [▲▼]/); assert.match(sg, /추천 진입/);
   const st = text(g.ctx.doGet({ parameter: { p: 'stats' } }).html); assert.match(st, /COIN RADAR 신호/); assert.match(st, /청산 거래 1건/);
-  const jr = text(g.ctx.doGet({ parameter: { p: 'journal' } }).html); assert.match(jr, /목표 근처에서 정리/); assert.match(jr, /ETH/);
+  const jr = text(g.ctx.doGet({ parameter: { p: 'classic-journal' } }).html); assert.match(jr, /목표 근처에서 정리/); assert.match(jr, /ETH/);
   // 중복 클릭은 아무것도 늘리지 않는다
   press(g, msg, 'e'); press(g, msg, 'w'); assert.equal(g.rows('signal').length, 1); assert.equal(g.rows('response').length, 1); assert.equal(g.rows('fill').length, 3);
 });
 test('종단 간: [안 했어]는 응답 기록만 남고(일지·후속 분석 없음) 자산·손익에 영향이 없다', async () => {
   const g = world(), msg = await radarMessage(); press(g, msg, 'w');
   assert.deepEqual(g.rows('response').map(r => r.choice), ['watched']); assert.equal(g.rows('fill').length, 0);
-  assert.match(text(g.ctx.doGet({ parameter: { p: 'signals' } }).html), /관망했어/); const dash = text(g.ctx.doGet({ parameter: { p: 'dash' } }).html); assert.match(dash, /내 실제 총자산 \(입력 평가액\) 미입력/); assert.match(dash, /아직 진입 확인 또는 실제 체결 기록이 없습니다/); assert.ok(!/ETH/.test(text(g.ctx.doGet({ parameter: { p: 'journal' } }).html)), '안 했어는 매매일지에 나오지 않는다');
+  assert.match(text(g.ctx.doGet({ parameter: { p: 'signals' } }).html), /관망했어/); const dash = text(g.ctx.doGet({ parameter: { p: 'classic-dash' } }).html); assert.match(dash, /내 실제 총자산 \(입력 평가액\) 미입력/); assert.match(dash, /아직 진입 확인 또는 실제 체결 기록이 없습니다/); assert.ok(!/ETH/.test(text(g.ctx.doGet({ parameter: { p: 'classic-journal' } }).html)), '안 했어는 매매일지에 나오지 않는다');
 });
 test('종단 간: 허용되지 않은 사용자의 버튼·명령은 무시되고 아무것도 저장되지 않는다(페어링한 계정만)', async () => {
   const g = world(), msg = await radarMessage(); press(g, msg, 'e', { from: STRANGER }); g.tele.say(STRANGER, '/status'); g.tele.say(STRANGER, '/fill SG-X 30 10 100 98'); g.ctx.rich300TgPoll();
