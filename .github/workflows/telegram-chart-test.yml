@@ -1,0 +1,39 @@
+name: telegram-chart-test
+# 3분할 진입 차트를 실제 렌더 경로로 그려 "테스트·가상" 이미지 1장만 Telegram 으로 보낸다. 수동 전용, main 에서만, 확인 문구 필요. 주문·장부·상태 기록 없음.
+#  · 이미지 상단에 '테스트 · 가상 데이터 · 매매 금지' 띠가 있고, 버튼은 테스트 ID(SG-TESTBTN-…)라 눌러도 앱이 아무것도 기록하지 않는다.
+#  · 토큰·채팅 ID 는 환경변수로만 쓰고 출력하지 않는다. 다른 Secret·변수·Cloudflare·RICH300 배포는 건드리지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'send-chart-test 를 입력'
+        required: true
+        type: string
+      dir:
+        description: '방향'
+        required: true
+        type: choice
+        options: [LONG, SHORT]
+        default: LONG
+permissions:
+  contents: read
+concurrency:
+  group: telegram-chart-test
+  cancel-in-progress: false
+jobs:
+  send:
+    if: github.repository == 'j01044459979-prog/coin-radar' && github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'send-chart-test'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      DIR: ${{ github.event.inputs.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix radar-service --no-audit --no-fund
+      - name: 차트 생성 후 테스트 이미지 1건 전송
+        run: node radar-service/signal/chart-test-cli.mjs --dir "$DIR"

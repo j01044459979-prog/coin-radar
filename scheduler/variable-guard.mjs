@@ -5,6 +5,7 @@ export const ALLOWED = Object.freeze({
   RADAR_RICH300_BUTTONS: ['on', 'off'],
   RADAR_TELEGRAM_QUIET: ['on', 'off'],
   RADAR_FIB_PULLBACK: ['off', 'preview'],
+  RADAR_SCALE_PLAN: ['on', 'off'],          // 텔레그램 추천 이미지·알림에 3분할 진입 계획 표시(계산 참고용, 신호 판정·주문 무관)
 });
 export function checkVariable(name, value) {
   if (typeof name !== 'string' || !Object.hasOwn(ALLOWED, name)) return { ok: false, why: '허용 목록에 없는 변수' };
