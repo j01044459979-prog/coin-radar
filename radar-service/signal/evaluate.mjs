@@ -14,8 +14,8 @@ import { fmtPrice } from '../format.mjs';
 
 export const M15 = 15 * 60000;
 export const SIG = Object.freeze({
-  trigBars: 8,            // 트리거: 직전 8개(2시간) 15분봉 고점(저점)을 확정 종가로 돌파(이탈)
-  minBars15: 60, volBase: 20, volMult: 1.2,   // 트리거 봉 거래대금 ÷ 직전 20봉 평균 ≥ 1.2
+  trigBars: 7,            // 소폭 완화 실험: 직전 7개 15분봉 고점(저점)을 확정 종가로 돌파(이탈)
+  minBars15: 60, volBase: 20, volMult: 1.1,   // 소폭 완화 실험: 트리거 봉 거래대금 ÷ 직전 20봉 평균 ≥ 1.1
   maxTrigRangeAtr1: 1.5,  // 트리거 봉 고저 폭 ≤ 1.5 ATR(1H) (급등락 봉 추격 방지)
   chaseAtr1: 1.0,         // 구간 경계에서 1.0 ATR(1H) 이내 (추격 아님)
   stopMinAtr1: 1.0, stopMaxAtr1: 3.5,   // 손절 거리 1.0~3.5 ATR(1H)
