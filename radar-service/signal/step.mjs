@@ -3,7 +3,8 @@
 // 상태는 state.signal 아래에만 쓰며 state.opportunity 와 기존 정기 보고 상태는 읽기만 한다(관찰 후보 목록).
 // 안정성 계약은 기회 레이더와 같다: 제한 시간이 지나면 새 요청·새 전송·새 상태 변경을 시작하지 않고, 전송 전에 장부(inflight)를 저장하며(최대 2회 시도),
 // 저장이 안 되면 보내지 않고, 어떤 예외도 기존 레이더 실행에 번지지 않는다. 주문·계정 API는 사용하지 않는다.
-import { RESTRICTED, sendText, waitMs } from '../service.mjs';
+import { RESTRICTED, sendText, waitMs, jsonRequest } from '../service.mjs';
+import { scanMarket, selectTargets } from '../universe.mjs';
 import { analyzeCoin } from '../opportunity/analysis.mjs';
 import { collectOpportunity } from '../opportunity/collect.mjs';
 import { H1 } from '../opportunity/indicators.mjs';
@@ -47,8 +48,30 @@ const instOf = symbol => symbol.replace(/USDT$/, '-USDT-SWAP');
 
 // 신호 정밀 감시: 활성 신호 > 2단계 눌림 > 1단계 접근 > 기본 레이더 상위 점수 > 기회 레이더 시세 상위.
 // 15분봉 요청은 별도 필요 판정(stage >= 2) 뒤에만 수행한다. 감시 후보가 늘어도 손절·손익비/확정봉 게이트는 그대로다.
-// API/시간 예산을 고려해 신규 정밀 감시 후보는 최대 32개로 제한한다(기존 16개에서 확대). 활성 신호·모의 열린 포지션은 만료/무효화 판정을 위해 우선 보존한다.
+// 80개 유동성/변동성 후보는 시세 API 두 번으로 선별하고, 15분봉 슬롯당 최대 32개만 정밀 분석한다.
+ // 확정 봉·손절/손익비 기준과 활성/모의 포지션 우선권은 기존과 동일하다.
 export const SIGNAL_WATCH_LIMIT = 32;
+export const SIGNAL_MARKET_LIMIT = 80;
+
+// 암호화폐 선형 USDT 무기한만 포함. 전체 시세를 우선 훑고(2회 API), 1H/4H는 여기서 받지 않는다.
+export async function scanSignalMarket({ fetcher = fetch, now, sg = {} } = {}) {
+  const base = 'https://www.okx.com/api/v5';
+  const read = async path => {
+    const body = await jsonRequest(base + path, { timeoutMs: 6000 }, fetcher);
+    if (body?.code !== '0' || !Array.isArray(body.data)) throw new Error('시장 시세/계약 목록 응답 오류');
+    return body.data;
+  };
+  const instruments = await read('/public/instruments?instType=SWAP');
+  const tickers = await read('/market/tickers?instType=SWAP');
+  const market = scanMarket({ instruments, tickers }); // 자산 분류, 계약 상태, 거래대금 검증
+  const rotation = { last: sg.breadth?.last ?? {}, lastRun: sg.breadth?.at ?? null };
+  const picked = selectTargets({
+    market, now, rotation,
+    config: { max: SIGNAL_MARKET_LIMIT, topTurnover: 24, movers: 24, rotation: 32, minTurnover: 1000000 },
+  });
+  return { symbols: picked.ids.map(id => id.replace('-USDT-SWAP', 'USDT')), eligible: picked.eligibleCount,
+    calls: 2, groups: Object.fromEntries(Object.entries(picked.groups).map(([k, v]) => [k, v.length])) };
+}
 const validWatchSymbol = sym => typeof sym === 'string' && /^[A-Z0-9]+USDT$/.test(sym);
 export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT) {
   const max = Number.isInteger(limit) && limit >= 1 ? limit : SIGNAL_WATCH_LIMIT;
@@ -90,7 +113,38 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
   return watch;
 }
 
-export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
+// 활성/모의 포지션과 2단계 이상 관찰을 매 슬롯 우선 검증한다.
+// 나머지는 80개 후보 중 마지막 정밀 분석이 가장 오래된 순서로 순환한다.
+export function expandedWatchlist(state, sg, now, paper = null, marketPool = null, limit = SIGNAL_WATCH_LIMIT) {
+  const legacy = watchlist(state, sg, now, paper, limit);
+  if (!Array.isArray(marketPool) || !marketPool.length) return legacy;
+  const watch = [], seen = new Set(), add = sym => {
+    if (!validWatchSymbol(sym) || seen.has(sym) || watch.length >= limit) return;
+    seen.add(sym); watch.push(sym);
+  };
+  const pinned = new Set([
+    ...Object.entries(sg.coins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
+    ...(paper?.open ?? []).map(p => p?.symbol),
+    ...Object.entries(paper?.coins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
+  ]);
+  // 기존 레이더와 동일하게 핀 고정 대상은 제한보다 많아도 우선 보존한다.
+  for (const sym of legacy) if (pinned.has(sym) && !seen.has(sym)) { seen.add(sym); watch.push(sym); }
+  for (const sym of legacy) {
+    const c = state.opportunity?.coins?.[sym];
+    if (c?.stage >= 2 && c.dir && Number.isFinite(c.lastBarT) && c.lastBarT <= now && now - c.lastBarT <= 6 * H1) add(sym);
+  }
+  const fastTarget = Math.min(limit, Math.max(12, watch.length));
+  for (const sym of legacy) { if (watch.length >= fastTarget) break; add(sym); }
+  const last = sg.breadth?.last ?? {};
+  const rotated = marketPool.map((symbol, index) => ({ symbol, index }))
+    .filter(x => validWatchSymbol(x.symbol))
+    .sort((a, b) => (Number(last[a.symbol]) || 0) - (Number(last[b.symbol]) || 0) || a.index - b.index);
+  for (const { symbol } of rotated) add(symbol);
+  for (const sym of legacy) add(sym); // 시세 API 후보가 적으면 기존 우선 목록으로 부족분 보충
+  return watch;
+}
+
+export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env);
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
@@ -107,10 +161,20 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
 
   const slotDone = live ? sg.slot === slot : Boolean(paperOn && paper.slot === slot);                 // preview는 슬롯 완료를 기록하지 않지만, 모의 추적이 켜져 있으면 paper.slot으로 같은 15분 슬롯의 반복 수집을 막는다
   if (!force && !(now - slot >= SETTLE_MS && !slotDone)) return { mode, skipped: 'not-due' };
-  const watch = scanAll ? null : watchlist(state, sg, now, paper);
+  // 기본 레이더의 최근 성공을 확인한 경우에만 가벼운 전체시장 스캔 추가.
+  // 시세 API가 실패/차단되거나 실행시간이 부족하면 기존 32종목 방식으로 안전하게 복귀한다.
+  let market = null, marketError = null;
+  if (!scanAll && Number.isFinite(state.lastSuccess) && now >= state.lastSuccess && now - state.lastSuccess <= 15 * 60000 && deadline - clock() >= 50000) {
+    try { market = await marketScan({ fetcher, now, sg }); }
+    catch (error) { marketError = String(error.message).slice(0, 100); }
+  }
+  if (expired('afterMarket')) return { mode, timedOut: true };
+  const watch = scanAll ? null : expandedWatchlist(state, sg, now, paper, market?.symbols);
   if (!scanAll && !watch.length) return { mode, skipped: 'no-watchlist' };
 
-  const base = { mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0, calls: 0, sendError: null, saveError: null, sentMessages: 0, held: 0, timedOut: false };
+  const base = { mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0,
+    calls: market?.calls ?? 0, marketPool: market?.symbols?.length ?? 0, marketEligible: market?.eligible ?? null, marketError,
+    sendError: null, saveError: null, sentMessages: 0, held: 0, timedOut: false };
   const hourData = await collectHour({ fetcher, now, ids: watch ? watch.map(instOf) : null, topN, budgetMs, gapMs, shouldStop: () => clock() > deadline });
   if (expired('afterCollect')) return { mode, timedOut: true };
   base.calls += hourData.calls ?? 0;
@@ -187,6 +251,14 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
 
   attach();
+  // 성공적으로 분석한 후보만 최종 시각을 기록한다. 실패/미분석 종목은 다음 슬롯에서 다시 앞선다.
+  if (market?.symbols?.length && base.analyzed > 0) {
+    const last = { ...(sg.breadth?.last ?? {}) }, pool = new Set(market.symbols);
+    for (const r of rows) if (pool.has(r.symbol) && r.a?.status === 'ok') last[r.symbol] = now;
+    const recent = Object.entries(last).filter(([sym, at]) => validWatchSymbol(sym) && Number.isFinite(at) && at <= now && now - at < 7 * 24 * H1)
+      .sort((a, b) => b[1] - a[1]).slice(0, 400);
+    sg.breadth = { v: 1, at: now, last: Object.fromEntries(recent) };
+  }
   for (const [sym, next] of Object.entries(commitNow)) sg.coins[sym] = next;
   for (const [sym, c] of Object.entries(sg.coins)) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.coins[sym];
   // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).

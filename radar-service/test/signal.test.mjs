@@ -3,11 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { evaluateSignal, invalidation, SIG, M15 } from '../signal/evaluate.mjs';
+import { H1 } from '../opportunity/indicators.mjs';
 import { signalTransition, blank } from '../signal/transition.mjs';
 import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER, displayWidth } from '../signal/message.mjs';
 import { signalCaption } from '../signal/chart.mjs';
 import { signalSettings, signalMode, SIGNAL_DEFAULTS } from '../signal/config.mjs';
-import { signalStep, runSignalSafe, normalizeSignal, watchlist, SIGNAL_WATCH_LIMIT, MAX_ATTEMPTS } from '../signal/step.mjs';
+import { signalStep, runSignalSafe, normalizeSignal, watchlist, expandedWatchlist, scanSignalMarket, SIGNAL_WATCH_LIMIT, SIGNAL_MARKET_LIMIT, MAX_ATTEMPTS } from '../signal/step.mjs';
 import { runSignalAfterCycle } from '../signal/integrate.mjs';
 import { freshness15, collect15 } from '../signal/collect.mjs';
 import { T, NOW, mkA, mirrorA, mk15, mirror15, sender, store, collectors, oppState } from './signal-fixture.mjs';
@@ -296,6 +297,71 @@ test('확장 감시: 활성 알림과 최근 2·1단계를 우선하고, 최신 
   assert.deepEqual(watchlist({}, two, NOW, null, 1), ['ACTUSDT', 'ETHUSDT'], '활성 신호는 감시 상한보다 우선');
 });
 
+// 시장 스캔은 반드시 OKX 암호화폐 USDT 무기한 계약 중 유동성 검증을 통과한 상품만 다룬다.
+test('80종목 후보: 전체 시세 2회 조회, 거래대금/급등락/순환 구성, 타 자산/비활성/저유동성 차단', async () => {
+  const instruments = [{ instId: 'BTC-USDT-SWAP', state: 'live', ctType: 'linear', settleCcy: 'USDT', instCategory: '1' }];
+  const tickers = [{ instId: 'BTC-USDT-SWAP', last: '100', open24h: '99', volCcy24h: '100000' }];
+  for (let i = 1; i <= 120; i++) {
+    const id = `C${String(i).padStart(3, '0')}-USDT-SWAP`;
+    instruments.push({ instId: id, state: i === 117 ? 'suspend' : 'live', ctType: 'linear', settleCcy: 'USDT', instCategory: i >= 118 ? '2' : '1' });
+    tickers.push({ instId: id, last: '1', open24h: String(i % 2 ? 0.96 : 1.04), volCcy24h: String(i === 116 ? 100 : 2500000 + 10000 * (120 - i)) });
+  }
+  const urls = [];
+  const fetcher = async url => { urls.push(url); return { ok: true, json: async () => ({ code: '0', data: url.includes('/public/instruments') ? instruments : tickers }) }; };
+  const result = await scanSignalMarket({ fetcher, now: NOW, sg: normalizeSignal(undefined) });
+  assert.equal(SIGNAL_MARKET_LIMIT, 80);
+  assert.equal(result.symbols.length, 80);
+  assert.equal(result.calls, 2);
+  assert.equal(urls.length, 2);
+  assert.ok(result.symbols.includes('BTCUSDT'));
+  for (const sym of ['C116USDT', 'C117USDT', 'C118USDT', 'C119USDT', 'C120USDT']) assert.ok(!result.symbols.includes(sym), sym);
+  assert.equal(new Set(result.symbols).size, 80);
+  assert.ok(result.groups.turnover > 0 && result.groups.movers > 0 && result.groups.rotation > 0);
+});
+test('80종목 순환: 활성/2단계 신호 우선, 매 슬롯 32종목, 반복 슬롯에서 시장 후보 전체 순환', () => {
+  const pool = Array.from({ length: 80 }, (_, i) => `Q${String(i + 1).padStart(3, '0')}USDT`);
+  const st = {
+    ...oppState(['STAGEUSDT'], 'LONG', 2, NOW - H1),
+    lastSuccess: NOW,
+    rows: Array.from({ length: 20 }, (_, i) => ({ symbol: `TOP${i}USDT`, score: 95 - i, strong: true })),
+  };
+  const sg = normalizeSignal(undefined);
+  sg.coins.ACTUSDT = { status: 'active', dir: 'LONG' };
+  sg.breadth = { last: {} };
+  const swept = new Set();
+  for (let k = 0; k < 5; k++) {
+    const at = NOW + k * M15, selected = expandedWatchlist(st, sg, at, null, pool);
+    assert.equal(selected.length, 32, '각 슬롯 최대 32종목');
+    assert.deepEqual(selected.slice(0, 2), ['ACTUSDT', 'STAGEUSDT'], '활성/2단계 우선');
+    for (const sym of selected) if (pool.includes(sym)) { swept.add(sym); sg.breadth.last[sym] = at; }
+  }
+  assert.equal(swept.size, 80, '순환으로 80개 전체를 최소 한 번씩 분석');
+  assert.deepEqual(expandedWatchlist(st, sg, NOW, null, null), watchlist(st, sg, NOW), '시세 실패 시 기존 감시 명단 유지');
+  assert.deepEqual(expandedWatchlist({}, { coins: Object.fromEntries(pool.slice(0, 35).map(s => [s, { status: 'active' }])) }, NOW, null, pool).length, 35, '핀 고정 35건은 상한을 넘더라도 유지');
+});
+test('80종목 순환 통합: 정상 분석 후 시각 기록, 다음 15분 슬롯의 대상 교체, 진입 기준은 유지', async () => {
+  const pool = Array.from({ length: 80 }, (_, i) => `W${String(i + 1).padStart(3, '0')}USDT`);
+  const state = { ...oppState(['ETHUSDT']), lastSuccess: NOW };
+  const sent = sender(), storage = store();
+  const marketScan = async () => ({ symbols: pool, eligible: 140, calls: 2 });
+  const collectHour = async ({ ids }) => ({ coins: Object.fromEntries(ids.map(id => [id, { symbol: id.replace('-USDT-SWAP', 'USDT'), status: 'fresh', c1h: [], c4h: [] }])), calls: ids.length * 2, btc4h: null });
+  const args = { state, now: NOW, env: { RADAR_SIGNAL: 'on' }, send: sent.send, save: storage.save,
+    marketScan, collectHour, collectM15: async () => { throw Error('1단계는 15m 수집 불필요'); },
+    analyze: () => mkA({ stage: 1 }), renderChart: null };
+  const first = await signalStep(args);
+  assert.equal(first.marketPool, 80);
+  assert.equal(first.marketEligible, 140);
+  assert.equal(first.watching, 32);
+  assert.equal(first.analyzed, 32);
+  assert.equal(first.candidates, 0);
+  assert.ok(Object.keys(state.signal.breadth.last).length >= 31);
+  const marked1 = new Set(Object.keys(state.signal.breadth.last));
+  const second = await signalStep({ ...args, now: NOW + M15 });
+  assert.equal(second.marketPool, 80);
+  assert.equal(second.watching, 32);
+  assert.ok(Object.keys(state.signal.breadth.last).length > marked1.size, '다음 슬롯에 새로운 종목 분석');
+  assert.equal(sent.calls, 0);
+});
 test('실행: 15분봉이 확정 전/오래됨이면 신호를 만들지 않는다(미완성 봉 사용 금지)', async () => {
   for (const status15 of ['pending', 'stale', 'error']) { const r = run({ status15 }); const o = await signalStep(r.args); assert.equal(o.candidates, 0); assert.equal(r.sd.calls, 0, status15); }
 });
