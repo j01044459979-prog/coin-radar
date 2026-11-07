@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { evaluateSignal, invalidation, SIG, M15 } from '../signal/evaluate.mjs';
+import { H1 } from '../opportunity/indicators.mjs';
 import { signalTransition, blank } from '../signal/transition.mjs';
 import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER, displayWidth } from '../signal/message.mjs';
 import { signalCaption } from '../signal/chart.mjs';
