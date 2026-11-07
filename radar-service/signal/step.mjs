@@ -30,7 +30,7 @@ export const MAX_MESSAGES_PER_RUN = 6;
 export const CHART_TIMEOUT_MS = 15000;
 class DeadlineError extends Error { constructor() { super('signal deadline passed'); this.code = 'DEADLINE'; } }
 
-const fresh = () => ({ v: 1, coins: {}, emaCoins: {}, slot: null, retryAt: 0, failures: 0, lastError: null, inflight: null, daily: {}, health: null });
+const fresh = () => ({ v: 1, coins: {}, slot: null, retryAt: 0, failures: 0, lastError: null, inflight: null, daily: {}, health: null });
 export function normalizeSignal(input) {
   let raw = input; try { raw = input === undefined ? undefined : structuredClone(input); } catch { raw = undefined; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.v !== 1 || !raw.coins || typeof raw.coins !== 'object' || Array.isArray(raw.coins)) return fresh();
@@ -39,8 +39,8 @@ export function normalizeSignal(input) {
     if (!/^[A-Z0-9]+USDT$/.test(sym) || !c || typeof c !== 'object' || !['active', 'closed'].includes(c.status) || ![null, 'LONG', 'SHORT'].includes(c.dir)) continue;
     out.coins[sym] = c;
   }
-  out.emaCoins = Object.fromEntries(Object.entries(raw.emaCoins && typeof raw.emaCoins === 'object' && !Array.isArray(raw.emaCoins) ? raw.emaCoins : {})
-    .filter(([sym, c]) => validWatchSymbol(sym) && c && ['active', 'closed'].includes(c.status)));
+  if (raw.emaCoins && typeof raw.emaCoins === 'object' && !Array.isArray(raw.emaCoins))
+    out.emaCoins = Object.fromEntries(Object.entries(raw.emaCoins).filter(([sym, c]) => validWatchSymbol(sym) && c && ['active', 'closed'].includes(c.status)));
   if (!out.daily || typeof out.daily !== 'object' || Array.isArray(out.daily)) out.daily = {};
   if (!(out.inflight && typeof out.inflight === 'object' && typeof out.inflight.key === 'string' && Number.isInteger(out.inflight.attempts))) out.inflight = null;
   return out;
@@ -76,7 +76,7 @@ export async function scanSignalMarket({ fetcher = fetch, now, sg = {} } = {}) {
     calls: 2, groups: Object.fromEntries(Object.entries(picked.groups).map(([k, v]) => [k, v.length])) };
 }
 const validWatchSymbol = sym => typeof sym === 'string' && /^[A-Z0-9]+USDT$/.test(sym);
-export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT) {
+export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT, prioritizeEma = false) {
   const max = Number.isInteger(limit) && limit >= 1 ? limit : SIGNAL_WATCH_LIMIT;
   const watch = [], seen = new Set();
   const add = (sym, pinned = false) => {
@@ -90,7 +90,7 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
   for (const [sym, c] of Object.entries(paper?.coins ?? {})) if (c?.status === 'active') add(sym, true);
   for (const [sym, c] of Object.entries(paper?.emaCoins ?? {})) if (c?.status === 'active') add(sym, true);
   // Give requested majors priority while leaving the rest of the 80-coin rotation intact.
-  for (const sym of EMA_PRIORITY) add(sym);
+  if (prioritizeEma) for (const sym of EMA_PRIORITY) add(sym);
 
   const recent = (t, age) => Number.isFinite(t) && t <= now && now - t <= age;
   const opp = Object.entries(state.opportunity?.coins ?? {}).filter(([sym, c]) =>
@@ -122,8 +122,8 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
 
 // 활성/모의 포지션과 2단계 이상 관찰을 매 슬롯 우선 검증한다.
 // 나머지는 80개 후보 중 마지막 정밀 분석이 가장 오래된 순서로 순환한다.
-export function expandedWatchlist(state, sg, now, paper = null, marketPool = null, limit = SIGNAL_WATCH_LIMIT) {
-  const legacy = watchlist(state, sg, now, paper, limit);
+export function expandedWatchlist(state, sg, now, paper = null, marketPool = null, limit = SIGNAL_WATCH_LIMIT, prioritizeEma = false) {
+  const legacy = watchlist(state, sg, now, paper, limit, prioritizeEma);
   if (!Array.isArray(marketPool) || !marketPool.length) return legacy;
   const watch = [], seen = new Set(), add = sym => {
     if (!validWatchSymbol(sym) || seen.has(sym) || watch.length >= limit) return;
@@ -142,7 +142,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
     const c = state.opportunity?.coins?.[sym];
     if (c?.stage >= 2 && c.dir && Number.isFinite(c.lastBarT) && c.lastBarT <= now && now - c.lastBarT <= 6 * H1) add(sym);
   }
-  for (const sym of EMA_PRIORITY) add(sym);
+  if (prioritizeEma) for (const sym of EMA_PRIORITY) add(sym);
   const fastTarget = Math.min(limit, Math.max(12, watch.length));
   for (const sym of legacy) { if (watch.length >= fastTarget) break; add(sym); }
   const last = sg.breadth?.last ?? {};
@@ -164,6 +164,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const live = mode === 'on';
   if (live && typeof send !== 'function') return { mode, skipped: 'no-sender' };
   const sg = normalizeSignal(state.signal), attach = () => { if (live) state.signal = sg; };
+  if (emaEnabled) sg.emaCoins ??= {};
   if (now < sg.retryAt) return { mode, skipped: 'backoff', until: sg.retryAt };
   const paperOn = cfg.paper, paper = paperOn ? normalizePaper(sg.paper) : null;                    // 모의매매 추적(기본 off)
   let saveError = null;
@@ -179,7 +180,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     catch (error) { marketError = String(error.message).slice(0, 100); }
   }
   if (expired('afterMarket')) return { mode, timedOut: true };
-  const watch = scanAll ? null : expandedWatchlist(state, sg, now, paper, market?.symbols);
+  const watch = scanAll ? null : expandedWatchlist(state, sg, now, paper, market?.symbols, SIGNAL_WATCH_LIMIT, emaEnabled);
   if (!scanAll && !watch.length) return { mode, skipped: 'no-watchlist' };
 
   const base = { mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0,
@@ -292,7 +293,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const [sym, next] of Object.entries(commitNow)) sg.coins[sym] = next;
   for (const [sym, next] of Object.entries(emaCommitNow)) sg.emaCoins[sym] = next;
   for (const [sym, c] of Object.entries(sg.coins)) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.coins[sym];
-  for (const [sym, c] of Object.entries(sg.emaCoins)) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.emaCoins[sym];
+  for (const [sym, c] of Object.entries(sg.emaCoins ?? {})) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.emaCoins[sym];
   // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).
   if (sendPhoto) {
     for (const x of msgs) {
