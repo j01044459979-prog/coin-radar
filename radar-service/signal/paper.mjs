@@ -11,13 +11,14 @@ import { signalTransition } from './transition.mjs';
 export const PAPER = Object.freeze({ horizon15: 192, costBps: 15, stressBps: 30, keepClosed: 150, maxOpen: 40, minSample: 30 });
 const MODELS = ['wick', 'close', 'wickT2'];
 
-export const blankPaper = () => ({ v: 1, coins: {}, open: [], closed: [], gaps: 0, skipped: 0, dropped: 0, since: null, slot: null });
+export const blankPaper = () => ({ v: 1, coins: {}, emaCoins: {}, open: [], closed: [], gaps: 0, skipped: 0, dropped: 0, since: null, slot: null });
 
 export function normalizePaper(input) {
   let raw = input; try { raw = input === undefined ? undefined : structuredClone(input); } catch { raw = undefined; }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.v !== 1) return blankPaper();
   const out = { ...blankPaper(), ...raw };
   out.coins = raw.coins && typeof raw.coins === 'object' && !Array.isArray(raw.coins) ? Object.fromEntries(Object.entries(raw.coins).filter(([k, c]) => /^[A-Z0-9]+USDT$/.test(k) && c && ['active', 'closed'].includes(c.status))) : {};
+  out.emaCoins = raw.emaCoins && typeof raw.emaCoins === 'object' && !Array.isArray(raw.emaCoins) ? Object.fromEntries(Object.entries(raw.emaCoins).filter(([k, c]) => /^[A-Z0-9]+USDT$/.test(k) && c && ['active', 'closed'].includes(c.status))) : {};
   out.open = Array.isArray(raw.open) ? raw.open.filter(t => t && typeof t.id === 'string' && Number.isFinite(t.startT) && ['LONG', 'SHORT'].includes(t.dir) && t.m && typeof t.m === 'object') : [];
   out.closed = Array.isArray(raw.closed) ? raw.closed.filter(t => t && typeof t.id === 'string' && t.res && typeof t.res === 'object') : [];
   for (const k of ['gaps', 'skipped', 'dropped']) out[k] = Number.isFinite(out[k]) ? out[k] : 0;
@@ -46,7 +47,7 @@ const result = (m, dir) => {
 
 // 새 모의 거래(진입 후보 이벤트). ev는 evaluateSignal의 CANDIDATE 결과.
 export function openTrade(symbol, ev, now) {
-  return { id: `${symbol}:${ev.dir}:${ev.zoneKey}:${ev.triggerT}`, symbol, dir: ev.dir, signalAt: now, triggerT: ev.triggerT, startT: ev.triggerCloseT, lastBarT: 0, stop: ev.stop, t1: ev.t1.price, t2: ev.t2?.price ?? null, rr1: ev.t1.rr, net1: ev.t1.net, volRel: ev.volRel, score: ev.score, btcAlign: ev.btcAlign,
+  return { id: (ev.strategy === 'ema-pullback' ? 'EMA:' : '') + `${symbol}:${ev.dir}:${ev.zoneKey}:${ev.triggerT}`, strategy: ev.strategy === 'ema-pullback' ? 'ema-pullback' : 'legacy', symbol, dir: ev.dir, signalAt: now, triggerT: ev.triggerT, startT: ev.triggerCloseT, lastBarT: 0, stop: ev.stop, t1: ev.t1.price, t2: ev.t2?.price ?? null, rr1: ev.t1.rr, net1: ev.t1.net, volRel: ev.volRel, score: ev.score, btcAlign: ev.btcAlign,
     m: { wick: newModel(ev.stop, ev.t1.price, 'wick'), close: newModel(ev.stop, ev.t1.price, 'close'), wickT2: newModel(ev.stop, ev.t2?.price ?? ev.t1.price, 'wick') } };
 }
 
@@ -62,20 +63,23 @@ export function advanceTrade(trade, bars) {
   }
   return MODELS.every(k => trade.m[k].done) ? 'closed' : 'open';
 }
-export const closedRecord = trade => ({ id: trade.id, symbol: trade.symbol, dir: trade.dir, triggerT: trade.triggerT, t: trade.startT, entry: trade.m.wick.entry === null ? null : p8(trade.m.wick.entry), riskPct: trade.m.wick.risk > 0 ? r4(trade.m.wick.risk / trade.m.wick.entry * 100) : null, rr1: r4(trade.rr1), net1: r4(trade.net1), volRel: r4(trade.volRel), score: trade.score, btcAlign: trade.btcAlign, stop: p8(trade.stop), t1: p8(trade.t1), t2: trade.t2 === null ? null : p8(trade.t2), res: Object.fromEntries(MODELS.map(k => [k, result(trade.m[k], trade.dir)])) });
+export const closedRecord = trade => ({ id: trade.id, strategy: trade.strategy === 'ema-pullback' ? 'ema-pullback' : 'legacy', symbol: trade.symbol, dir: trade.dir, triggerT: trade.triggerT, t: trade.startT, entry: trade.m.wick.entry === null ? null : p8(trade.m.wick.entry), riskPct: trade.m.wick.risk > 0 ? r4(trade.m.wick.risk / trade.m.wick.entry * 100) : null, rr1: r4(trade.rr1), net1: r4(trade.net1), volRel: r4(trade.volRel), score: trade.score, btcAlign: trade.btcAlign, stop: p8(trade.stop), t1: p8(trade.t1), t2: trade.t2 === null ? null : p8(trade.t2), res: Object.fromEntries(MODELS.map(k => [k, result(trade.m[k], trade.dir)])) });
 
 // 한 번의 실행에서 호출: 새 후보 기록 + 열린 거래 진행. candidates: [{ symbol, ev, a, c15 }] (모든 점검 코인의 평가 결과), bars: { SYMBOL: 확정 15분봉[] }
 export function paperStep(paper, { evaluations, bars, now }) {
   paper.since ??= now;
   let opened = 0, closed = 0;
   // 1) 새 후보: 실제 신호와 같은 전이 규칙(중복 방지·쿨다운)으로 기록
-  for (const { symbol, ev, a, c15 } of evaluations) {
-    const tr = signalTransition(paper.coins[symbol] ?? null, ev, { symbol, a, c15, now, cooldownMs: SIG.cooldownMs });
-    paper.coins[symbol] = tr.committed;
+  for (const { symbol, ev, a, c15, strategy } of evaluations) {
+    const isEma = strategy === 'ema-pullback' || ev?.strategy === 'ema-pullback';
+    const book = isEma ? paper.emaCoins : paper.coins;
+    const tr = signalTransition(book[symbol] ?? null, ev, { symbol, a, c15, now, cooldownMs: SIG.cooldownMs });
+    book[symbol] = tr.committed;
     if (tr.event?.type === 'candidate') {
       if (paper.open.length >= PAPER.maxOpen) { paper.skipped++; continue; }
-      if (paper.open.some(t => t.id === tr.event.id) || paper.closed.some(t => t.id === tr.event.id)) continue;
-      paper.open.push(openTrade(symbol, ev, now)); opened++;
+      const next = openTrade(symbol, { ...ev, strategy: isEma ? 'ema-pullback' : ev.strategy }, now);
+      if (paper.open.some(t => t.id === next.id) || paper.closed.some(t => t.id === next.id)) continue;
+      paper.open.push(next); opened++;
     }
   }
   // 2) 열린 거래 진행(해당 코인의 확정 15분봉이 있을 때만)
@@ -100,6 +104,21 @@ export function paperSummary(paper, now = Date.now()) {
     const rows = paper.closed.map(t => ({ t: t.t, o: t.res[k] })).filter(r => r.o && r.o.kind !== 'skipped'), n = rows.length, net = rows.map(r => r.o.net), win = net.filter(x => x > 0), loss = net.filter(x => x <= 0), kind = x => (n ? rows.filter(r => r.o.kind === x).length / n : null), ci = clusterBootstrap(rows, r => r.o.net);
     out.models[k] = { n, target: kind('target'), stop: kind('stop'), time: kind('time'), meanNetR: mean(net), ciLo: ci.lo, ciHi: ci.hi, medianNetR: quant(net, 0.5), meanNetStressR: mean(rows.map(r => r.o.netStress)), profitFactor: loss.length && loss.reduce((x, y) => x + y, 0) < 0 ? win.reduce((x, y) => x + y, 0) / -loss.reduce((x, y) => x + y, 0) : null, maeR: mean(rows.map(r => r.o.mae)), maeP90R: quant(rows.map(r => r.o.mae), 0.9), maePct: mean(rows.map(r => r.o.maePct)), maePctP90: quant(rows.map(r => r.o.maePct), 0.9) };
   }
+  // Keep each strategy's forward performance independent; legacy historical records have no strategy field.
+  out.strategies = {};
+  for (const key of ['legacy', 'ema-pullback']) {
+    const trades = paper.closed.filter(t => (t.strategy ?? 'legacy') === key);
+    const vals = trades.map(t => t.res?.wick).filter(o => o && o.kind !== 'skipped' && Number.isFinite(o.net));
+    out.strategies[key] = {
+      open: paper.open.filter(t => (t.strategy ?? 'legacy') === key).length,
+      closed: trades.length,
+      n: vals.length,
+      sufficient: vals.length >= PAPER.minSample,
+      meanNetR: mean(vals.map(o => o.net)),
+      target: vals.length ? vals.filter(o => o.kind === 'target').length / vals.length : null,
+      stop: vals.length ? vals.filter(o => o.kind === 'stop').length / vals.length : null,
+    };
+  }
   // 한 줄 판정: 신뢰구간이 0을 완전히 넘어설 때만 '양'/'음'이라고 쓴다. 그 전에는 '미확정'.
   const w = out.models.wick;
   out.verdict = !out.sufficient ? '표본 부족(결론 금지)' : w.ciLo > 0 ? '평균 순손익비 양(95% 신뢰구간이 0 초과)' : w.ciHi < 0 ? '평균 순손익비 음(95% 신뢰구간이 0 미만)' : '0과 구별되지 않음(미확정)';
@@ -109,5 +128,7 @@ const f = (x, d = 2) => (x === null || x === undefined || !Number.isFinite(x) ? 
 // 로그용 한 줄(모의 · 미검증 표시 포함)
 export function paperLine(s) {
   const w = s.models.wick;
-  return `[모의·미검증] 열림 ${s.open} · 종료 ${s.closed} · 공백 ${s.gaps} · ${s.days.toFixed(1)}일 | 스탑주문 1차: 목표/손절/미결정 ${pc(w.target)}/${pc(w.stop)}/${pc(w.time)} · 평균 순손익비 ${f(w.meanNetR, 3)} [${f(w.ciLo, 2)}, ${f(w.ciHi, 2)}] · 중앙값 ${f(w.medianNetR, 2)} · MAE ${f(w.maeR, 2)}R(p90 ${f(w.maeP90R, 2)}R) | 판정: ${s.verdict}`;
+  const byStrategy = Object.entries(s.strategies ?? {}).map(([key, v]) =>
+    key + ': 열림 ' + v.open + ' / 종료 ' + v.closed + ' / 평균 ' + f(v.meanNetR, 3) + 'R / 목표 ' + pc(v.target) + (v.sufficient ? '' : ' (표본 부족)')).join(' | ');
+  return `[모의·미검증] 열림 ${s.open} · 종료 ${s.closed} · 공백 ${s.gaps} · ${s.days.toFixed(1)}일 | 스탑주문 1차: 목표/손절/미결정 ${pc(w.target)}/${pc(w.stop)}/${pc(w.time)} · 평균 순손익비 ${f(w.meanNetR, 3)} [${f(w.ciLo, 2)}, ${f(w.ciHi, 2)}] · 중앙값 ${f(w.medianNetR, 2)} · MAE ${f(w.maeR, 2)}R(p90 ${f(w.maeP90R, 2)}R) | 판정: ${s.verdict}` + (byStrategy ? ' | ' + byStrategy : '');
 }
