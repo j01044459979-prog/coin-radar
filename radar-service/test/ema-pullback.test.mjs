@@ -54,11 +54,11 @@ test('priority majors stay ahead of rotations and existing pinned signals', () =
   const sg = normalizeSignal(undefined);
   sg.coins.BTCUSDT = { status: 'active', dir: 'LONG' };
   const state = {};
-  const w = watchlist(state, sg, now);
+  const w = watchlist(state, sg, now, null, 32, true);
   assert.equal(w[0], 'BTCUSDT');
   assert.deepEqual(w.slice(1, 6), EMA_PRIORITY);
   const pool = [...EMA_PRIORITY, ...Array.from({ length: 75 }, (_, n) => 'COIN' + n + 'USDT')];
-  const exp = expandedWatchlist(state, sg, now, null, pool);
+  const exp = expandedWatchlist(state, sg, now, null, pool, 32, true);
   assert.ok(exp.length <= 32);
   assert.equal(exp[0], 'BTCUSDT');
   EMA_PRIORITY.forEach(x => assert.ok(exp.includes(x)));
