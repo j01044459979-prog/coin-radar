@@ -252,7 +252,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     if (tr.event) items.push({ symbol: r.symbol, event: tr.event, committed: tr.committed, score: ev.score ?? 0, rr: ev.t1?.net ?? 0 });
     else if (JSON.stringify(tr.next) !== JSON.stringify(prev)) commitNow[r.symbol] = tr.next;
     if (emaEnabled) {
-      const evEma = evaluateEmaPullback({ setup: r.ema ?? null, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin });
+      const evEma = evaluateEmaPullback({ setup: r.ema ?? null, c15: c.c15, now }, { minRR: Math.max(1.5, cfg.minRR), validMin: cfg.validMin });
       if (evEma.status === 'OBSERVE') base.emaObserved++;
       evaluations.push({ symbol: r.symbol, strategy: 'ema-pullback', ev: evEma, a: emaContext, c15: c.c15 });
       if (evEma.status === 'CANDIDATE') base.emaCandidates++;
