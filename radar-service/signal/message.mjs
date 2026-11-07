@@ -24,7 +24,7 @@ export function signalDeadline(ev, now) {
 // 진입 후보 메시지. 레버리지는 권하지 않고, 손절폭 대비 증거금 손실만 사실로 보여 준다.
 export function candidateMessage(symbol, ev, { now } = {}) {
   const L = ev.dir === 'LONG', lines = [];
-  const label = ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
+  const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
   lines.push(`⏱ 생성 ${kst(ev.triggerCloseT)} KST (15분봉 확정)`, `   유효 ${kst(ev.triggerCloseT)}~${kst(ev.validUntil)} KST`);
@@ -58,7 +58,7 @@ export function invalidatedMessage(symbol, event, { now } = {}) {
 // 미리보기·로그용 한 줄 요약
 export function summaryLine(symbol, ev) {
   if (!ev) return `${baseName(symbol)}: 분석 제외`;
-  if (ev.status === 'CANDIDATE') return `${baseName(symbol)}: ${ev.dir} ${ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보'} (진입 ${fmtPrice(ev.entry)} · 손절 ${fmtPrice(ev.stop)} · 1차 ${fmtPrice(ev.t1.price)} ${ev.t1.rr.toFixed(1)}R)`;
+  if (ev.status === 'CANDIDATE') return `${baseName(symbol)}: ${ev.dir} ${ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보'} (진입 ${fmtPrice(ev.entry)} · 손절 ${fmtPrice(ev.stop)} · 1차 ${fmtPrice(ev.t1.price)} ${ev.t1.rr.toFixed(1)}R)`;
   if (ev.status === 'OBSERVE') return `${baseName(symbol)}: ${ev.dir} 관찰 — ${ev.blockers.join(' / ')}`;
   return `${baseName(symbol)}: WAIT — ${ev.why}`;
 }

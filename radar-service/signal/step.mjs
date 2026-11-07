@@ -12,6 +12,7 @@ import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
+import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
 import { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
 import { candidateMessage, invalidatedMessage, summaryLine } from './message.mjs';
 import { r9Decorate, r9Caption } from './rich300.mjs';
@@ -38,6 +39,8 @@ export function normalizeSignal(input) {
     if (!/^[A-Z0-9]+USDT$/.test(sym) || !c || typeof c !== 'object' || !['active', 'closed'].includes(c.status) || ![null, 'LONG', 'SHORT'].includes(c.dir)) continue;
     out.coins[sym] = c;
   }
+  if (raw.emaCoins && typeof raw.emaCoins === 'object' && !Array.isArray(raw.emaCoins))
+    out.emaCoins = Object.fromEntries(Object.entries(raw.emaCoins).filter(([sym, c]) => validWatchSymbol(sym) && c && ['active', 'closed'].includes(c.status)));
   if (!out.daily || typeof out.daily !== 'object' || Array.isArray(out.daily)) out.daily = {};
   if (!(out.inflight && typeof out.inflight === 'object' && typeof out.inflight.key === 'string' && Number.isInteger(out.inflight.attempts))) out.inflight = null;
   return out;
@@ -73,7 +76,7 @@ export async function scanSignalMarket({ fetcher = fetch, now, sg = {} } = {}) {
     calls: 2, groups: Object.fromEntries(Object.entries(picked.groups).map(([k, v]) => [k, v.length])) };
 }
 const validWatchSymbol = sym => typeof sym === 'string' && /^[A-Z0-9]+USDT$/.test(sym);
-export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT) {
+export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT, prioritizeEma = false) {
   const max = Number.isInteger(limit) && limit >= 1 ? limit : SIGNAL_WATCH_LIMIT;
   const watch = [], seen = new Set();
   const add = (sym, pinned = false) => {
@@ -82,8 +85,12 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
   };
   // 핀 고정: 현재 활성 신호와 모의 포지션은 알림 후 손절/무효화 판정이 누락되지 않아야 한다.
   for (const [sym, c] of Object.entries(sg.coins ?? {})) if (c?.status === 'active') add(sym, true);
+  for (const [sym, c] of Object.entries(sg.emaCoins ?? {})) if (c?.status === 'active') add(sym, true);
   for (const t of paper?.open ?? []) add(t?.symbol, true);
   for (const [sym, c] of Object.entries(paper?.coins ?? {})) if (c?.status === 'active') add(sym, true);
+  for (const [sym, c] of Object.entries(paper?.emaCoins ?? {})) if (c?.status === 'active') add(sym, true);
+  // Give requested majors priority while leaving the rest of the 80-coin rotation intact.
+  if (prioritizeEma) for (const sym of EMA_PRIORITY) add(sym);
 
   const recent = (t, age) => Number.isFinite(t) && t <= now && now - t <= age;
   const opp = Object.entries(state.opportunity?.coins ?? {}).filter(([sym, c]) =>
@@ -115,8 +122,8 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
 
 // 활성/모의 포지션과 2단계 이상 관찰을 매 슬롯 우선 검증한다.
 // 나머지는 80개 후보 중 마지막 정밀 분석이 가장 오래된 순서로 순환한다.
-export function expandedWatchlist(state, sg, now, paper = null, marketPool = null, limit = SIGNAL_WATCH_LIMIT) {
-  const legacy = watchlist(state, sg, now, paper, limit);
+export function expandedWatchlist(state, sg, now, paper = null, marketPool = null, limit = SIGNAL_WATCH_LIMIT, prioritizeEma = false) {
+  const legacy = watchlist(state, sg, now, paper, limit, prioritizeEma);
   if (!Array.isArray(marketPool) || !marketPool.length) return legacy;
   const watch = [], seen = new Set(), add = sym => {
     if (!validWatchSymbol(sym) || seen.has(sym) || watch.length >= limit) return;
@@ -124,8 +131,10 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
   };
   const pinned = new Set([
     ...Object.entries(sg.coins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
+    ...Object.entries(sg.emaCoins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
     ...(paper?.open ?? []).map(p => p?.symbol),
     ...Object.entries(paper?.coins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
+    ...Object.entries(paper?.emaCoins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
   ]);
   // 기존 레이더와 동일하게 핀 고정 대상은 제한보다 많아도 우선 보존한다.
   for (const sym of legacy) if (pinned.has(sym) && !seen.has(sym)) { seen.add(sym); watch.push(sym); }
@@ -133,6 +142,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
     const c = state.opportunity?.coins?.[sym];
     if (c?.stage >= 2 && c.dir && Number.isFinite(c.lastBarT) && c.lastBarT <= now && now - c.lastBarT <= 6 * H1) add(sym);
   }
+  if (prioritizeEma) for (const sym of EMA_PRIORITY) add(sym);
   const fastTarget = Math.min(limit, Math.max(12, watch.length));
   for (const sym of legacy) { if (watch.length >= fastTarget) break; add(sym); }
   const last = sg.breadth?.last ?? {};
@@ -145,7 +155,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
 }
 
 export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
-  const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env);
+  const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env), emaEnabled = String(env.RADAR_EMA_PULLBACK ?? '').toLowerCase() === 'on';
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
   const hour = Math.floor(now / H1), slot = Math.floor(now / M15) * M15;
@@ -154,6 +164,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const live = mode === 'on';
   if (live && typeof send !== 'function') return { mode, skipped: 'no-sender' };
   const sg = normalizeSignal(state.signal), attach = () => { if (live) state.signal = sg; };
+  if (emaEnabled) sg.emaCoins ??= {};
   if (now < sg.retryAt) return { mode, skipped: 'backoff', until: sg.retryAt };
   const paperOn = cfg.paper, paper = paperOn ? normalizePaper(sg.paper) : null;                    // 모의매매 추적(기본 off)
   let saveError = null;
@@ -169,7 +180,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     catch (error) { marketError = String(error.message).slice(0, 100); }
   }
   if (expired('afterMarket')) return { mode, timedOut: true };
-  const watch = scanAll ? null : expandedWatchlist(state, sg, now, paper, market?.symbols);
+  const watch = scanAll ? null : expandedWatchlist(state, sg, now, paper, market?.symbols, SIGNAL_WATCH_LIMIT, emaEnabled);
   if (!scanAll && !watch.length) return { mode, skipped: 'no-watchlist' };
 
   const base = { mode, watching: watch?.length ?? 0, analyzed: 0, candidates: 0, observing: 0, invalidated: 0, pending: 0, excluded: 0,
@@ -188,26 +199,36 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const [instId, entry] of Object.entries(hourData.coins)) {
     const symbol = entry.symbol;
     if (entry.status !== 'fresh') { rows.push({ symbol, instId, why: entry.reason ?? entry.status, pending: entry.status === 'pending' }); continue; }
-    rows.push({ symbol, instId, a: analyze(entry.c1h, entry.c4h, hourData.btc4h), c1h: entry.c1h, ...(fibSetting !== 'off' ? { c4h: entry.c4h } : {}) });
+    rows.push({ symbol, instId, a: analyze(entry.c1h, entry.c4h, hourData.btc4h), c1h: entry.c1h,
+      ...(emaEnabled ? { ema: emaSetup(entry.c1h, entry.c4h, now) } : {}),
+      ...((fibSetting !== 'off' || emaEnabled) ? { c4h: entry.c4h } : {}) });
   }
-  const need = rows.filter(r => r.a?.status === 'ok' && (r.a.stage >= 2 || sg.coins[r.symbol]?.status === 'active' || paper?.open.some(t => t.symbol === r.symbol) || paper?.coins[r.symbol]?.status === 'active'));
+  const need = rows.filter(r => r.a?.status === 'ok' && (r.a.stage >= 2 || sg.coins[r.symbol]?.status === 'active' || paper?.open.some(t => t.symbol === r.symbol) || paper?.coins[r.symbol]?.status === 'active' ||
+    (emaEnabled && (r.ema || sg.emaCoins[r.symbol]?.status === 'active' || paper?.emaCoins?.[r.symbol]?.status === 'active'))));
   const m15 = need.length ? await collectM15({ fetcher, now, ids: need.map(r => r.instId), gapMs, budgetMs: Math.max(5000, budgetMs / 2), shouldStop: () => clock() > deadline }) : { coins: {}, calls: 0, stopped: null };
   if (expired('afterCollect15')) return { ...base, timedOut: true };
   base.calls += m15.calls ?? 0;
 
   // 판정·전이 (동기 계산)
-  const items = [], commitNow = {}, lines = [], evaluations = [], barsMap = {};
+  const items = [], commitNow = {}, emaCommitNow = {}, lines = [], evaluations = [], barsMap = {};
+  base.emaObserved = 0; base.emaCandidates = 0; base.emaSetups = rows.filter(r => r.ema).length;
   for (const r of rows) {
     if (!r.a) { lines.push(`${r.symbol.replace(/USDT$/, '')}: 분석 제외 — ${r.why}`); r.pending ? base.pending++ : base.excluded++; continue; }
     if (r.a.status !== 'ok') { lines.push(summaryLine(r.symbol, null)); base.excluded++; continue; }
     base.analyzed++;
-    const c = m15.coins[r.instId], prev = sg.coins[r.symbol] ?? null;
+    const c = m15.coins[r.instId], prev = sg.coins[r.symbol] ?? null, emaPrev = emaEnabled ? sg.emaCoins[r.symbol] ?? null : null;
+    const emaContext = r.ema ? { status: 'ok', stage: 2, dir: r.ema.dir, price: r.ema.price, invalidation: emaPrev?.stop ?? null } : { status: 'ok', stage: 0 };
     if (!c || c.status !== 'fresh') {
       if (!c) lines.push(summaryLine(r.symbol, { status: 'WAIT', why: `4H·1H 단계 ${r.a.stage}(15분봉 점검 대상 아님)` }));
       else { lines.push(`${r.symbol.replace(/USDT$/, '')}: 15분봉 ${c.status === 'pending' ? '확정 대기' : '제외'} — ${c.reason}`); c.status === 'pending' ? base.pending++ : base.excluded++; }
       if (prev?.status === 'active') {                                                          // 15분봉이 없어도 활성 신호의 시간 만료·1H 구조 소멸 판정은 계속한다(15분 종가 판정만 건너뜀)
         const tr = signalTransition(prev, { status: 'WAIT' }, { symbol: r.symbol, a: r.a, c15: [], now, cooldownMs: SIG.cooldownMs });
         if (tr.event) items.push({ symbol: r.symbol, event: tr.event, committed: tr.committed, score: 0, rr: 0 }); else if (tr.committed.status !== prev.status) commitNow[r.symbol] = tr.committed;
+      }
+      if (emaPrev?.status === 'active') {
+        const tr = signalTransition(emaPrev, { status: 'WAIT' }, { symbol: r.symbol, a: emaContext, c15: [], now, cooldownMs: SIG.cooldownMs });
+        if (tr.event) items.push({ symbol: r.symbol, channel: 'ema', event: tr.event, committed: tr.committed, score: 0, rr: 0 });
+        else if (JSON.stringify(tr.next) !== JSON.stringify(emaPrev)) emaCommitNow[r.symbol] = tr.next;
       }
       continue;
     }
@@ -231,6 +252,16 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const tr = signalTransition(prev, ev, { symbol: r.symbol, a: r.a, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
     if (tr.event) items.push({ symbol: r.symbol, event: tr.event, committed: tr.committed, score: ev.score ?? 0, rr: ev.t1?.net ?? 0 });
     else if (JSON.stringify(tr.next) !== JSON.stringify(prev)) commitNow[r.symbol] = tr.next;
+    if (emaEnabled) {
+      const evEma = evaluateEmaPullback({ setup: r.ema ?? null, c15: c.c15, now }, { minRR: Math.max(1.5, cfg.minRR), validMin: cfg.validMin });
+      if (evEma.status === 'OBSERVE') base.emaObserved++;
+      evaluations.push({ symbol: r.symbol, strategy: 'ema-pullback', ev: evEma, a: emaContext, c15: c.c15 });
+      if (evEma.status === 'CANDIDATE') base.emaCandidates++;
+      lines.push('EMA ' + summaryLine(r.symbol, evEma));
+      const et = signalTransition(emaPrev, evEma, { symbol: r.symbol, a: emaContext, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
+      if (et.event) items.push({ symbol: r.symbol, channel: 'ema', event: et.event, committed: et.committed, score: evEma.score ?? 0, rr: evEma.t1?.net ?? 0 });
+      else if (JSON.stringify(et.next) !== JSON.stringify(emaPrev)) emaCommitNow[r.symbol] = et.next;
+    }
   }
   if (expired('afterAnalysis')) return { ...base, timedOut: true };
   const dy = dayRec(sg, now);
@@ -260,7 +291,9 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     sg.breadth = { v: 1, at: now, last: Object.fromEntries(recent) };
   }
   for (const [sym, next] of Object.entries(commitNow)) sg.coins[sym] = next;
+  for (const [sym, next] of Object.entries(emaCommitNow)) sg.emaCoins[sym] = next;
   for (const [sym, c] of Object.entries(sg.coins)) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.coins[sym];
+  for (const [sym, c] of Object.entries(sg.emaCoins ?? {})) if (c.status === 'closed' && now - (c.closedAt || c.lastBar15 || 0) > PRUNE_MS) delete sg.emaCoins[sym];
   // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).
   if (sendPhoto) {
     for (const x of msgs) {
@@ -312,7 +345,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   let sent = 0;
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
-    const out = await deliver(m, key, assumed => { sg.coins[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
+    const out = await deliver(m, key, assumed => { (i.channel === 'ema' ? sg.emaCoins : sg.coins)[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
       if (feedEnabled(env)) {                                                                    // RICH300 피드: Telegram 전달이 *확인된* 알림만. 두 번 시도해도 확정되지 않아 '전달된 것으로 간주'한 경우(assumed)는 자동 추적 대상에서 제외한다.
         if (assumed) base.feedExcluded = (base.feedExcluded ?? 0) + 1;
         else { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } }
