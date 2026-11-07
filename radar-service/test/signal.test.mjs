@@ -7,7 +7,7 @@ import { signalTransition, blank } from '../signal/transition.mjs';
 import { candidateMessage, invalidatedMessage, SIGNAL_DISCLAIMER, displayWidth } from '../signal/message.mjs';
 import { signalCaption } from '../signal/chart.mjs';
 import { signalSettings, signalMode, SIGNAL_DEFAULTS } from '../signal/config.mjs';
-import { signalStep, runSignalSafe, normalizeSignal, watchlist, MAX_ATTEMPTS } from '../signal/step.mjs';
+import { signalStep, runSignalSafe, normalizeSignal, watchlist, SIGNAL_WATCH_LIMIT, MAX_ATTEMPTS } from '../signal/step.mjs';
 import { runSignalAfterCycle } from '../signal/integrate.mjs';
 import { freshness15, collect15 } from '../signal/collect.mjs';
 import { T, NOW, mkA, mirrorA, mk15, mirror15, sender, store, collectors, oppState } from './signal-fixture.mjs';
@@ -260,7 +260,7 @@ test('실행: 관찰 후보가 없으면 아무것도 하지 않는다 / 기존 
   const s1 = run({ state: oppState(['ETHUSDT'], 'LONG', 1) }); assert.deepEqual(watchlist(s1.st, normalizeSignal(undefined), NOW), ['ETHUSDT'], '1단계 후보도 1H·4H 사전 감시');
   assert.deepEqual(watchlist({ opportunity: { coins: { BADname: { stage: 3, dir: 'LONG', lastBarT: NOW } } } }, normalizeSignal(undefined), NOW), []);
 });
-test('확장 감시: 활성 알림과 최근 2·1단계를 우선하고, 최신 기본 레이더 고점수 종목으로 16개까지 채운다', () => {
+test('확장 감시: 활성 알림과 최근 2·1단계를 우선하고, 최신 기본 레이더 고점수 종목으로 32개까지 채운다', () => {
   const st = {
     lastSuccess: NOW,
     rows: [
@@ -284,6 +284,14 @@ test('확장 감시: 활성 알림과 최근 2·1단계를 우선하고, 최신 
   assert.deepEqual(watchlist(st, sg, NOW, null, 6), ['ACTUSDT', 'ZZZUSDT', 'YYYUSDT', 'BBBUSDT', 'AAAUSDT', 'CCCUSDT']);
   assert.deepEqual(watchlist(st, sg, NOW, null, 8), ['ACTUSDT', 'ZZZUSDT', 'YYYUSDT', 'BBBUSDT', 'AAAUSDT', 'CCCUSDT', 'BTCUSDT', 'ETHUSDT']);
   assert.deepEqual(watchlist({ lastSuccess: NOW - 16 * 60000, rows: st.rows }, normalizeSignal(undefined), NOW), [], '오래된 스캔 점수로 임의 추가하지 않음');
+  const symbols = Array.from({ length: 42 }, (_, i) => `T${String(i + 1).padStart(2, '0')}USDT`);
+  const expanded = { lastSuccess: NOW, rows: symbols.map((symbol, i) => ({ symbol, score: 90 - i, strong: false })) };
+  const wider = watchlist(expanded, sg, NOW);
+  assert.equal(SIGNAL_WATCH_LIMIT, 32, '운영 정밀 감시 기본 상한을 두 배로 확대');
+  assert.equal(wider.length, 32, '활성 종목 우선 보존 후 32개까지만 감시');
+  assert.deepEqual(wider.slice(0, 2), ['ACTUSDT', 'T01USDT']);
+  assert.ok(wider.includes('T31USDT') && !wider.includes('T32USDT'), '활성 1개 + 신규 31개');
+  assert.equal(watchlist(expanded, sg, NOW, null, 16).length, 16, '명시 상한은 이전처럼 준수');
   const two = normalizeSignal(undefined); two.coins.ACTUSDT = { status: 'active' }; two.coins.ETHUSDT = { status: 'active' };
   assert.deepEqual(watchlist({}, two, NOW, null, 1), ['ACTUSDT', 'ETHUSDT'], '활성 신호는 감시 상한보다 우선');
 });

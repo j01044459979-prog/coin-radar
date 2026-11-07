@@ -47,8 +47,8 @@ const instOf = symbol => symbol.replace(/USDT$/, '-USDT-SWAP');
 
 // 신호 정밀 감시: 활성 신호 > 2단계 눌림 > 1단계 접근 > 기본 레이더 상위 점수 > 기회 레이더 시세 상위.
 // 15분봉 요청은 별도 필요 판정(stage >= 2) 뒤에만 수행한다. 감시 후보가 늘어도 손절·손익비/확정봉 게이트는 그대로다.
-// API/시간 예산 때문에 새로운 감시 후보의 총수는 16개로 제한한다(활성 신호·모의 열린 포지션은 만료/무효화 판정을 위해 우선 보존).
-export const SIGNAL_WATCH_LIMIT = 16;
+// API/시간 예산을 고려해 신규 정밀 감시 후보는 최대 32개로 제한한다(기존 16개에서 확대). 활성 신호·모의 열린 포지션은 만료/무효화 판정을 위해 우선 보존한다.
+export const SIGNAL_WATCH_LIMIT = 32;
 const validWatchSymbol = sym => typeof sym === 'string' && /^[A-Z0-9]+USDT$/.test(sym);
 export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIMIT) {
   const max = Number.isInteger(limit) && limit >= 1 ? limit : SIGNAL_WATCH_LIMIT;
