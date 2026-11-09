@@ -22,6 +22,11 @@ h1{font-size:26px;letter-spacing:-.035em;line-height:1.2;margin:7px 0 8px}
 .metric .unit{font-size:14px;color:var(--mut);font-weight:500}
 .metric .sub{font-size:12px;color:var(--mut);margin-top:4px}
 .metric.target strong{color:var(--accent)}
+.forecast-grid{display:grid;grid-template-columns:1fr;gap:9px;margin-top:13px}
+.forecast-item{min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px}
+.forecast-horizon{font-size:12px;color:var(--mut)}
+.forecast-item strong{display:block;font-size:21px;line-height:1.3;letter-spacing:-.035em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;margin-top:3px}
+.forecast-item .unit{font-size:12px;color:var(--mut)}
 h2{font-size:17px;margin:0;letter-spacing:-.03em}
 .calTop{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}
 .calBtns{display:flex;align-items:center;gap:4px}
@@ -50,7 +55,7 @@ form{display:grid;gap:12px;margin-top:12px}
 .status.error{color:#ffa7a7}
 #content{display:none}
 footer{color:var(--mut);font-size:11px;margin:22px 2px}
-@media(min-width:490px){.three{grid-template-columns:repeat(3,minmax(0,1fr));gap:0}.metric{border-bottom:0;border-right:1px solid var(--line);padding:0 11px}.metric:first-child{padding-left:0}.metric:last-child{padding-right:0}.metric strong{font-size:25px}.day{min-height:84px;padding:7px 5px}.day .money{font-size:12px}}
+@media(min-width:490px){.forecast-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.forecast-item{padding:10px}.forecast-item strong{font-size:18px}.three{grid-template-columns:repeat(3,minmax(0,1fr));gap:0}.metric{border-bottom:0;border-right:1px solid var(--line);padding:0 11px}.metric:first-child{padding-left:0}.metric:last-child{padding-right:0}.metric strong{font-size:25px}.day{min-height:84px;padding:7px 5px}.day .money{font-size:12px}}
 @media(prefers-reduced-motion:no-preference){button{transition:border-color .15s,opacity .15s}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}}
 </style>
 </head>
@@ -65,6 +70,15 @@ footer{color:var(--mut);font-size:11px;margin:22px 2px}
     <div class="metric"><div class="label">현재 내돈</div><strong><span id="current">—</span> <span class="unit">USDT</span></strong><div class="sub" id="currentSub">최근 마감 입력 기준</div></div>
     <div class="metric target"><div class="label">오늘 5% 달성 시</div><strong><span id="target">—</span> <span class="unit">USDT</span></strong><div class="sub">오늘 마감 목표액</div></div>
     <div class="metric"><div class="label">잔여금액</div><strong><span id="remaining">—</span> <span class="unit">USDT</span></strong><div class="sub" id="remainingSub">목표까지 필요한 금액</div></div>
+  </section>
+  <section class="card" aria-labelledby="forecastTitle">
+    <h2 id="forecastTitle">매일 5%라면, 내 자산은?</h2>
+    <div class="forecast-grid" aria-label="현재 자산 기준 미래 복리 가정 금액" aria-live="polite">
+      <div class="forecast-item"><div class="forecast-horizon">7일 뒤</div><strong id="forecast7">—</strong><span class="unit">USDT</span></div>
+      <div class="forecast-item"><div class="forecast-horizon">30일 뒤 · 1개월</div><strong id="forecast30">—</strong><span class="unit">USDT</span></div>
+      <div class="forecast-item"><div class="forecast-horizon">365일 뒤 · 1년</div><strong id="forecast365">—</strong><span class="unit">USDT</span></div>
+    </div>
+    <p class="note">최근 직접 입력한 마감 자산에서 매일 5%씩 복리 수익을 낸다고 가정한 미래 예상액입니다. 실제 수익을 보장하지 않으며, 특히 1년 내내 매일 5% 달성은 매우 비현실적인 가정입니다.</p>
   </section>
   <section class="card" aria-labelledby="calTitle">
     <div class="calTop"><h2 id="calTitle">매일 5% 복리</h2><div class="calBtns"><button type="button" id="prevMonth" aria-label="이전 달">‹</button><span id="monthText"></span><button type="button" id="nextMonth" aria-label="다음 달">›</button></div></div>
@@ -95,6 +109,13 @@ function iso(d){return d.toISOString().slice(0,10);}
 function add(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);return x;}
 function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var c=(v+BigInt(5000))/BigInt(10000),s=(c/HUNDRED).toString(),d=(c%HUNDRED).toString().padStart(2,'0');return (neg?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
 function targetNext(v){return (v*BigInt(105)+BigInt(50))/HUNDRED;}
+function renderForecast(current){
+ [7,30,365].forEach(function(days){
+   var future=current;
+   if(future!==null){for(var i=0;i<days;i++)future=targetNext(future);}
+   el('forecast'+days).textContent=money(future);
+ });
+}
 function endOfMonth(y,m){return new Date(Date.UTC(y,m,0));}
 function records(){var o={};(state.closes||[]).forEach(function(x){o[x.day]=x;});return o;}
 function project(endDay){
@@ -124,6 +145,7 @@ function renderNumbers(proj){
  el('target').textContent=today?money(today.goal):'—';
  el('remaining').textContent=today&&current!==null?money(today.goal>current?today.goal-current:ZERO):'—';
  el('remainingSub').textContent=!last?'마감 금액을 입력해 주세요':last.day!==state.today?'최근 마감액과 목표액 비교':'오늘 마감액과 목표액 비교';
+ renderForecast(current);
 }
 function renderCalendar(){
  var grid=el('days');grid.replaceChildren();

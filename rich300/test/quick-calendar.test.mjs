@@ -36,6 +36,17 @@ test('모바일 폼은 날짜·마감액만 요구하고 기존 자료와 빌드
  assert.ok(manifest.includes(createHash('sha256').update(packed).digest('hex')+'  '));
 });
 
+function forecastLabel(equity,days){
+ let micro=BigInt(equity)*1000000n;
+ for(let i=0;i<days;i++)micro=(micro*105n+50n)/100n;
+ const cents=(micro+5000n)/10000n;
+ return (cents/100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+(cents%100n).toString().padStart(2,'0');
+}
+test('7일·30일·365일 예상 자산은 실제 마감 금액 기준으로 별도 표시',()=>{
+ for(const d of [7,30,365])assert.match(html,new RegExp('id="forecast'+d+'"'));
+ assert.match(html,/renderForecast\(current\)/);
+ assert.match(html,/비현실적인 가정/);
+});
 test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 자동 재계산', {skip:!have&&'Playwright 없음'}, async()=>{
  const {chromium}=createRequire(PW)(PW),browser=await chromium.launch(existsSync(CH)?{executablePath:CH}:{});
  try{
@@ -55,11 +66,13 @@ test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 �
   assert.equal(await page.locator('#current').textContent(),'280.00');
   assert.equal(await page.locator('#target').textContent(),'294.00');
   assert.equal(await page.locator('#remaining').textContent(),'14.00');
+  for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('280',d));
   await page.locator('#closeAmount').fill('290');
   await page.locator('#save').click();
   assert.equal(await page.locator('#current').textContent(),'290.00');
   assert.equal(await page.locator('#target').textContent(),'294.00');
   assert.equal(await page.locator('#remaining').textContent(),'4.00');
+  for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('290',d));
   assert.ok((await page.locator('#days').textContent()).includes('304.50'));
   const size=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,inputs:document.querySelectorAll('input').length}));
   assert.ok(size.sw<=size.cw,'가로 스크롤 없이 표시');
