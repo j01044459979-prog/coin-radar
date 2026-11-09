@@ -102,6 +102,8 @@ footer{color:var(--mut);font-size:11px;margin:22px 2px}
 (function(){
 'use strict';
 var state=null, selected=null, viewYear=0, viewMonth=0, saved=false;
+var recordsMemo=null, projectMemo=null, projectEnd=null, forecastBase=null;
+function resetRenderCache(){recordsMemo=null;projectMemo=null;projectEnd=null;forecastBase=null;}
 var el=function(id){return document.getElementById(id);};
 var ONE=BigInt(1), HUNDRED=BigInt(100), ZERO=BigInt(0);
 function parseDay(s){return new Date(s+'T00:00:00Z');}
@@ -110,20 +112,31 @@ function add(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);ret
 function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var c=(v+BigInt(5000))/BigInt(10000),s=(c/HUNDRED).toString(),d=(c%HUNDRED).toString().padStart(2,'0');return (neg?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
 function targetNext(v){return (v*BigInt(105)+BigInt(50))/HUNDRED;}
 function renderForecast(current){
- [7,30,365].forEach(function(days){
-   var future=current;
-   if(future!==null){for(var i=0;i<days;i++)future=targetNext(future);}
-   el('forecast'+days).textContent=money(future);
- });
+ var key=current===null?'none':String(current);
+ if(forecastBase===key)return;
+ forecastBase=key;
+ var future=current;
+ for(var d=1;d<=365;d++){
+   if(future!==null)future=targetNext(future);
+   if(d===7||d===30||d===365)el('forecast'+d).textContent=money(future);
+ }
 }
 function endOfMonth(y,m){return new Date(Date.UTC(y,m,0));}
-function records(){var o={};(state.closes||[]).forEach(function(x){o[x.day]=x;});return o;}
+function records(){
+ if(recordsMemo!==null)return recordsMemo;
+ recordsMemo={};(state.closes||[]).forEach(function(x){recordsMemo[x.day]=x;});return recordsMemo;
+}
 function project(endDay){
- var result={}, rec=records(), d=parseDay(state.startDay), end=parseDay(endDay), bal=BigInt(state.startMicro);
+ // 월 이동 시 전체 기간을 매번 다시 계산하지 않고 기존 결과를 확장한다.
+ if(projectMemo!==null&&projectEnd!==null&&endDay<=projectEnd)return projectMemo;
+ var result=projectMemo||{},rec=records(), d=projectEnd?add(parseDay(projectEnd),1):parseDay(state.startDay),end=parseDay(endDay);
+ var prev=projectEnd&&projectMemo[projectEnd],bal=prev?(prev.actual!==null?prev.actual:prev.goal):BigInt(state.startMicro);
  for(var count=0;d<=end&&count<4000;count++,d=add(d,1)){
-   var day=iso(d), goal=targetNext(bal), saved=rec[day] ? BigInt(rec[day].micro) : null;
+   var day=iso(d),goal=targetNext(bal),saved=rec[day]?BigInt(rec[day].micro):null;
    result[day]={goal:goal,actual:saved};bal=saved!==null?saved:goal;
  }
+ projectMemo=result;
+ if(count>0)projectEnd=iso(add(d,-1));
  return result;
 }
 function setStatus(text,err){el('saveStatus').textContent=text;el('saveStatus').className='status'+(err?' error':'');}
@@ -135,10 +148,9 @@ function choose(day){
  renderCalendar();
 }
 function renderNumbers(proj){
- var list=(state.closes||[]).filter(function(c){return c.day<=state.today;});
- var last=list.length?list[list.length-1]:null;
- // Equity는 날짜 키로 정렬된 상태로 오지만 외부 시트의 행 순서에 의존하지 않는다.
- list.sort(function(a,b){return a.day.localeCompare(b.day);});last=list.length?list[list.length-1]:null;
+ // 행 저장 순서와 관계없이 날짜가 가장 최신인 실제 마감액만 기준으로 삼는다.
+ var last=null;
+ (state.closes||[]).forEach(function(c){if(c.day<=state.today&&(!last||c.day>last.day))last=c;});
  var today=proj[state.today],current=last?BigInt(last.micro):null;
  el('current').textContent=money(current);
  el('currentSub').textContent=last?(last.day===state.today?'오늘 마감 입력 기준':last.day+' 최종 마감 기준'):'아직 마감 금액이 없어요';
@@ -176,7 +188,7 @@ function load(){
  google.script.run.withSuccessHandler(function(r){
    if(!r||!r.ok){el('loading').textContent=r&&r.message?r.message:'장부를 불러오지 못했어요. 새로고침해 주세요.';return;}
    if(!r.configured){el('loading').textContent='RICH300 초기 자금 설정이 아직 없어요.';return;}
-   state=r;selected=r.today;var d=parseDay(r.today);viewYear=d.getUTCFullYear();viewMonth=d.getUTCMonth()+1;
+   state=r;resetRenderCache();selected=r.today;var d=parseDay(r.today);viewYear=d.getUTCFullYear();viewMonth=d.getUTCMonth()+1;
    el('closeDay').min=r.startDay;el('closeDay').max=r.today;el('closeDay').value=r.today;
    var todayClose=records()[r.today];el('closeAmount').value=todayClose?todayClose.equity:'';
    el('loading').style.display='none';el('content').style.display='block';renderCalendar();
@@ -195,8 +207,17 @@ el('closeForm').addEventListener('submit',function(e){
  google.script.run.withSuccessHandler(function(r){
    clearTimeout(slow);saved=false;el('save').disabled=false;
    if(!r||!r.ok){setStatus(r&&r.message?r.message:'저장에 실패했어요.',true);return;}
-   state=r.model;selected=day;renderCalendar();setStatus(r.message||'저장했어요.',false);
- }).withFailureHandler(function(){clearTimeout(slow);saved=false;el('save').disabled=false;setStatus('저장 응답을 확인하지 못했어요. 새로고침 후 기록을 확인해 주세요.',true);}).rich300QuickSave({day:day,equity:amount});
+   if(r.savedClose){
+     // 서버가 저장을 확정한 1건만 메모리에 합친다. 전체 장부 재조회 생략.
+     state.closes=(state.closes||[]).filter(function(c){return c.day!==r.savedClose.day;});
+     state.closes.push(r.savedClose);
+     if(r.today&&r.today>=state.today){state.today=r.today;el('closeDay').max=r.today;}
+   }else if(r.model&&r.model.ok&&r.model.configured){
+     // 구버전 서버와의 배포 전환 중 호환.
+     state=r.model;
+   }else{setStatus('저장 확인 정보가 부족합니다. 새로고침 후 확인해 주세요.',true);return;}
+   resetRenderCache();selected=day;renderCalendar();setStatus(r.message||'저장했어요.',false);
+ }).withFailureHandler(function(){clearTimeout(slow);saved=false;el('save').disabled=false;setStatus('저장 응답을 확인하지 못했어요. 새로고침 후 기록을 확인해 주세요.',true);}).rich300QuickSave({day:day,equity:amount,quickDelta:true});
 });
 load();
 })();

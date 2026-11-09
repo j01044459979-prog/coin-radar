@@ -5503,6 +5503,17 @@ function rich300QuickSave(form) {
     var se = env.storeEnv(), prev = RICH300_ENGINE.storeGet(se, 'equity', day);
     var un = prev && prev.data ? prev.data.unrealized : undefined;
     var r = RICH300_ENGINE.closeSubmitEquity(env, { day: day, equity: equity, unrealized: un, reason: '마감 금액 수정' }, { actor: 'ui:quick' });
-    return { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 금액이 저장되어 있어요.' : '마감 금액을 저장했어요.', model: rich300QuickData_() };
+    var answer = { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 금액이 저장되어 있어요.' : '마감 금액을 저장했어요.' };
+    // 신형 화면은 1건의 확정 값만 받는다. 전체 Equity 재조회 없이 저장 직후 갱신 가능.
+    // 이미 열려 있는 구형 화면은 model 응답을 기대하므로 기존 경로를 유지한다.
+    if (f.quickDelta === true) {
+      var finalEquity = RICH300_ENGINE.schemaDecString(equity, '평가액', { nonNegative: true });
+      answer.savedClose = { day: day, equity: finalEquity, micro: String(RICH300_ENGINE.decToMicro(RICH300_ENGINE.dec(finalEquity))) };
+      answer.today = RICH300_ENGINE.kstDayOf(Date.now());
+    } else {
+      answer.model = rich300QuickData_();
+    }
+    return answer;
   });
 }
+

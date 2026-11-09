@@ -27,6 +27,9 @@ test('첫 HTML 응답은 스프레드시트 읽기 없이 즉시 제공하고 �
  assert.doesNotMatch(read,/ledgerBuildDaily|storeLoadLedgerInputs|storeInit/);
  assert.match(quick,/rich300Guarded_/);
  assert.match(quick,/closeSubmitEquity/);
+ assert.match(quick,/f\.quickDelta === true/);
+ assert.match(quick,/answer\.savedClose/);
+ assert.match(quick,/answer\.model = rich300QuickData_\(\)/);
 });
 test('모바일 폼은 날짜·마감액만 요구하고 기존 자료와 빌드 무결성을 유지한다',()=>{
  assert.deepEqual([...html.matchAll(/<input\b[^>]*\bid="([^"]+)"/g)].map(m=>m[1]),['closeDay','closeAmount']);
@@ -46,6 +49,9 @@ test('7일·30일·365일 예상 자산은 실제 마감 금액 기준으로 별
  for(const d of [7,30,365])assert.match(html,new RegExp('id="forecast'+d+'"'));
  assert.match(html,/renderForecast\(current\)/);
  assert.match(html,/비현실적인 가정/);
+ assert.match(html,/projectMemo/);
+ assert.match(html,/resetRenderCache/);
+ assert.match(html,/quickDelta:true/);
 });
 test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 자동 재계산', {skip:!have&&'Playwright 없음'}, async()=>{
  const {chromium}=createRequire(PW)(PW),browser=await chromium.launch(existsSync(CH)?{executablePath:CH}:{});
@@ -58,7 +64,11 @@ test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 �
    window.google={script:{run:{
      withSuccessHandler(cb){this.success=cb;return this;},withFailureHandler(cb){this.failure=cb;return this;},
      rich300QuickModel(){this.success(window.__model);},
-     rich300QuickSave(p){window.__model.closes.push({day:p.day,micro:String(Math.round(Number(p.equity)*1e6)),equity:p.equity});this.success({ok:true,status:'added',message:'저장했어요.',model:window.__model});}
+     rich300QuickSave(p){
+       if(!p.quickDelta)throw Error('delta mode not requested');
+       this.success({ok:true,status:'added',message:'저장했어요.',today:window.__model.today,
+         savedClose:{day:p.day,micro:String(Math.round(Number(p.equity)*1e6)),equity:p.equity}});
+     }
    }}};
   });
   await page.setContent(html);
@@ -74,6 +84,17 @@ test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 �
   assert.equal(await page.locator('#remaining').textContent(),'4.00');
   for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('290',d));
   assert.ok((await page.locator('#days').textContent()).includes('304.50'));
+  // 과거 마감액을 수정해도 최신 날짜 마감(290)이 예상 자산 기준이어야 한다.
+  await page.locator('#closeDay').fill('2026-11-05');
+  await page.locator('#closeDay').dispatchEvent('change');
+  await page.locator('#closeAmount').fill('350');
+  await page.locator('#save').click();
+  assert.equal(await page.locator('#current').textContent(),'290.00');
+  assert.equal(await page.locator('#target').textContent(),'367.50');
+  for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('290',d));
+  await page.locator('#nextMonth').click();
+  await page.locator('#prevMonth').click();
+  assert.equal(await page.locator('#target').textContent(),'367.50');
   const size=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,inputs:document.querySelectorAll('input').length}));
   assert.ok(size.sw<=size.cw,'가로 스크롤 없이 표시');
   assert.equal(size.inputs,2);
