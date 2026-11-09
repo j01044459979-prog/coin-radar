@@ -4254,7 +4254,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '7536a5407372';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'ca81c6a6a32e';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -5503,6 +5503,16 @@ function rich300QuickSave(form) {
     var se = env.storeEnv(), prev = RICH300_ENGINE.storeGet(se, 'equity', day);
     var un = prev && prev.data ? prev.data.unrealized : undefined;
     var r = RICH300_ENGINE.closeSubmitEquity(env, { day: day, equity: equity, unrealized: un, reason: '마감 금액 수정' }, { actor: 'ui:quick' });
-    return { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 금액이 저장되어 있어요.' : '마감 금액을 저장했어요.', model: rich300QuickData_() };
+    var answer = { ok: true, status: r.status, message: r.status === 'unchanged' ? '이미 같은 금액이 저장되어 있어요.' : '마감 금액을 저장했어요.' };
+    // 신형 화면은 1건의 확정 값만 받는다. 전체 Equity 재조회 없이 저장 직후 갱신 가능.
+    // 이미 열려 있는 구형 화면은 model 응답을 기대하므로 기존 경로를 유지한다.
+    if (f.quickDelta === true) {
+      var finalEquity = RICH300_ENGINE.schemaDecString(equity, '평가액', { nonNegative: true });
+      answer.savedClose = { day: day, equity: finalEquity, micro: String(RICH300_ENGINE.decToMicro(RICH300_ENGINE.dec(finalEquity))) };
+      answer.today = RICH300_ENGINE.kstDayOf(Date.now());
+    } else {
+      answer.model = rich300QuickData_();
+    }
+    return answer;
   });
 }
