@@ -8,6 +8,7 @@ const api=readFileSync(new URL('../gas/Api.gs',import.meta.url),'utf8');
 const quick=readFileSync(new URL('../gas/Quick.gs',import.meta.url),'utf8');
 const html=readFileSync(new URL('../gas/Quick.html',import.meta.url),'utf8');
 const packed=readFileSync(new URL('../apps-script/Quick.html',import.meta.url),'utf8');
+const bundledCode=readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8');
 const manifest=readFileSync(new URL('../apps-script/MANIFEST.txt',import.meta.url),'utf8');
 const PW=process.env.RICH300_PLAYWRIGHT||'/opt/node-tools/node_modules/playwright';
 const CH=process.env.RICH300_CHROMIUM||'/opt/pw-browsers/chromium';
@@ -36,6 +37,8 @@ test('모바일 폼은 날짜·마감액만 요구하고 기존 자료와 빌드
  assert.match(html,/rich300QuickSave/);
  assert.match(html,/targetNext/);
  assert.equal(html,packed);
+ assert.ok(bundledCode.endsWith('\n}\n'),'배포용 Code.gs 마지막 줄 완결');
+ assert.match(bundledCode,/f\.quickDelta === true/);
  assert.ok(manifest.includes(createHash('sha256').update(packed).digest('hex')+'  '));
 });
 
