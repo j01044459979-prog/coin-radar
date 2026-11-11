@@ -35,16 +35,22 @@ button{font:inherit;cursor:pointer}
 #monthText{font-weight:750;white-space:nowrap;min-width:104px;text-align:center;font-variant-numeric:tabular-nums}
 .weekdays,.days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
 .weekdays span{text-align:center;font-size:12px;color:var(--mut);padding:5px 0}
-.day{border:1px solid var(--line);border-radius:9px;background:#18212c;min-height:74px;padding:6px 3px;min-width:0;text-align:left;color:var(--ink);overflow:hidden}
+.day{border:1px solid var(--line);border-radius:9px;background:#18212c;min-height:88px;padding:6px 3px;min-width:0;text-align:left;color:var(--ink);overflow:hidden}
 .day .n{font-size:12px;font-weight:750;display:block;margin-bottom:5px}
 .day .money{font-size:11px;font-weight:750;letter-spacing:-.035em;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .day .kind{font-size:10px;color:var(--mut);display:block;margin-top:2px}
+.day .withdrawn{font-size:10px;color:var(--accent);font-weight:650;display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.withdraw-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}
+.withdraw-stat{border:1px solid var(--line);border-radius:11px;padding:12px;min-width:0}
+.withdraw-stat .label{font-size:12px;color:var(--mut)}
+.withdraw-stat strong{display:block;font-size:20px;line-height:1.35;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;margin-top:4px}
+.withdraw-stat .unit{font-size:12px;color:var(--mut)}
 .day.actual .money{color:var(--accent)}
 .day.selected{outline:2px solid var(--accent);outline-offset:0}
 .day.today .n{text-decoration:underline;text-underline-offset:3px}
 .day:disabled{cursor:default;opacity:0.9}
 .day.before{background:transparent;opacity:.35}
-.empty{min-height:74px}
+.empty{min-height:88px}
 .note{font-size:12px;color:var(--mut);margin:12px 0 0}
 input{width:100%;min-width:0;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:17px;min-height:48px}
 form{display:grid;gap:12px;margin-top:12px}
@@ -85,16 +91,29 @@ footer{color:var(--mut);font-size:11px;margin:22px 2px}
     <div class="calTop"><h2 id="calTitle">매일 5% 복리</h2><div class="calBtns"><button type="button" id="prevMonth" aria-label="이전 달">‹</button><span id="monthText"></span><button type="button" id="nextMonth" aria-label="다음 달">›</button></div></div>
     <div class="weekdays" aria-hidden="true"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
     <div id="days" class="days" aria-label="월별 복리 캘린더"></div>
-    <p class="note">초록색 금액은 직접 입력한 실제 마감액, 그 외는 매일 5% 달성을 가정한 목표액입니다.</p>
+    <p class="note">초록색 마감액은 직접 입력한 지갑 잔액, 그 외는 매일 5% 목표액입니다. 출금이 있는 날은 따로 표시합니다.</p>
   </section>
   <section class="card" aria-labelledby="recordTitle">
     <h2 id="recordTitle">오늘의 마감 금액 기록</h2>
     <form id="closeForm">
       <div class="field"><label for="closeDay">날짜</label><input id="closeDay" type="date" required></div>
-      <div class="field"><label for="closeAmount">최종 마감 금액 (USDT)</label><input id="closeAmount" type="text" inputmode="decimal" placeholder="예: 315.50" autocomplete="off" required></div>
+      <div class="field"><label for="closeAmount">출금 후 지갑에 남은 최종 금액 (USDT)</label><input id="closeAmount" type="text" inputmode="decimal" placeholder="예: 300.0" autocomplete="off" required></div>
       <button type="submit" id="save" class="primary">마감 금액 저장</button>
     </form>
     <div id="saveStatus" class="status" role="status" aria-live="polite"></div>
+  </section>
+  <section class="card" aria-labelledby="withdrawTitle">
+    <h2 id="withdrawTitle">날짜별 출금 기록</h2>
+    <div class="withdraw-stats">
+      <div class="withdraw-stat"><div class="label">누적 출금액</div><strong><span id="withdrawTotal">0.0</span> <span class="unit">USDT</span></strong></div>
+      <div class="withdraw-stat"><div class="label" id="withdrawDayLabel">선택 날짜 출금액</div><strong><span id="withdrawDayTotal">0.0</span> <span class="unit">USDT</span></strong></div>
+    </div>
+    <p class="note">마감금액은 이미 출금 후 지갑 잔액입니다. 출금액을 복리 기준금액에서 다시 빼지 않습니다. 출금은 기존 입출금 장부에 별도 기록되어 매매손익과 구분됩니다.</p>
+    <form id="withdrawForm">
+      <div class="field"><label for="withdrawAmount">선택 날짜 총 출금금액 (USDT)</label><input id="withdrawAmount" type="text" inputmode="decimal" placeholder="예: 50.0 (없으면 0)" autocomplete="off" required></div>
+      <button type="submit" id="saveWithdraw" class="primary">해당 날짜 출금 기록 저장</button>
+    </form>
+    <div class="status" id="withdrawStatus" role="status" aria-live="polite"></div>
   </section>
 </div>
 <footer>기록은 기존 RICH300 자산 장부에 저장됩니다. 5%는 도전 목표이며 실제 수익을 보장하지 않습니다.</footer>
@@ -102,9 +121,9 @@ footer{color:var(--mut);font-size:11px;margin:22px 2px}
 <script>
 (function(){
 'use strict';
-var state=null, selected=null, viewYear=0, viewMonth=0, saved=false;
-var recordsMemo=null, projectMemo=null, projectEnd=null, forecastBase=null;
-function resetRenderCache(){recordsMemo=null;projectMemo=null;projectEnd=null;forecastBase=null;}
+var state=null, selected=null, viewYear=0, viewMonth=0, saved=false, withdrawSaving=false;
+var recordsMemo=null, withdrawalsMemo=null, projectMemo=null, projectEnd=null, forecastBase=null;
+function resetRenderCache(){recordsMemo=null;withdrawalsMemo=null;projectMemo=null;projectEnd=null;forecastBase=null;}
 var el=function(id){return document.getElementById(id);};
 var ONE=BigInt(1), HUNDRED=BigInt(100), ZERO=BigInt(0);
 function parseDay(s){return new Date(s+'T00:00:00Z');}
@@ -113,6 +132,7 @@ function add(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);ret
 // Display all money amounts to 0.1 USDT; use micro-USDT BigInt for calculations and storage.
 function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var t=(v+BigInt(50000))/BigInt(100000),s=(t/BigInt(10)).toString(),d=(t%BigInt(10)).toString();return (neg&&t!==ZERO?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
 function targetNext(v){return (v*BigInt(105)+BigInt(50))/HUNDRED;}
+function microInput(m){var s=(m/BigInt(1000000)).toString(),f=(m%BigInt(1000000)).toString().padStart(6,'0').replace(/0+$/,'');return f?s+'.'+f:s;}
 function renderForecast(current){
  var key=current===null?'none':String(current);
  if(forecastBase===key)return;
@@ -127,6 +147,18 @@ function endOfMonth(y,m){return new Date(Date.UTC(y,m,0));}
 function records(){
  if(recordsMemo!==null)return recordsMemo;
  recordsMemo={};(state.closes||[]).forEach(function(x){recordsMemo[x.day]=x;});return recordsMemo;
+}
+function withdrawals(){
+ if(withdrawalsMemo!==null)return withdrawalsMemo;
+ withdrawalsMemo={};(state.withdrawals||[]).forEach(function(x){withdrawalsMemo[x.day]=BigInt(x.micro);});
+ return withdrawalsMemo;
+}
+function renderWithdrawalSummary(){
+ var items=withdrawals(),total=ZERO;
+ Object.keys(items).forEach(function(day){if(day<=state.today)total+=items[day];});
+ el('withdrawTotal').textContent=money(total);
+ el('withdrawDayTotal').textContent=money(items[selected]||ZERO);
+ el('withdrawDayLabel').textContent=selected+' 출금액';
 }
 function project(endDay){
  // 월 이동 시 전체 기간을 매번 다시 계산하지 않고 기존 결과를 확장한다.
@@ -146,6 +178,9 @@ function choose(day){
  if(day<state.startDay||day>state.today)return;
  selected=day;el('closeDay').value=day;
  var x=records()[day];el('closeAmount').value=x?x.equity:'';
+ var withdrawn=withdrawals()[day]||ZERO;
+ el('withdrawAmount').value=withdrawn>ZERO?microInput(withdrawn):'';
+ el('withdrawStatus').textContent='';
  setStatus(x?'기존 기록을 수정할 수 있어요.':'',false);
  renderCalendar();
 }
@@ -164,6 +199,7 @@ function renderNumbers(proj){
  el('remaining').textContent=today&&last?money(today.goal>current?today.goal-current:ZERO):'—';
  el('remainingSub').textContent=!last?'실제 보유금액을 마감 금액으로 입력해 주세요':last.day!==state.today?'최근 마감액과 목표액 비교':'오늘 마감액과 목표액 비교';
  renderForecast(current);
+ renderWithdrawalSummary();
 }
 function renderCalendar(){
  var grid=el('days');grid.replaceChildren();
@@ -183,6 +219,8 @@ function renderCalendar(){
      var t=document.createElement('span');t.className='kind';t.textContent=row.actual!==null?'실제 마감':'5% 목표';b.appendChild(t);
      b.title=key+' '+(row.actual!==null?'실제 마감 ':'목표 ')+money(row.actual!==null?row.actual:row.goal)+' USDT';
    }
+   var wd=withdrawals()[key]||ZERO;
+   if(wd>ZERO){var w=document.createElement('span');w.className='withdrawn';w.textContent='출금 '+money(wd);b.appendChild(w);b.title+=(b.title?' · ':'')+'출금 '+money(wd)+' USDT';}
    if(!b.disabled)b.addEventListener('click',(function(d){return function(){choose(d);};})(key));
    grid.appendChild(b);
  }
@@ -197,6 +235,7 @@ function load(){
    state=r;resetRenderCache();selected=r.today;var d=parseDay(r.today);viewYear=d.getUTCFullYear();viewMonth=d.getUTCMonth()+1;
    el('closeDay').min=r.startDay;el('closeDay').max=r.today;el('closeDay').value=r.today;
    var todayClose=records()[r.today];el('closeAmount').value=todayClose?todayClose.equity:'';
+   var todayWithdraw=withdrawals()[r.today]||ZERO;el('withdrawAmount').value=todayWithdraw>ZERO?microInput(todayWithdraw):'';
    el('loading').style.display='none';el('content').style.display='block';renderCalendar();
  }).withFailureHandler(function(){el('loading').textContent='일시적으로 불러오지 못했어요. 새로고침해 주세요.';}).rich300QuickModel();
 }
@@ -224,6 +263,22 @@ el('closeForm').addEventListener('submit',function(e){
    }else{setStatus('저장 확인 정보가 부족합니다. 새로고침 후 확인해 주세요.',true);return;}
    resetRenderCache();selected=day;renderCalendar();setStatus(r.message||'저장했어요.',false);
  }).withFailureHandler(function(){clearTimeout(slow);saved=false;el('save').disabled=false;setStatus('저장 응답을 확인하지 못했어요. 새로고침 후 기록을 확인해 주세요.',true);}).rich300QuickSave({day:day,equity:amount,quickDelta:true});
+});
+el('withdrawForm').addEventListener('submit',function(e){
+ e.preventDefault();if(withdrawSaving||!state)return;
+ var day=selected,amount=el('withdrawAmount').value.trim().replace(/,/g,'');
+ if(!day||day<state.startDay||day>state.today){el('withdrawStatus').textContent='기록 가능한 날짜를 선택해 주세요.';return;}
+ if(!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(amount)){el('withdrawStatus').textContent='0 이상의 출금액을 소수점 최대 6자리까지 입력해 주세요.';return;}
+ withdrawSaving=true;el('saveWithdraw').disabled=true;el('withdrawStatus').textContent='출금 기록 저장 중…';
+ google.script.run.withSuccessHandler(function(r){
+   withdrawSaving=false;el('saveWithdraw').disabled=false;
+   if(!r||!r.ok){el('withdrawStatus').textContent=r&&r.message?r.message:'출금 기록 저장 실패';return;}
+   if(!r.savedWithdrawal){el('withdrawStatus').textContent='저장 결과를 확인할 수 없어요. 새로고침 후 확인해 주세요.';return;}
+   state.withdrawals=(state.withdrawals||[]).filter(function(x){return x.day!==r.savedWithdrawal.day;});
+   if(BigInt(r.savedWithdrawal.micro)>ZERO)state.withdrawals.push(r.savedWithdrawal);
+   resetRenderCache();renderCalendar();
+   el('withdrawStatus').textContent=r.message||'출금 기록을 저장했어요.';
+ }).withFailureHandler(function(){withdrawSaving=false;el('saveWithdraw').disabled=false;el('withdrawStatus').textContent='저장 응답을 확인하지 못했어요. 새로고침 후 확인하세요.';}).rich300QuickWithdrawSave({day:day,amount:amount});
 });
 load();
 })();
