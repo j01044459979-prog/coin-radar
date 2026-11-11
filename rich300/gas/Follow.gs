@@ -37,7 +37,8 @@ function rich300FollowRun_(requested) {
   if (want !== 'preview') {
     try {
       props.setProperty('follow:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: output.status, requested: want,
-        mode: output.mode || null, active: output.active || 0, due: output.due || 0, sent: output.sent || 0,
+        mode: output.mode || null, active: output.active || 0, due: output.due || 0, scanned: output.scanned || 0,
+        alerts: output.alerts || 0, sent: output.sent || 0,
         failed: output.failed || 0, stale: output.stale || 0, closed: output.closed || 0, code: output.code || null }));
     } catch (err) { /* never leak market or credentials to logs */ }
   }
