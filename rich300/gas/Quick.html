@@ -268,7 +268,7 @@ el('withdrawForm').addEventListener('submit',function(e){
  e.preventDefault();if(withdrawSaving||!state)return;
  var day=selected,amount=el('withdrawAmount').value.trim().replace(/,/g,'');
  if(!day||day<state.startDay||day>state.today){el('withdrawStatus').textContent='기록 가능한 날짜를 선택해 주세요.';return;}
- if(!/^(?:0|[1-9]\\d*)(?:\\.\\d{1,6})?$/.test(amount)){el('withdrawStatus').textContent='0 이상의 출금액을 소수점 최대 6자리까지 입력해 주세요.';return;}
+ if(!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(amount)){el('withdrawStatus').textContent='0 이상의 출금액을 소수점 최대 6자리까지 입력해 주세요.';return;}
  withdrawSaving=true;el('saveWithdraw').disabled=true;el('withdrawStatus').textContent='출금 기록 저장 중…';
  google.script.run.withSuccessHandler(function(r){
    withdrawSaving=false;el('saveWithdraw').disabled=false;
