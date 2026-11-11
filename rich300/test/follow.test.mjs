@@ -118,7 +118,7 @@ test('15분 단위 긴급 변경만 추가 전송하고 정상 시간 보고 주
   assert.match(x.calls[1].msg,/포지션 전략 변경 경고/);assert.match(x.calls[1].msg,/손절선 근접/);
   x.setNow(NOW+25*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
   x.setNow(NOW+40*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
-  x.setNow(NOW+FOLLOW_HOUR_MS+5000);r=followTick(x.env);
+  x.setNow(NOW+FOLLOW_HOUR_MS+5000);x.env.market=()=>market(NOW+FOLLOW_HOUR_MS+5000,1.09);r=followTick(x.env);
   assert.equal(r.sent,1);assert.equal(r.alerts,0);assert.equal(x.calls.length,3);
   assert.equal(storeList(x.m.env,'fill').length,0);
 });
