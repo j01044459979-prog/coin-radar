@@ -19,12 +19,13 @@ test('기존 소유자 검사를 유지하고 첫 화면·일지를 간편 마�
  assert.match(api,/'classic-dash': 'rich300PageDash_'/);
  assert.match(api,/fill: 'rich300PageFill_'/);
 });
-test('첫 HTML 응답은 스프레드시트 읽기 없이 즉시 제공하고 조회는 Equity만 사용한다',()=>{
+test('첫 HTML 응답은 스프레드시트 읽기 없이 즉시 제공하고 조회는 Equity·출금 장부만 사용한다',()=>{
  const get=quick.slice(quick.indexOf('function rich300PageQuick_'),quick.indexOf('function rich300QuickData_'));
  assert.ok(get.includes("createHtmlOutputFromFile('Quick')"));
  assert.doesNotMatch(get,/SpreadsheetApp|storeLoadLedgerInputs|storeInit|UrlFetchApp/);
  const read=quick.slice(quick.indexOf('function rich300QuickData_'),quick.indexOf('function rich300QuickModel'));
  assert.match(read,/storeList\(se, 'equity'/);
+ assert.match(read,/storeList\(se, 'cashflow'/);
  assert.doesNotMatch(read,/ledgerBuildDaily|storeLoadLedgerInputs|storeInit/);
  assert.match(quick,/rich300Guarded_/);
  assert.match(quick,/closeSubmitEquity/);
@@ -32,8 +33,8 @@ test('첫 HTML 응답은 스프레드시트 읽기 없이 즉시 제공하고 �
  assert.match(quick,/answer\.savedClose/);
  assert.match(quick,/answer\.model = rich300QuickData_\(\)/);
 });
-test('모바일 폼은 날짜·마감액만 요구하고 기존 자료와 빌드 무결성을 유지한다',()=>{
- assert.deepEqual([...html.matchAll(/<input\b[^>]*\bid="([^"]+)"/g)].map(m=>m[1]),['closeDay','closeAmount']);
+test('모바일 폼은 날짜·마감액·출금액만 요구하고 기존 자료와 빌드 무결성을 유지한다',()=>{
+ assert.deepEqual([...html.matchAll(/<input\b[^>]*\bid="([^"]+)"/g)].map(m=>m[1]),['closeDay','closeAmount','withdrawAmount']);
  assert.match(html,/rich300QuickSave/);
  assert.match(html,/targetNext/);
  assert.equal(html,packed);
@@ -100,7 +101,7 @@ test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 �
   assert.equal(await page.locator('#target').textContent(),'367.5');
   const size=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,inputs:document.querySelectorAll('input').length}));
   assert.ok(size.sw<=size.cw,'가로 스크롤 없이 표시');
-  assert.equal(size.inputs,2);
+  assert.equal(size.inputs,3);
   assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });
@@ -175,5 +176,58 @@ test('금액 표시 전체(현재·목표·잔여·예상·달력)는 소수점 
   assert.match(await page.locator('#forecast365').textContent(), /^\d{1,3}(?:,\d{3})*\.\d$/);
   const m=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth}));
   assert.ok(m.sw<=m.cw);assert.deepEqual(errors,[]);
+ }finally{await browser.close();}
+});
+
+
+test('320px·390px: 지갑 마감 금액은 그대로 복리 계산하고 출금 합계만 별도 누적·달력 표시', {skip:!have&&'Playwright 없음'}, async()=>{
+ const {chromium}=createRequire(PW)(PW),browser=await chromium.launch(existsSync(CH)?{executablePath:CH}:{});
+ try {
+  for(const width of [320,390]){
+   const page=await browser.newPage({viewport:{width,height:844}});
+   const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+   await page.goto('about:blank');
+   await page.evaluate(()=>{
+    window.__model={ok:true,configured:true,today:'2026-11-11',startDay:'2026-11-01',startMicro:'300000000',
+      closes:[{day:'2026-11-10',micro:'350000000',equity:'350'},{day:'2026-11-11',micro:'300000000',equity:'300'}],
+      withdrawals:[{day:'2026-11-10',micro:'30000000'},{day:'2026-11-11',micro:'50000000'}]};
+    window.__withdrawArg=null;
+    window.google={script:{run:{
+      withSuccessHandler(cb){this.success=cb;return this;},
+      withFailureHandler(cb){this.failure=cb;return this;},
+      rich300QuickModel(){this.success(window.__model);},
+      rich300QuickSave(p){throw Error('Equity must not change when saving only a withdrawal');},
+      rich300QuickWithdrawSave(p){
+       window.__withdrawArg=p;
+       this.success({ok:true,status:'revised',message:'출금 기록 저장',
+          savedWithdrawal:{day:p.day,amount:p.amount,micro:'60123456'},today:'2026-11-11'});
+      }
+    }}};
+   });
+   await page.setContent(html);
+   await page.waitForSelector('#content',{state:'visible'});
+   assert.equal(await page.locator('#current').textContent(),'300.0');
+   assert.equal(await page.locator('#withdrawTotal').textContent(),'80.0');
+   assert.equal(await page.locator('#withdrawDayTotal').textContent(),'50.0');
+   assert.equal(await page.locator('#withdrawAmount').inputValue(),'50');
+   assert.ok((await page.locator('#days').textContent()).includes('출금 50.0'));
+   const before=await Promise.all([7,30,365].map(d=>page.locator('#forecast'+d).textContent()));
+   for(let i=0;i<3;i++)assert.equal(before[i],forecastLabel('300',[7,30,365][i]));
+   await page.locator('#withdrawAmount').fill('60.123456');
+   await page.locator('#saveWithdraw').click();
+   assert.deepEqual(await page.evaluate(()=>window.__withdrawArg),{day:'2026-11-11',amount:'60.123456'});
+   assert.equal(await page.locator('#current').textContent(),'300.0');
+   assert.equal(await page.locator('#withdrawTotal').textContent(),'90.1');
+   assert.equal(await page.locator('#withdrawDayTotal').textContent(),'60.1');
+   assert.ok((await page.locator('#days').textContent()).includes('출금 60.1'));
+   assert.deepEqual(await Promise.all([7,30,365].map(d=>page.locator('#forecast'+d).textContent())),before);
+   await page.locator('#closeDay').fill('2026-11-10');await page.locator('#closeDay').dispatchEvent('change');
+   assert.equal(await page.locator('#withdrawDayTotal').textContent(),'30.0');
+   assert.equal(await page.locator('#withdrawAmount').inputValue(),'30');
+   const layout=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth}));
+   assert.ok(layout.sw<=layout.cw,'가로 넘침');
+   assert.deepEqual(errors,[]);
+   await page.close();
+  }
  }finally{await browser.close();}
 });
