@@ -51,7 +51,7 @@ function forecastLabel(equity,days){
 test('7일·30일·365일 예상 자산은 실제 마감 금액 기준으로 별도 표시',()=>{
  for(const d of [7,30,365])assert.match(html,new RegExp('id="forecast'+d+'"'));
  assert.match(html,/renderForecast\(current\)/);
- assert.match(html,/비현실적인 가정/);
+ assert.match(html,/비현실적/);
  assert.match(html,/projectMemo/);
  assert.match(html,/resetRenderCache/);
  assert.match(html,/quickDelta:true/);
@@ -102,5 +102,37 @@ test('320px 모바일: 실제 마감 입력 후 다음 날 복리와 잔여액 �
   assert.ok(size.sw<=size.cw,'가로 스크롤 없이 표시');
   assert.equal(size.inputs,2);
   assert.deepEqual(errors,[]);
+ }finally{await browser.close();}
+});
+
+
+test('마감이 없어도 7·30·365일 미래 금액을 임시 시작금으로 표시하고 실제 잔고와 구분한다', {skip:!have&&'Playwright 없음'}, async()=>{
+ const {chromium}=createRequire(PW)(PW),browser=await chromium.launch(existsSync(CH)?{executablePath:CH}:{});
+ try {
+  const page=await browser.newPage({viewport:{width:320,height:780}});
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  await page.goto('about:blank');
+  await page.evaluate(()=>{
+   window.google={script:{run:{
+    withSuccessHandler(cb){this.success=cb;return this;},
+    withFailureHandler(cb){this.failure=cb;return this;},
+    rich300QuickModel(){this.success({ok:true,configured:true,today:'2026-11-11',startDay:'2026-11-01',startMicro:'300000000',closes:[]});},
+    rich300QuickSave(p){this.success({ok:true,status:'added',message:'저장했어요.',today:'2026-11-11',
+      savedClose:{day:p.day,equity:p.equity,micro:String(Math.round(Number(p.equity)*1e6))}});}
+   }}};
+  });
+  await page.setContent(html);await page.waitForSelector('#content',{state:'visible'});
+  assert.match(await page.locator('#currentSub').textContent(),/실제 현재 잔고 미입력/);
+  assert.match(await page.locator('#forecastBaseLabel').textContent(),/초기 설정금액 기준/);
+  assert.equal(await page.locator('#current').textContent(),'300.00');
+  assert.equal(await page.locator('#remaining').textContent(),'—');
+  for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('300',d));
+  await page.locator('#closeAmount').fill('425');
+  await page.locator('#save').click();
+  assert.equal(await page.locator('#current').textContent(),'425.00');
+  assert.match(await page.locator('#forecastBaseLabel').textContent(),/최신 마감 2026-11-11 기준/);
+  for(const d of [7,30,365])assert.equal(await page.locator('#forecast'+d).textContent(),forecastLabel('425',d));
+  const m=await page.evaluate(()=>({sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth}));
+  assert.ok(m.sw<=m.cw);assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });

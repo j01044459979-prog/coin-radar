@@ -72,13 +72,14 @@ footer{color:var(--mut);font-size:11px;margin:22px 2px}
     <div class="metric"><div class="label">잔여금액</div><strong><span id="remaining">—</span> <span class="unit">USDT</span></strong><div class="sub" id="remainingSub">목표까지 필요한 금액</div></div>
   </section>
   <section class="card" aria-labelledby="forecastTitle">
-    <h2 id="forecastTitle">매일 5%라면, 내 자산은?</h2>
+    <h2 id="forecastTitle">현재 자금 기준 미래 예상 자산</h2>
+    <p class="note" id="forecastBaseLabel" aria-live="polite">계산 기준 금액 확인 중…</p>
     <div class="forecast-grid" aria-label="현재 자산 기준 미래 복리 가정 금액" aria-live="polite">
-      <div class="forecast-item"><div class="forecast-horizon">7일 뒤</div><strong id="forecast7">—</strong><span class="unit">USDT</span></div>
+      <div class="forecast-item"><div class="forecast-horizon">7일 뒤 · 1주일</div><strong id="forecast7">—</strong><span class="unit">USDT</span></div>
       <div class="forecast-item"><div class="forecast-horizon">30일 뒤 · 1개월</div><strong id="forecast30">—</strong><span class="unit">USDT</span></div>
       <div class="forecast-item"><div class="forecast-horizon">365일 뒤 · 1년</div><strong id="forecast365">—</strong><span class="unit">USDT</span></div>
     </div>
-    <p class="note">최근 직접 입력한 마감 자산에서 매일 5%씩 복리 수익을 낸다고 가정한 미래 예상액입니다. 실제 수익을 보장하지 않으며, 특히 1년 내내 매일 5% 달성은 매우 비현실적인 가정입니다.</p>
+    <p class="note">최신 실제 마감액이 있으면 그 금액을, 없으면 초기 설정금액을 임시 기준으로 계산합니다. 현재 거래소 실시간 잔고를 조회하는 기능은 아닙니다. 매일 5%는 단순 가정으로 실제 수익을 보장하지 않으며, 특히 1년간 매일 달성하는 것은 매우 비현실적입니다.</p>
   </section>
   <section class="card" aria-labelledby="calTitle">
     <div class="calTop"><h2 id="calTitle">매일 5% 복리</h2><div class="calBtns"><button type="button" id="prevMonth" aria-label="이전 달">‹</button><span id="monthText"></span><button type="button" id="nextMonth" aria-label="다음 달">›</button></div></div>
@@ -151,12 +152,16 @@ function renderNumbers(proj){
  // 행 저장 순서와 관계없이 날짜가 가장 최신인 실제 마감액만 기준으로 삼는다.
  var last=null;
  (state.closes||[]).forEach(function(c){if(c.day<=state.today&&(!last||c.day>last.day))last=c;});
- var today=proj[state.today],current=last?BigInt(last.micro):null;
+ var today=proj[state.today],current=last?BigInt(last.micro):BigInt(state.startMicro);
+ // Do not confuse the initial configured amount with a real account balance:
+ // forecast is always visible, but the current balance source is labelled.
  el('current').textContent=money(current);
- el('currentSub').textContent=last?(last.day===state.today?'오늘 마감 입력 기준':last.day+' 최종 마감 기준'):'아직 마감 금액이 없어요';
+ el('currentSub').textContent=last?(last.day===state.today?'오늘 마감 입력 기준':last.day+' 최종 마감 기준'):'초기 설정금액 · 실제 현재 잔고 미입력';
+ el('forecastBaseLabel').textContent='계산 기준: '+money(current)+' USDT · '+
+   (last?'최신 마감 '+last.day+' 기준':'초기 설정금액 기준 (실제 보유금액 미확인)');
  el('target').textContent=today?money(today.goal):'—';
- el('remaining').textContent=today&&current!==null?money(today.goal>current?today.goal-current:ZERO):'—';
- el('remainingSub').textContent=!last?'마감 금액을 입력해 주세요':last.day!==state.today?'최근 마감액과 목표액 비교':'오늘 마감액과 목표액 비교';
+ el('remaining').textContent=today&&last?money(today.goal>current?today.goal-current:ZERO):'—';
+ el('remainingSub').textContent=!last?'실제 보유금액을 마감 금액으로 입력해 주세요':last.day!==state.today?'최근 마감액과 목표액 비교':'오늘 마감액과 목표액 비교';
  renderForecast(current);
 }
 function renderCalendar(){
