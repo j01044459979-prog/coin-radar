@@ -36,6 +36,10 @@ export function candidateMessage(symbol, ev, { now } = {}) {
   lines.push(ev.t2 ? `🎯 2차 ${fmtPrice(ev.t2.price)} (${pct(ev.t2.pct)})` : '🎯 2차 산정 불가');
   const r = x => x.toFixed(2);
   lines.push(`⚖️ 손익비 1차 ${r(ev.t1.rr)}R${ev.t2 ? ` · 2차 ${r(ev.t2.rr)}R` : ''}`, `   비용 반영 1차 ${r(ev.t1.net)}R${ev.t2 ? ` · 2차 ${r(ev.t2.net)}R` : ''}`);
+  if (ev.strategy === 'ema-pullback') lines.push(
+    `📊 EMA 조건점수 ${Number.isFinite(ev.score) ? Math.round(ev.score) + '/100' : '미산정'}`,
+    '   기존 돌파 점수와 별개 · 승률 아님'
+  );
   lines.push('', '📈 근거', ...ev.evidence.slice(0, 3).map(e => `• ${escHtml(e)}`));
   const lev = [5, 10, 20].map(x => `${x}배 −${(ev.riskPct * x).toFixed(0)}%`).join(' · ');
   lines.push('', `⚠️ 손절폭 ${ev.riskPct.toFixed(2)}%`, '   레버리지 시 증거금 손실', `   ${lev}`, '   고배율은 손절 전 청산 가능');
