@@ -72,7 +72,7 @@ function rich300QuickWithdrawSave(form) {
     var ch = RICH300_ENGINE.storeGet(se, 'challenge', 'challenge');
     if (!ch || !RICH300_ENGINE.isDayString(day) || day < ch.data.startDay || day > today)
       throw new RICH300_ENGINE.StoreError('VALIDATION', '시작일 이후부터 오늘까지만 기록할 수 있어요.');
-    if (!/^(?:0|[1-9]\\d*)(?:\\.\\d{1,6})?$/.test(raw))
+    if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(raw))
       throw new RICH300_ENGINE.StoreError('VALIDATION', '출금액은 0 이상의 숫자로 소수점 최대 6자리까지 입력해 주세요.');
     var req = RICH300_ENGINE.schemaDecString(raw, '해당 날짜 출금 합계', { nonNegative: true });
     var reqMicro = RICH300_ENGINE.decToMicro(RICH300_ENGINE.dec(req));
