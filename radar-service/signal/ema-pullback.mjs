@@ -8,6 +8,25 @@ export const EMA_RULES = Object.freeze({ proximityAtr: 1.6, touchAtr: 0.5, chase
 const ok = x => Number.isFinite(x) && x > 0;
 const pricePct = (v, from) => (v - from) / from * 100;
 
+// EMA 후보 전용 설명 점수(0~100). 기존 5분 돌파/기회 레이더 점수와 비교하지 않는다.
+// CANDIDATE의 확정된 조건에만 산정하며, 값이 없으면 0점이 아니라 null(미산정)이다.
+// 추세 20 + EMA 터치 15 + 확정 반등 20 + 거래량 15 + 순손익비 20 + 추격/손절 위험 10.
+// 이 가중치는 과거 성과로 검증되지 않았으며 승률·수익 확률이 아니다. 진입 게이트는 변경하지 않는다.
+const unit = x => Math.max(0, Math.min(1, x));
+export function emaConditionScore({ setup, near, volRel, netRR, riskAtr, chase } = {}) {
+  if (!setup || !near || ![volRel, netRR, riskAtr, chase].every(Number.isFinite)) return null;
+  const parts = {
+    trend: 20,
+    touch: 15,
+    confirmed: 20,
+    volume: 15 * unit(volRel / 2),
+    reward: 20 * unit(netRR / 3),
+    risk: 5 * unit(1 - Math.abs(chase) / EMA_RULES.chaseAtr) +
+      5 * unit((EMA_RULES.maxRiskAtr - riskAtr) / (EMA_RULES.maxRiskAtr - EMA_RULES.minRiskAtr)),
+  };
+  return Math.round(Object.values(parts).reduce((a, b) => a + b, 0));
+}
+
 export function emaSetup(c1h, c4h, now = Date.now()) {
   if (!Array.isArray(c1h) || !Array.isArray(c4h) || c1h.length < 60 || c4h.length < 60) return null;
   const last1 = c1h.at(-1), asOf = last1.t + H1;
@@ -67,6 +86,7 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
   const first = targets[0] ?? null;
   if (!first || first.rr - costR < minRR) block('확정 지지·저항 목표까지 비용 반영 1.5R 미달');
   if (blockers.length) return { status: 'OBSERVE', dir, strategy: 'ema-pullback', blockers };
+  const score = emaConditionScore({ setup, near, volRel, netRR: first.rr - costR, riskAtr, chase });
   const next = targets.find(o => o.rr >= first.rr + SIG.t2ExtraR) ?? null;
   const target = o => o && ({ price: o.price, pct: pricePct(o.price, entry), rr: o.rr, net: o.rr - costR, source: o.source });
   return {
@@ -74,7 +94,7 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
     riskPct: risk / entry * 100, riskAtr, costR, costPct: SIG.costPct, t1: target(first), t2: target(next),
     volRel, zone: { lo: e20 - EMA_RULES.touchAtr * a1, hi: e20 + EMA_RULES.touchAtr * a1, level: e20, type: '1H EMA20' },
     level: e20, triggerT: last.t, triggerCloseT: closeT, validUntil: closeT + validMin * 60000,
-    zoneKey: 'EMA20:' + dir, score: 0, stageLabel: 'EMA 추세 눌림목', blockers: [], tags: [],
+    zoneKey: 'EMA20:' + dir, score, stageLabel: 'EMA 추세 눌림목', blockers: [], tags: [],
     evidence: ['4H·1H EMA20/50 같은 방향', '1H EMA20 터치 후 15분 확정 반등/반락', '15분 거래대금 평균 x' + volRel.toFixed(2)],
   };
 }
