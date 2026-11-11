@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { H1, H4 } from '../opportunity/indicators.mjs';
 import { M15 } from '../signal/evaluate.mjs';
-import { EMA_PRIORITY, emaSetup, evaluateEmaPullback } from '../signal/ema-pullback.mjs';
+import { EMA_PRIORITY, emaSetup, evaluateEmaPullback, emaConditionScore } from '../signal/ema-pullback.mjs';
+import { candidateMessage } from '../signal/message.mjs';
+import { r9Line } from '../signal/rich300.mjs';
+import { feedEntryOf } from '../signal/feed.mjs';
 import { blankPaper, paperStep, paperSummary } from '../signal/paper.mjs';
 import { normalizeSignal, watchlist, expandedWatchlist } from '../signal/step.mjs';
 
@@ -38,6 +41,22 @@ test('EMA is independent from legacy opportunity stage and uses only completed 4
   assert.ok(ev.stop < ev.entry && ev.t1.price > ev.entry);
   const future = { ...c4h.at(-1), t: 400 * H1, c: 1, h: 1, l: 1, o: 1 };
   assert.equal(emaSetup(c1h, [...c4h, future], NOW).dir, setup.dir, 'unclosed 4H bar cannot flip trend');
+});
+test('EMA candidate uses computed score in Telegram, R9 and RICH300 feed; does not show 0 for missing', () => {
+  const { c1h, c4h, c15 } = fixture();
+  const setup = emaSetup(c1h, c4h, NOW);
+  const ev = evaluateEmaPullback({ setup, c15, now: NOW });
+  assert.equal(ev.status, 'CANDIDATE');
+  assert.ok(ev.score >= 70 && ev.score <= 100, 'confirmed EMA candidate gets an explanatory quality score');
+  assert.match(candidateMessage('SOLUSDT', ev, { now: NOW }).plain, new RegExp('EMA 조건점수 ' + ev.score + '/100'));
+  assert.equal(Number(r9Line('SOLUSDT', ev).split(' ')[10]), ev.score);
+  assert.equal(Number(feedEntryOf('SOLUSDT', ev, { now: NOW }).score), ev.score);
+  const weak = emaConditionScore({ setup, near: true, volRel: 1, netRR: 1.5, riskAtr: 2.5, chase: 0.9 });
+  const strong = emaConditionScore({ setup, near: true, volRel: 2, netRR: 3, riskAtr: 1, chase: 0.1 });
+  assert.ok(strong > weak, 'volume, net reward-to-risk, and chase quality affect score');
+  assert.equal(emaConditionScore({ setup: null, near: true, volRel: 2, netRR: 3, riskAtr: 1, chase: 0 }), null);
+  assert.equal(emaConditionScore({ setup, near: true, volRel: null, netRR: 3, riskAtr: 1, chase: 0 }), null);
+  assert.match(candidateMessage('SOLUSDT', { ...ev, score: null }, { now: NOW }).plain, /EMA 조건점수 미산정/);
 });
 test('EMA refuses unconfirmed trigger, weak volume and excessive chase', () => {
   const { c1h, c4h, c15 } = fixture();
