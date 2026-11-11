@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { memEnv } from './helpers/memenv.mjs';
 import { storeInit, storeCreate, storeList } from '../lib/store.mjs';
-import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, FOLLOW_HOUR_MS } from '../lib/follow.mjs';
+import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, followAssess, FOLLOW_HOUR_MS } from '../lib/follow.mjs';
 import { dayStartMs } from '../lib/time.mjs';
 
 const NOW = dayStartMs('2026-11-05') + 12 * 3600000 + 12 * 60000;
@@ -72,4 +72,66 @@ test('버튼 callback_data는 64바이트 이하, 저장은 기존 텔레그램 
   assert.deepEqual(kb.inline_keyboard[0].map(x=>x.callback_data),['h1:SG-ONDO-S-123:k','h1:SG-ONDO-S-123:c']);
   assert.ok(kb.inline_keyboard[0].every(x=>Buffer.byteLength(x.callback_data)<=64));
   assert.equal(followKeyboard('hello world'),null);
+});
+
+
+test('행동형 리포트는 R, 손절·익절까지 거리, 다음 확정봉 조건, 체결 미확인을 함께 표시한다',()=>{
+  const msg=followReport({signal:SIG,market:market(NOW,.98),now:NOW,enteredAt:AT});
+  for (const key of [/판단:/,/R \(최초 손절폭 기준\)/,/손절 기준/,/현재가에서/,/남은 거리/,/확인된 15분봉/,/지금 판단과 대응/,/다음 점검:/,/자동 주문·청산 없음/,/실제 Binance 체결 아님/]) assert.match(msg,key);
+  assert.match(msg,/\+0\.20R/);assert.match(msg,/추세 유지/);
+  assert.ok(msg.length < 3601);
+});
+
+test('SHORT과 LONG 손절 위험·TP 도달을 양방향에서 구분하고 거래소 체결로 착각하지 않는다',()=>{
+  const S=p=>followAssess({signal:SIG,market:market(NOW,p),now:NOW});
+  assert.equal(S(1.11).urgent,'stop');
+  assert.match(S(1.11).verdict,/청산 체결 여부/);
+  assert.equal(S(1.09).urgent,'near-stop');
+  assert.equal(S(.89).urgent,'tp1');
+  assert.equal(S(.79).urgent,'tp2');
+  assert.equal(S(.98).urgent,null);
+  const long={...SIG,dir:'LONG',entry:'100',stop:'90',tp1:'115',tp2:'120'};
+  const assess=p=>followAssess({signal:long,market:market(NOW,p),now:NOW});
+  assert.equal(assess(89).urgent,'stop');
+  assert.equal(assess(92).urgent,'near-stop');
+  assert.equal(assess(115).urgent,'tp1');
+  assert.equal(assess(121).urgent,'tp2');
+  assert.equal(assess(105).rNow,.5);
+});
+
+test('추세 역행·유효하지 않은 위험 가격·오래된 15분봉을 보수적으로 처리한다',()=>{
+  const x=market(NOW,.97);
+  const rising=arr=>arr.map((b,i)=>({...b,o:1+i*.004,c:1+i*.004,h:(1+i*.004)*1.002,l:(1+i*.004)*.998}));
+  const r=followAssess({signal:SIG,market:{...x,bars1h:rising(x.bars1h),bars4h:rising(x.bars4h)},now:NOW});
+  assert.equal(r.urgent,'reversal');assert.match(r.next,/청산·축소/);
+  const invalid=followAssess({signal:{...SIG,stop:'0.8'},market:x,now:NOW});
+  assert.equal(invalid.rNow,null);assert.match(invalid.stopText,/R 계산 불가/);
+  const stale=followAssess({signal:SIG,market:{...x,bars15m:x.bars15m.map(b=>({...b,t:b.t-3*3600000}))},now:NOW});
+  assert.match(stale.fifteenText,/비교 불가/);assert.equal(stale.v15,null);
+});
+
+test('15분 단위 긴급 변경만 추가 전송하고 정상 시간 보고 주기는 유지한다',()=>{
+  const x=setup();followStart(x.kv,SIG.sid,AT);
+  let r=followTick(x.env);assert.equal(r.sent,1);assert.equal(r.alerts,0);
+  x.setNow(NOW+20*60000);x.env.market=()=>market(NOW+20*60000,1.09);
+  r=followTick(x.env);assert.equal(r.alerts,1);assert.equal(r.sent,1);
+  assert.match(x.calls[1].msg,/포지션 전략 변경 경고/);assert.match(x.calls[1].msg,/손절선 근접/);
+  x.setNow(NOW+25*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
+  x.setNow(NOW+40*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
+  x.setNow(NOW+FOLLOW_HOUR_MS+5000);x.env.market=()=>market(NOW+FOLLOW_HOUR_MS+5000,1.09);r=followTick(x.env);
+  assert.equal(r.sent,1);assert.equal(r.alerts,0);assert.equal(x.calls.length,3);
+  assert.equal(storeList(x.m.env,'fill').length,0);
+});
+
+test('긴급 알림도 정리 버튼·오래된 시세·preview 조건에서는 발송하지 않는다',()=>{
+  const x=setup();followStart(x.kv,SIG.sid,AT);followTick(x.env);
+  x.setNow(NOW+20*60000);
+  x.env.market=()=>({...market(NOW+20*60000,1.09),priceAt:NOW-20*60000});
+  assert.equal(followTick(x.env).sent,0);
+  x.env.mode=()=> 'preview';x.env.market=()=>market(NOW+20*60000,1.09);
+  const before=x.map.size;
+  assert.equal(followTick(x.env).sent,0);assert.equal(x.map.size,before);
+  x.env.mode=()=> 'on';followChoice(x.kv,SIG.sid,'close',NOW+21*60000);
+  assert.equal(followTick(x.env).sent,0);
+  assert.equal(x.calls.length,1);
 });
