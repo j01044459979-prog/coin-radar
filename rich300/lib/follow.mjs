@@ -183,6 +183,8 @@ export function followReport({ signal, market, now, enteredAt, urgent = false })
     '포지션이 종료됐다면 [정리했어]를 눌러 다음 보고를 중단하세요.'
   ].join('\n').slice(0, 3600);
 }
+export const FOLLOW_MONITOR_MS = 15 * 60000;
+export const FOLLOW_ALERT_COOLDOWN_MS = 30 * 60000;
 export function followTick(env) {
   const mode = env.mode();
   if (mode !== 'on' && mode !== 'preview') return { status: 'off' };
@@ -190,10 +192,11 @@ export function followTick(env) {
   const signals = new Map(storeList(se, 'signal').map(r => [r.key, r.data]));
   const responses = storeList(se, 'response').map(r => r.data).filter(r => r.choice === 'entered').sort((a,b) => a.at - b.at);
   const tradeMap = pnlComputeAll(storeList(se, 'fill').map(r => r.data), {});
-  const out = { status: 'ok', mode, entered: responses.length, active: 0, due: 0, sent: 0, failed: 0, stale: 0, closed: 0, missing: 0, capped: 0 };
-  const h = Math.floor(now / FOLLOW_HOUR_MS);
+  const out = { status: 'ok', mode, entered: responses.length, active: 0, due: 0, scanned: 0,
+    alerts: 0, sent: 0, failed: 0, stale: 0, closed: 0, missing: 0, capped: 0 };
+  const h = Math.floor(now / FOLLOW_HOUR_MS), slot = Math.floor(now / FOLLOW_MONITOR_MS);
   for (const r of responses) {
-    // Only selections made by an existing opt-in button can initiate follow-up.
+    // Only entered responses with an explicit opt-in may be assessed. Never forge fills.
     const st = followRead(env.kv, r.sid);
     if (!st || st.status === 'closed') continue;
     const trade = tradeMap.get(r.sid);
@@ -206,25 +209,51 @@ export function followTick(env) {
     if (!sig) { out.missing++; continue; }
     out.active++;
     const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_HOUR_MS;
-    if (now < next || (st.retryAt && now < st.retryAt) || st.pendingHour === h) continue;
-    if (out.due >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
-    out.due++;
+    const hourly = now >= next && !(st.retryAt && now < st.retryAt) && st.pendingHour !== h;
+    // Existing five-minute trigger evaluates market at most once per 15-minute slot
+    // between hourly reports. Do not add a trigger or poll the exchange every five minutes.
+    if (!hourly && (now < Math.max(st.enteredAt, r.at) || st.lastMonitorSlot === slot)) continue;
+    if (out.scanned >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
+    out.scanned++;
+    if (hourly) out.due++;
     let market; try { market = env.market(sig.symbolId); } catch (e_) { market = null; }
     if (!market || !market.ok || !watchAssessMarket(market, now).ok) { out.stale++; continue; }
-    const text = followReport({ signal: sig, market, now, enteredAt: r.at });
-    if (mode === 'preview') continue;
-    // Mark the attempt BEFORE Telegram to prevent overlapping scheduler runs from duplicating reports.
-    const pending = { ...st, pendingHour: h, retryAt: null };
-    env.kv.put(followKey(r.sid), JSON.stringify(pending));
-    let sent; try { sent = env.send(text, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
-    if (sent && sent.ok) {
-      env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, pendingHour: null, lastSentAt: now }));
-      out.sent++;
-    } else {
-      // Transient error: next check may retry; a time-out with unknown delivery must not retry immediately.
-      env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, retryAt: now + FOLLOW_RETRY_MS }));
-      out.failed++;
+    const assessment = followAssess({ signal: sig, market, now });
+    if (mode === 'preview') continue; // No KV writes, no Telegram, no new fills.
+    const observed = { ...st, lastMonitorSlot: slot };
+    if (hourly) {
+      // Mark attempt BEFORE send so concurrent triggers cannot duplicate messages.
+      const pending = { ...observed, pendingHour: h, retryAt: null };
+      env.kv.put(followKey(r.sid), JSON.stringify(pending));
+      const message = followReport({ signal: sig, market, now, enteredAt: r.at });
+      let sent; try { sent = env.send(message, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
+      if (sent && sent.ok) {
+        env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, pendingHour: null, lastSentAt: now,
+          lastUrgentKey: assessment.urgent, lastUrgentAt: assessment.urgent ? now : st.lastUrgentAt || null }));
+        out.sent++;
+      } else {
+        env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, retryAt: now + FOLLOW_RETRY_MS }));
+        out.failed++;
+      }
+      continue;
     }
+    // Significant changes outside the normal hour: stop, TP, close-to-stop or
+    // confirmed adverse trend. Alert only on a transition, with a cooldown.
+    const changed = assessment.urgent && assessment.urgent !== st.lastUrgentKey;
+    const cooldown = now - (st.lastUrgentAt || 0) >= FOLLOW_ALERT_COOLDOWN_MS;
+    const shouldAlert = changed && (cooldown || assessment.urgent === 'stop');
+    if (!shouldAlert) {
+      env.kv.put(followKey(r.sid), JSON.stringify({
+        ...observed, lastUrgentKey: assessment.urgent || null }));
+      continue;
+    }
+    // At-most-once best-effort: reserve state before attempting delivery.
+    const pending = { ...observed, lastUrgentKey: assessment.urgent, lastUrgentAt: now };
+    env.kv.put(followKey(r.sid), JSON.stringify(pending));
+    const message = followReport({ signal: sig, market, now, enteredAt: r.at, urgent: true });
+    let sent; try { sent = env.send(message, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
+    if (sent && sent.ok) { out.sent++; out.alerts++; }
+    else out.failed++;
   }
   return out;
 }
