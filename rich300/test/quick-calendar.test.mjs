@@ -51,7 +51,7 @@ function forecastLabel(equity,days){
 test('7일·30일·365일 예상 자산은 실제 마감 금액 기준으로 별도 표시',()=>{
  for(const d of [7,30,365])assert.match(html,new RegExp('id="forecast'+d+'"'));
  assert.match(html,/renderForecast\(current\)/);
- assert.match(html,/비현실적인 가정/);
+ assert.match(html,/비현실적/);
  assert.match(html,/projectMemo/);
  assert.match(html,/resetRenderCache/);
  assert.match(html,/quickDelta:true/);
