@@ -110,7 +110,8 @@ var ONE=BigInt(1), HUNDRED=BigInt(100), ZERO=BigInt(0);
 function parseDay(s){return new Date(s+'T00:00:00Z');}
 function iso(d){return d.toISOString().slice(0,10);}
 function add(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);return x;}
-function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var c=(v+BigInt(5000))/BigInt(10000),s=(c/HUNDRED).toString(),d=(c%HUNDRED).toString().padStart(2,'0');return (neg?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
+// Display all money amounts to 0.1 USDT; use micro-USDT BigInt for calculations and storage.
+function money(micro){if(micro===null||micro===undefined)return '—';var v=typeof micro==='bigint'?micro:BigInt(micro),neg=v<ZERO;if(neg)v=-v;var t=(v+BigInt(50000))/BigInt(100000),s=(t/BigInt(10)).toString(),d=(t%BigInt(10)).toString();return (neg&&t!==ZERO?'-':'')+s.replace(/\B(?=(\d{3})+(?!\d))/g,',')+'.'+d;}
 function targetNext(v){return (v*BigInt(105)+BigInt(50))/HUNDRED;}
 function renderForecast(current){
  var key=current===null?'none':String(current);
