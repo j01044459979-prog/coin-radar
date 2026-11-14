@@ -45,6 +45,9 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const lev = [5, 10, 20].map(x => `${x}배 −${(ev.riskPct * x).toFixed(0)}%`).join(' · ');
   lines.push('', `⚠️ 손절폭 ${ev.riskPct.toFixed(2)}%`, '   레버리지 시 증거금 손실', `   ${lev}`, '   고배율은 손절 전 청산 가능');
   lines.push('', ...btcContextLines(btc, symbol, ev.dir));
+  // Preserve legacy BTC warning when the enriched context is missing; do not erase an existing risk flag.
+  if (ev.btcAlign === '역방향' && (!btc || (!btc.trend4h && !Number.isFinite(btc.btc1hPct))))
+    lines.push('⚠️ BTC 4H 방향과 반대');
   lines.push('', '🚫 무효화 조건', `   15분 종가 ${fmtPrice(ev.stop)} ${L ? '하향' : '상향'} 이탈`, '   또는 유효시간 경과');
   lines.push('', '⚠️ 관심가는 신호 당시 종가', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
   const text = lines.join('\n');
