@@ -25,11 +25,11 @@ test('전체 적격 종목 목록: 이름·가격·거래대금·등락률·상�
   assert.ok(e.last > 0 && e.turnover > 0 && Number.isFinite(e.change24h) && e.state === 'live' && e.category === '1');
 });
 
-test('정밀 분석 대상: 우선 5 + 거래대금 10 + 급등락 10(상승·하락 모두) + 순환 15 = 40, 중복 없음', () => {
+test('정밀 분석 대상: 우선 5 + 거래대금 10 + 급등락 10(상승·하락 모두) + 순환 35 = 60, 중복 없음', () => {
   const s = sel();
   assert.deepEqual(s.groups.priority.map(x => x.replace('-USDT-SWAP', '')), PRIO);
-  assert.equal(s.groups.turnover.length, 10); assert.equal(s.groups.movers.length, 10); assert.equal(s.groups.rotation.length, 15);
-  assert.equal(s.ids.length, 40); assert.equal(new Set(s.ids).size, 40);
+  assert.equal(s.groups.turnover.length, 10); assert.equal(s.groups.movers.length, 10); assert.equal(s.groups.rotation.length, 35);
+  assert.equal(s.ids.length, 60); assert.equal(new Set(s.ids).size, 60);
   const ch = id => market().eligible.find(e => e.instId === id).change24h;
   assert.ok(s.groups.movers.some(id => ch(id) > 5) && s.groups.movers.some(id => ch(id) < -5), '상승·하락 모두 포함');
 });
@@ -88,16 +88,16 @@ test('놓친 실행(간격)이 순환 지연으로 기록된다', () => {
 // ── 수집기 통합 ──
 const fullFake = (o = {}) => fakeOkx({ breakout: false, instruments: inst, tickers, ...o });
 
-test('40종목 수집: 호출 수는 종목당 5회 + 상위 시간대, 모두 정밀 분석 성공으로 집계된다', async () => {
+test('60종목 수집: 호출 수는 종목당 5회 + 상위 시간대, 모두 정밀 분석 성공으로 집계된다', async () => {
   const calls = [];
   const out = await createOkxCollector(fullFake({ calls }), { gapMs: 0 })(now);
   const scan = out.stats.scan;
-  assert.equal(scan.eligible, all.length); assert.equal(scan.targets, 40); assert.equal(scan.analyzed, 40); assert.equal(scan.failed, 0);
+  assert.equal(scan.eligible, all.length); assert.equal(scan.targets, 60); assert.equal(scan.analyzed, 60); assert.equal(scan.failed, 0);
   const per = calls.filter(u => /candles\?.*bar=5m|mark-price|open-interest\?|funding-rate|open-interest-history/.test(u)).length;
-  assert.equal(per, 200); // 40 × 5
-  assert.equal(out.stats.calls, 2 + 200 + out.stats.mtfSymbols.length * 3);
-  assert.equal(out.rows.length, 40);
-  assert.ok(out.rotation.swept >= 40 && out.rotation.neverAnalyzed === all.length - out.rotation.swept);
+  assert.equal(per, 300); // 60 × 5
+  assert.equal(out.stats.calls, 2 + 300 + out.stats.mtfSymbols.length * 3);
+  assert.equal(out.rows.length, 60);
+  assert.ok(out.rotation.swept >= 60 && out.rotation.neverAnalyzed === all.length - out.rotation.swept);
 });
 
 test('수집된 순환 상태를 다음 실행에 넘기면 새 종목을 분석한다 (캐시 유실 시 처음부터)', async () => {
@@ -143,7 +143,7 @@ test('시간 예산이 모자라면 뒤쪽(순환) 종목부터 줄이고 건너
   const f = async u => { await new Promise(r => setTimeout(r, 2)); return slow(u); };
   const out = await createOkxCollector(f, { gapMs: 0, budgetMs: 150 })(now);
   const sc = out.stats.scan;
-  assert.ok(sc.skipped > 0 && sc.analyzed < 40); assert.ok(sc.analyzed >= 5);
+  assert.ok(sc.skipped > 0 && sc.analyzed < 60); assert.ok(sc.analyzed >= 5);
   assert.equal(sc.analyzed + sc.failed + sc.skipped, sc.targets);
   for (const p of PRIO) assert.ok(out.rows.some(r => r.symbol === `${p}USDT`), `${p} 우선 유지`);
 });
@@ -166,7 +166,7 @@ test('서비스: 순환 상태가 저장되고 한도 대기가 retryAt에 반�
   const collect = async (n, ctx) => { assert.equal(ctx.rotation, state.rotation); const o = await createOkxCollector(fullFake(), { gapMs: 0 })(n, ctx); return { ...o, backoffMs: 600000 }; };
   const base = { state, collect, send: async t => { sent.push(t); }, save: async () => {}, news: async () => {}, now };
   await cycle(base);
-  assert.ok(state.rotation?.last && Object.keys(state.rotation.last).length >= 40);
+  assert.ok(state.rotation?.last && Object.keys(state.rotation.last).length >= 60);
   assert.equal(state.retryAt, now + 600000);
   const n = sent.length;
   await cycle({ ...base, now: now + 60000 }); // 대기 중에는 실행하지 않음 → 추가 전송 없음
@@ -182,7 +182,7 @@ test('수집이 1분 넘게 걸려도 뒤쪽 종목의 가격/OI 신선도 판�
     const f = async u => { if (++n === 60) skew += 90000; if (n === 130) skew += 90000; return base(u); }; // 실행 중 총 3분 경과
     const out = await createOkxCollector(f, { gapMs: 0, budgetMs: 600000 })(now);
     assert.equal(out.stats.scan.failed, 0, JSON.stringify(out.failures.slice(0, 2)));
-    assert.equal(out.stats.scan.analyzed, 40);
+    assert.equal(out.stats.scan.analyzed, 60);
   } finally { Date.now = realNow; }
 });
 
@@ -232,7 +232,7 @@ test('상위 시간대(MTF) 조회 중 429/403/451/418/50011: 원인·대기시�
   const cases = [[429, 300000, { 'retry-after': '600' }, 600000], [403, HOUR], [451, HOUR], [418, HOUR]];
   for (const [status, expect, headers = {}, want = expect] of cases) {
     const out = await createOkxCollector(fullFake({ hook: mid(status, { after: 4, re: mtfCandle, headers }) }), { gapMs: 0 })(now);
-    assert.equal(out.stats.scan.analyzed, 40, 'MTF 제한이어도 5분 정밀 분석 결과 유지');
+    assert.equal(out.stats.scan.analyzed, 60, 'MTF 제한이어도 5분 정밀 분석 결과 유지');
     assert.equal(out.stats.scan.stopped.stage, 'MTF'); assert.equal(out.stats.scan.stopped.status, status);
     assert.equal(out.backoffMs, want, `status ${status}`); assert.equal(out.limit.stage, 'MTF'); assert.ok(out.stats.mtfSkipped > 0);
     assert.ok(out.stats.mtfSymbols.length < 7, '제한 이후에는 상위 시간대를 분석했다고 보고하지 않음');
@@ -241,10 +241,10 @@ test('상위 시간대(MTF) 조회 중 429/403/451/418/50011: 원인·대기시�
   const body = url => mtfCandle.test(url) ? new Response(JSON.stringify({ code: '50011', msg: 'Too Many Requests', data: [] }), { status: 200 }) : null;
   const out = await createOkxCollector(fullFake({ hook: body }), { gapMs: 0 })(now);
   assert.equal(out.stats.scan.stopped.status, 429); assert.equal(out.stats.scan.stopped.stage, 'MTF'); assert.equal(out.backoffMs, 300000);
-  assert.equal(out.stats.scan.analyzed, 40);
+  assert.equal(out.stats.scan.analyzed, 60);
 });
 
-test('정상 40종목: 제한 정보·추가 대기 없음, 서비스는 다음 주기에 바로 실행된다', async () => {
+test('정상 60종목: 제한 정보·추가 대기 없음, 서비스는 다음 주기에 바로 실행된다', async () => {
   const state = {}, sent = [];
   const collect = (n, ctx) => createOkxCollector(fullFake(), { gapMs: 0 })(n, ctx);
   const deps = { state, collect, send: async t => { sent.push(t); }, save: async () => {}, news: async () => {} };

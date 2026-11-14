@@ -46,8 +46,8 @@ export function selectUniverse({ instruments, tickers, max = MAX_SYMBOLS, priori
   return { ids, eligibleCount: eligible.length, excluded, reasonCounts, priorityStatus, categoryCounts, turnover: Object.fromEntries(rank.map(id => [id, turnover(tick.get(id))])) };
 }
 
-// ---- 2.4: 전체 시세 탐색 + 동적 정밀 분석 대상(최대 40) ----
-export const TARGET_CONFIG = { max: 40, topTurnover: 10, movers: 10, rotation: 15, minTurnover: 1000000 };
+// ---- 2.4: 전체 시세 탐색 + 동적 정밀 분석 대상(최대 60) ----
+export const TARGET_CONFIG = { max: 60, topTurnover: 10, movers: 10, rotation: 35, minTurnover: 1000000 };
 // minTurnover: 24h 거래대금(USDT)이 이 값 미만이면 급등락·순환 대상에서 제외한다(우선 종목은 예외). 실데이터 분포로 검증한다.
 const symOf = id => id.replace(/-USDT-SWAP$/, '');
 
