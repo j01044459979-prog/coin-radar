@@ -12,6 +12,7 @@ import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
+import { ACCUMULATION, accumulationMode, accumulationWatch, accumulationMessage } from './accumulation.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
 import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
 import { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
@@ -269,6 +270,29 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
   if (expired('afterAnalysis')) return { ...base, timedOut: true };
   const dy = dayRec(sg, now);
+  // Standalone accumulation proxy: never affects legacy/EMA trade triggers or feed.
+  const accMode = accumulationMode(env);
+  const accSent = sg.accumulation?.sent && typeof sg.accumulation.sent === 'object' && !Array.isArray(sg.accumulation.sent)
+    ? Object.fromEntries(Object.entries(sg.accumulation.sent).filter(([k, t]) =>
+      /^[A-Z0-9]+USDT:(WATCH|BREAKOUT)$/.test(k) && Number.isFinite(t) && now - t >= 0 && now - t <= 14 * 86400000)) : {};
+  const btcRow = hourData.coins?.['BTC-USDT-SWAP'];
+  const btcHourly = btcRow?.status === 'fresh' ? btcRow.c1h : null;
+  const accAll = accMode === 'off' ? [] : rows.flatMap(r => {
+    if (!r.c1h) return [];
+    try {
+      const entry = accumulationWatch(r.c1h, now);
+      if (!entry) return [];
+      const context = btcContext({ btc4h: hourData.btc4h, btc1h: btcHourly,
+        coin1h: r.c1h, dir: 'LONG', at: entry.asOf });
+      return [{ symbol: r.symbol, entry, context, key: r.symbol + ':' + entry.stage }];
+    } catch { return []; }
+  }).sort((a, b) => b.entry.score - a.entry.score || a.symbol.localeCompare(b.symbol));
+  const accEligible = accAll.filter(a => now - (accSent[a.key] ?? -Infinity) >= ACCUMULATION.cooldownMs);
+  const accToday = Object.values(accSent).filter(t => dayKey(t) === dayKey(now)).length;
+  const accLimit = Math.min(ACCUMULATION.maxPerRun, Math.max(0, ACCUMULATION.maxPerDay - accToday));
+  base.accumulation = { mode: accMode, observed: accAll.length, eligible: accEligible.length,
+    preview: accAll.slice(0, 3).map(a => ({ symbol: a.symbol, stage: a.entry.stage, score: a.entry.score, btc: a.context.status })) };
+  const accWatch = accMode === 'on' ? accEligible.slice(0, accLimit) : [];
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
@@ -285,6 +309,15 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const btc = btcFor(i);
     return { i, btc, m: r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now, btc }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) };
   });
+  for (const a of accWatch.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    msgs.push({
+      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key,
+        event: { type: 'watch', id: 'ACC:' + a.key + ':' + a.entry.asOf },
+        committed: null },
+      m: accumulationMessage(a.symbol, a.entry, a.context),
+    });
+  }
+  base.accumulation.selected = msgs.filter(x => x.i.channel === 'accumulation').length;
   // 모의매매 추적: 실제 신호 경로와 완전히 격리한다(예외는 삼키고, 전송하지 않으며, state.signal.paper에만 쓴다).
   let paperChanged = false;
   if (paperOn) {
@@ -360,7 +393,14 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   let sent = 0;
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
-    const out = await deliver(m, key, assumed => { (i.channel === 'ema' ? sg.emaCoins : sg.coins)[i.symbol] = i.committed; if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
+    const out = await deliver(m, key, assumed => {
+      if (i.channel === 'accumulation') {
+        sg.accumulation = { sent: { ...(sg.accumulation?.sent ?? accSent), [i.accKey]: now } };
+        base.accumulation.sent = (base.accumulation.sent ?? 0) + 1;
+        return; // observation only: no signal state, RICH300 feed/buttons, paper trade or candidate counter
+      }
+      (i.channel === 'ema' ? sg.emaCoins : sg.coins)[i.symbol] = i.committed;
+      if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
       if (feedEnabled(env)) {                                                                    // RICH300 피드: Telegram 전달이 *확인된* 알림만. 두 번 시도해도 확정되지 않아 '전달된 것으로 간주'한 경우(assumed)는 자동 추적 대상에서 제외한다.
         if (assumed) base.feedExcluded = (base.feedExcluded ?? 0) + 1;
         else { try { feedPush(sg, i.event.type === 'candidate' ? feedEntryOf(i.symbol, i.event.ev, { now }) : feedInvalidatedOf(i.symbol, i.event, { now }), now); } catch { /* 피드 기록 실패가 알림 경로에 번지지 않는다 */ } }
