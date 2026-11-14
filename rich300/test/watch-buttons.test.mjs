@@ -19,7 +19,7 @@ test('W1 parses exact message and cannot masquerade as R9 trade signal',()=>{
   assert.equal(data.symbol,'ALLOUSDT');assert.equal(data.source,'B');
   assert.equal(r9ParseSignal(p.plain),null);
   assert.doesNotMatch(w1StripLine(p.plain), /W1 v1/);
-  assert.equal(w1ParseWatch(p.plain.replace('ALLOUSDT', 'BTCUSDT')),null);
+  assert.equal(w1ParseWatch(p.plain.replace(' ' + p.watchId + ' ALLOUSDT ', ' ' + p.watchId + ' BTCUSDT ')),null);
   assert.equal(w1ParseWatch(p.plain.replace('W1 v1', 'W1 v2')),null);
 });
 test('paired owner can interest-register or pass separately; watchlist query works; no RICH300 trade rows',()=>{
