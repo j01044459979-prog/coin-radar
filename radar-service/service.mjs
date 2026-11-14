@@ -1,4 +1,5 @@
 import { reportParts } from './report.mjs';
+import { watchDecorate } from './watch-button.mjs';
 import { alertReport } from './compact.mjs';
 import { candidateSpec, chartCaption, chartPlan } from './chart.mjs';
 import { needsRefresh } from './news.mjs';
@@ -127,7 +128,7 @@ async function safeNews(news, state, now) {
   finally { clearTimeout(timer); }
 }
 
-export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000, quietReports = false }) {
+export async function cycle({ now, state, collect, send, save, news, render, sendPhoto, chartTimeoutMs = 15000, quietReports = false, env = process.env }) {
   if (now < (state.retryAt || 0)) return { skipped: true };
   let result;
   try { result = await collect(now, { rotation: state.rotation }); }
@@ -195,8 +196,9 @@ export async function cycle({ now, state, collect, send, save, news, render, sen
     for (const row of top) {
       const key = `${row.symbol}:${row.direction}`;
       if (now - (state.sent[key] || 0) < 3600000) continue;
-      const alert = alertReport(row, now);
-      await sendText(send, { text: alert.text, plain: alert.plain, html: true });
+      const rawAlert = alertReport(row, now);
+      const alert = watchDecorate({ ...rawAlert, html: true }, { symbol: row.symbol, source: 'B', dir: row.candidate?.dir ?? row.direction, at: now }, env);
+      await sendText(send, alert);
       state.sent[key] = now; await save(state);
       // 긴급 알림: 간결 텍스트 뒤에 해당 종목 차트 1장(실패하면 생략)
       if (render && chartData) {
