@@ -395,7 +395,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const key = `${i.event.id}:${i.event.type}`;
     const out = await deliver(m, key, assumed => {
       if (i.channel === 'accumulation') {
-        sg.accumulation = { sent: { ...accSent, [i.accKey]: now } };
+        sg.accumulation = { sent: { ...(sg.accumulation?.sent ?? accSent), [i.accKey]: now } };
         base.accumulation.sent = (base.accumulation.sent ?? 0) + 1;
         return; // observation only: no signal state, RICH300 feed/buttons, paper trade or candidate counter
       }
