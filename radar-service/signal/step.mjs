@@ -11,6 +11,7 @@ import { H1 } from '../opportunity/indicators.mjs';
 import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
+import { btcContext } from './btc-context.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
 import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
 import { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
@@ -272,7 +273,18 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
   base.invalidated = inv.length; base.candidates = cand.length; base.held = items.length - toSend.length;
-  const msgs = toSend.map(i => ({ i, m: i.event.type === 'candidate' ? r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) : invalidatedMessage(i.symbol, i.event, { now }) }));
+  // BTC comparisons are text-only context, not a signal filter. The same snapshot drives caption and fallback text.
+  const btcHour = hourData.coins?.['BTC-USDT-SWAP'];
+  const btc1h = btcHour?.status === 'fresh' ? btcHour.c1h : null;
+  const btcFor = i => btcContext({
+    btc4h: hourData.btc4h, btc1h, coin1h: rows.find(r => r.symbol === i.symbol)?.c1h,
+    dir: i.event.ev.dir, at: i.event.ev.triggerCloseT,
+  });
+  const msgs = toSend.map(i => {
+    if (i.event.type !== 'candidate') return { i, m: invalidatedMessage(i.symbol, i.event, { now }) };
+    const btc = btcFor(i);
+    return { i, btc, m: r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now, btc }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) };
+  });
   // 모의매매 추적: 실제 신호 경로와 완전히 격리한다(예외는 삼키고, 전송하지 않으며, state.signal.paper에만 쓴다).
   let paperChanged = false;
   if (paperOn) {
@@ -304,7 +316,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       let timer;
       try {
         const png = await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol], x.m.scale ? { plan: x.m.scale.plan } : {}), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]);
-        const caption = scaleCaption(signalCaption(x.i.symbol, x.i.event.ev, { now }), x.m, x.m.r9 ? x.m.r9.plain.length : 0);
+        const caption = scaleCaption(signalCaption(x.i.symbol, x.i.event.ev, { now, btc: x.btc }), x.m, x.m.r9 ? x.m.r9.plain.length : 0);
         const mergedCaption = r9Caption(caption, x.m);
         if (mergedCaption === null) { x.m.chartError = 'RICH300 button caption too long; text fallback'; x.m.photo = undefined; }
         else x.m.photo = { png, caption: mergedCaption };
