@@ -12,6 +12,7 @@ import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
+import { watchDecorate } from '../watch-button.mjs';
 import { ACCUMULATION, accumulationMode, accumulationWatch, accumulationMessage } from './accumulation.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
 import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
@@ -314,7 +315,8 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key,
         event: { type: 'watch', id: 'ACC:' + a.key + ':' + a.entry.asOf },
         committed: null },
-      m: accumulationMessage(a.symbol, a.entry, a.context),
+      m: watchDecorate(accumulationMessage(a.symbol, a.entry, a.context),
+        { symbol: a.symbol, source: 'C', dir: 'WATCH', at: a.entry.asOf }, env),
     });
   }
   base.accumulation.selected = msgs.filter(x => x.i.channel === 'accumulation').length;
