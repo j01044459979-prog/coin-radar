@@ -156,6 +156,8 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
 
 export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env), emaEnabled = String(env.RADAR_EMA_PULLBACK ?? '').toLowerCase() === 'on';
+  // Independent opt-in for *new live* EMA alerts. Paper tracking and prior alert invalidations stay active.
+  const emaLive = String(env.RADAR_EMA_LIVE ?? 'off').toLowerCase() === 'on';
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
   const hour = Math.floor(now / H1), slot = Math.floor(now / M15) * M15;
@@ -259,8 +261,9 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       if (evEma.status === 'CANDIDATE') base.emaCandidates++;
       lines.push('EMA ' + summaryLine(r.symbol, evEma));
       const et = signalTransition(emaPrev, evEma, { symbol: r.symbol, a: emaContext, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
-      if (et.event) items.push({ symbol: r.symbol, channel: 'ema', event: et.event, committed: et.committed, score: evEma.score ?? 0, rr: evEma.t1?.net ?? 0 });
+      if (et.event && (et.event.type !== 'candidate' || emaLive)) items.push({ symbol: r.symbol, channel: 'ema', event: et.event, committed: et.committed, score: evEma.score ?? 0, rr: evEma.t1?.net ?? 0 });
       else if (JSON.stringify(et.next) !== JSON.stringify(emaPrev)) emaCommitNow[r.symbol] = et.next;
+      if (et.event?.type === 'candidate' && !emaLive) base.emaPreviewCandidates = (base.emaPreviewCandidates ?? 0) + 1;
     }
   }
   if (expired('afterAnalysis')) return { ...base, timedOut: true };
