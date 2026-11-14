@@ -33,7 +33,7 @@ export function fakeTelegram() {
 }
 
 // 영속 kv(Script Properties 흉내): 문자열만 저장
-export function fakeKv() { const m = new Map(); return { map: m, get: k => (m.has(k) ? m.get(k) : null), put: (k, v) => { if (typeof v !== 'string') throw new Error('kv는 문자열만'); m.set(k, v); }, del: k => { m.delete(k); } }; }
+export function fakeKv() { const m = new Map(); return { map: m, get: k => (m.has(k) ? m.get(k) : null), put: (k, v) => { if (typeof v !== 'string') throw new Error('kv는 문자열만'); m.set(k, v); }, del: k => { m.delete(k); }, keys: () => [...m.keys()] }; }
 
 export function makeTg({ failAfter = null, uiUrl, coerce = false } = {}) {   // failAfter=n: 초기화 이후 n번째 시트 쓰기를 실패시킨다
   const mem = memEnv({ coerce }), tele = fakeTelegram(), kv = fakeKv(), clock = { t: 1790000000000 };
