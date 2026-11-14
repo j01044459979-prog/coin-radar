@@ -6,8 +6,8 @@ import { EMA_PRIORITY, emaSetup, evaluateEmaPullback, emaConditionScore } from '
 import { candidateMessage } from '../signal/message.mjs';
 import { r9Line } from '../signal/rich300.mjs';
 import { feedEntryOf } from '../signal/feed.mjs';
-import { blankPaper, paperStep, paperSummary } from '../signal/paper.mjs';
-import { normalizeSignal, watchlist, expandedWatchlist } from '../signal/step.mjs';
+import { blankPaper, paperStep, paperSummary, emaDiagnostics } from '../signal/paper.mjs';
+import { normalizeSignal, watchlist, expandedWatchlist, signalStep } from '../signal/step.mjs';
 
 const NOW = 400 * H1 + M15 + 20_000;
 function fixture() {
@@ -98,4 +98,42 @@ test('paper trades and statistics stay separate for legacy and EMA on same coin'
   assert.equal(paperSummary(p, NOW).strategies['ema-pullback'].open, 1);
   paperStep(p, { evaluations, bars: {}, now: NOW + 1_000 });
   assert.equal(p.open.length, 2, 'same candle must not open a duplicate position');
+});
+
+test('EMA new live alerts are paused by default but paper candidates continue; explicit on restores them', async () => {
+  const { c1h, c4h, c15 } = fixture();
+  const collectHour = async () => ({ calls: 0, coins: { 'SOL-USDT-SWAP': { symbol: 'SOLUSDT', status: 'fresh', c1h, c4h } } });
+  const collectM15 = async () => ({ calls: 0, coins: { 'SOL-USDT-SWAP': { status: 'fresh', c15 } } });
+  async function run(flag) {
+    const state = {}, calls = [];
+    const result = await signalStep({
+      now: NOW, state, env: { RADAR_SIGNAL: 'on', RADAR_EMA_PULLBACK: 'on', RADAR_EMA_LIVE: flag, RADAR_SIGNAL_PAPER: 'on' },
+      send: async m => { calls.push(m); }, save: async () => {}, analyze: () => ({ status: 'ok', stage: 0 }),
+      collectHour, collectM15, scanAll: true, force: true,
+    });
+    return { state, calls, result };
+  }
+  const muted = await run(undefined);
+  assert.equal(muted.calls.length, 0, 'no EMA Telegram candidate when live opt-in is absent');
+  assert.equal(muted.result.emaPreviewCandidates, 1);
+  assert.equal(muted.state.signal.paper.open.filter(t => t.strategy === 'ema-pullback').length, 1, 'paper trade still opens');
+  const enabled = await run('on');
+  assert.equal(enabled.calls.length, 1, 'explicit opt-in restores original EMA signal delivery');
+  assert.equal(enabled.state.signal.paper.open.length, 1);
+});
+test('EMA diagnostics use stored closed records without changing them', () => {
+  const paper = blankPaper();
+  paper.closed = [
+    { strategy: 'ema-pullback', symbol: 'SOLUSDT', dir: 'LONG', volRel: 1.1, score: 72, res: { wick: { kind: 'stop', net: -1.02 } } },
+    { strategy: 'ema-pullback', symbol: 'SOLUSDT', dir: 'LONG', volRel: 1.6, score: 85, res: { wick: { kind: 'target', net: 2 } } },
+    { strategy: 'ema-pullback', symbol: 'ETHUSDT', dir: 'SHORT', volRel: 1.3, score: 78, res: { wick: { kind: 'stop', net: -1 } } },
+    { strategy: 'legacy', symbol: 'BTCUSDT', dir: 'LONG', res: { wick: { kind: 'target', net: 3 } } },
+  ];
+  const before = JSON.stringify(paper), d = emaDiagnostics(paper);
+  assert.equal(d.n, 3);
+  assert.equal(d.byDirection.find(x => x.key === 'LONG').n, 2);
+  assert.equal(d.bySymbol.find(x => x.key === 'SOLUSDT').targetPct, 50);
+  assert.equal(d.byVolume.find(x => x.key === '>=1.5x').winPct, 100);
+  assert.equal(d.byScore.find(x => x.key === '70-79').n, 2);
+  assert.equal(JSON.stringify(paper), before, 'read-only');
 });

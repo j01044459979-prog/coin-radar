@@ -132,3 +132,37 @@ export function paperLine(s) {
     key + ': 열림 ' + v.open + ' / 종료 ' + v.closed + ' / 평균 ' + f(v.meanNetR, 3) + 'R / 목표 ' + pc(v.target) + (v.sufficient ? '' : ' (표본 부족)')).join(' | ');
   return `[모의·미검증] 열림 ${s.open} · 종료 ${s.closed} · 공백 ${s.gaps} · ${s.days.toFixed(1)}일 | 스탑주문 1차: 목표/손절/미결정 ${pc(w.target)}/${pc(w.stop)}/${pc(w.time)} · 평균 순손익비 ${f(w.meanNetR, 3)} [${f(w.ciLo, 2)}, ${f(w.ciHi, 2)}] · 중앙값 ${f(w.medianNetR, 2)} · MAE ${f(w.maeR, 2)}R(p90 ${f(w.maeP90R, 2)}R) | 판정: ${s.verdict}` + (byStrategy ? ' | ' + byStrategy : '');
 }
+
+
+// Read-only exploratory diagnostics of the retained EMA paper-trade window.
+// These are in-sample subgroups, NOT proof that any new filter improves out-of-sample returns.
+export function emaDiagnostics(paper) {
+  const records = (Array.isArray(paper?.closed) ? paper.closed : []).filter(t =>
+    t?.strategy === 'ema-pullback' && typeof t.symbol === 'string' &&
+    ['LONG', 'SHORT'].includes(t.dir) && Number.isFinite(t.res?.wick?.net));
+  const group = keyOf => {
+    const m = new Map();
+    for (const t of records) {
+      const key = keyOf(t);
+      const r = t.res.wick;
+      const item = m.get(key) ?? { key, n: 0, target: 0, stop: 0, net: 0, wins: 0 };
+      item.n++; item.target += Number(r.kind === 'target'); item.stop += Number(r.kind === 'stop');
+      item.wins += Number(r.net > 0); item.net += r.net; m.set(key, item);
+    }
+    return [...m.values()].map(({ net, ...v }) => ({
+      ...v, meanNetR: Number((net / v.n).toFixed(3)),
+      targetPct: Number((100 * v.target / v.n).toFixed(1)),
+      stopPct: Number((100 * v.stop / v.n).toFixed(1)),
+      winPct: Number((100 * v.wins / v.n).toFixed(1)),
+    })).sort((a, b) => b.n - a.n || a.key.localeCompare(b.key));
+  };
+  return {
+    disclaimer: 'exploratory / retained last 150 closes / no out-of-sample validation',
+    n: records.length,
+    byDirection: group(t => t.dir),
+    bySymbol: group(t => t.symbol),
+    bySymbolDirection: group(t => t.symbol + ':' + t.dir),
+    byVolume: group(t => !Number.isFinite(t.volRel) ? 'unknown' : t.volRel < 1.2 ? '<1.2x' : t.volRel < 1.5 ? '1.2-1.49x' : '>=1.5x'),
+    byScore: group(t => !Number.isFinite(t.score) ? 'unknown' : t.score < 70 ? '<70' : t.score < 80 ? '70-79' : '>=80'),
+  };
+}
