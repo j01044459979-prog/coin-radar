@@ -1,6 +1,7 @@
 // 신호 Telegram 메시지(HTML <b>만 사용, 외부 문자열은 이스케이프). 모바일 가독성 우선: 한 줄 약 30자 안팎, 가격 줄은 아이콘으로 구분, 근거는 3개 이내.
 // 표현 원칙: 주문 권고가 아니다. '진입 관심가'는 관찰 가격이며 체결을 보장하지 않는다. 승률·수익 확률을 말하지 않는다.
 import { bold, escHtml, fmtPrice, htmlToPlain } from '../format.mjs';
+import { btcContextLines } from './btc-context.mjs';
 
 export const SIGNAL_DISCLAIMER = '※ 판단 보조용 · 주문 권고 아님\n※ 미검증 규칙 · 비용 왕복 {cost}% 가정';
 // 화면 폭 근사(한글·전각·이모지 2, 그 밖 1). 모바일 말풍선은 대략 폭 40~44에서 줄이 꺾인다.
@@ -22,7 +23,7 @@ export function signalDeadline(ev, now) {
 }
 
 // 진입 후보 메시지. 레버리지는 권하지 않고, 손절폭 대비 증거금 손실만 사실로 보여 준다.
-export function candidateMessage(symbol, ev, { now } = {}) {
+export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const L = ev.dir === 'LONG', lines = [];
   const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
@@ -43,7 +44,10 @@ export function candidateMessage(symbol, ev, { now } = {}) {
   lines.push('', '📈 근거', ...ev.evidence.slice(0, 3).map(e => `• ${escHtml(e)}`));
   const lev = [5, 10, 20].map(x => `${x}배 −${(ev.riskPct * x).toFixed(0)}%`).join(' · ');
   lines.push('', `⚠️ 손절폭 ${ev.riskPct.toFixed(2)}%`, '   레버리지 시 증거금 손실', `   ${lev}`, '   고배율은 손절 전 청산 가능');
-  if (ev.btcAlign === '역방향') lines.push('⚠️ BTC 4H 방향과 반대');
+  lines.push('', ...btcContextLines(btc, symbol, ev.dir));
+  // Preserve legacy BTC warning when the enriched context is missing; do not erase an existing risk flag.
+  if (ev.btcAlign === '역방향' && (!btc || (!btc.trend4h && !Number.isFinite(btc.btc1hPct))))
+    lines.push('⚠️ BTC 4H 방향과 반대');
   lines.push('', '🚫 무효화 조건', `   15분 종가 ${fmtPrice(ev.stop)} ${L ? '하향' : '상향'} 이탈`, '   또는 유효시간 경과');
   lines.push('', '⚠️ 관심가는 신호 당시 종가', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
   const text = lines.join('\n');
