@@ -4,6 +4,7 @@
 import { C, esc, renderPng, textW } from '../chart.mjs';
 import { fmtPrice, priceDecimals } from '../format.mjs';
 import { baseName, signalDeadline } from './message.mjs';
+import { btcContextLines } from './btc-context.mjs';
 
 export const SIGNAL_CHART = Object.freeze({ W: 1080, H: 1560, BARS: 56 });
 const { W, H, BARS } = SIGNAL_CHART;
@@ -64,6 +65,7 @@ export function signalCaption(symbol, ev, opts = {}) {
     `🛑 손절 기준 ${f(ev.stop)} · 손절폭 ${ev.riskPct.toFixed(2)}%`,
     `🎯 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
     `⚖️ 1차 순손익비 ${ev.t1.net.toFixed(2)}R(비용 후)${score}`,
+    ...btcContextLines(opts.btc, symbol, ev.dir),
     timing.deadlineLine,
     ...(timing.remainingLine ? [timing.remainingLine] : []),
     '⚠️ 기준가는 확정봉 종가 · 현시세 아님',
