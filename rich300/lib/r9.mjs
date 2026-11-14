@@ -24,3 +24,15 @@ export function r9ReasonSummary(text) {
   const summary = evidence.filter(Boolean).join(' / ').slice(0, 120);
   return summary || null;
 }
+
+
+// Watch-only W1 line. Never accepted as a trade signal. Separate from R9 fill/response schema.
+export const W1_LINE_RE = /(?:^|\n)W1 v1 (WK-[A-Z0-9]{2,20}-[BC]-[a-z0-9]{1,15}) ([A-Z0-9]{2,20}USDT) ([BC]) (LONG|SHORT|WATCH) (\d{13})(?=\n|$)/;
+export function w1ParseWatch(text) {
+  const m = W1_LINE_RE.exec(String((text != null ? text : '')));
+  if (!m) return null;
+  const symbol = m[2], source = m[3], at = Number(m[5]), sid = m[1];
+  if (!Number.isSafeInteger(at) || at < 1e12 || sid !== 'WK-' + symbol.slice(0, -4) + '-' + source + '-' + Math.floor(at / 60000).toString(36)) return null;
+  return { sid, symbol, source, dir: m[4], at };
+}
+export const w1StripLine = text => String((text != null ? text : '')).replace(W1_LINE_RE, '').replace(/\n{3,}/g, '\n\n').trimEnd();

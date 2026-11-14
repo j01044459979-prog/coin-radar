@@ -20,7 +20,7 @@ import { StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, schemaDecStri
 import { storeGet, storeList, storeCreate, storeClaimUpdate, storeSaveReview, storeBuildLedger, storeWithLock } from './store.mjs';
 import { closeSubmitEquity, closeCheckEquityDay, closeStatus, CLOSE_WARNING_TEXT } from './close.mjs';
 import { isDayString } from './time.mjs';
-import { r9ParseSignal, r9StripLine, r9ReasonSummary } from './r9.mjs';
+import { r9ParseSignal, r9StripLine, r9ReasonSummary, w1ParseWatch, w1StripLine } from './r9.mjs';
 import { splanBuild, splanCheckAdd, splanStatus, splanLines, splanStatusLines, splanReasonText, splanQty } from './scaleplan.mjs';
 import { nullishOr } from './nullish.mjs';
 import { followStart, followChoice, followKeyboard } from './follow.mjs';
@@ -357,7 +357,7 @@ function tgSendReviewPromptIfNeeded(env, chatId, sid) {      // 프롬프트는 
 }
 
 // ── 명령 ──
-const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]', '/exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/plan 신호ID [평가액]  (분할 진입·익절 계획과 현재 상태 — 계산 참고용, 주문 아님)', '/review 신호ID · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
+const TG_HELP = ['RICH300 명령', '/fill 신호ID 증거금 레버리지 진입가 [손절가|-] [qty= at=14:30 fee= funding=]', '/exit 신호ID 청산가 [수량|50%|all] [at=14:30 fee= funding= memo=복기_메모]  (수량이 잔량보다 적으면 부분청산)', '/equity 금액 [날짜] [unrealized=값]  (마감 평가액 입력, 날짜 생략 시 평가액 없는 최근 마감일)', '/plan 신호ID [평가액]  (분할 진입·익절 계획과 현재 상태 — 계산 참고용, 주문 아님)', '/review 신호ID · /watchlist (관심 등록 목록) · /status · /help', '수수료·펀딩은 fee=0.12 (추정은 fee=~0.12), 비우면 미입력', '같은 체결이 10분 안에 또 들어오면 중복으로 막습니다(맞으면 force=1)'].join('\n');
 export function tgConfirmDraft(env, ev, built) {
   const id = env.randomId(8); tgKvPut(env, `d:${id}`, { type: built.type, fill: built.fill, equity: built.equity, params: built.params, force: built.force === true, sid: built.fill ? built.fill.sid : undefined, chatId: ev.chatId, userId: ev.fromId }, TG_DRAFT_TTL_SEC);
   const s = tgSend(env, ev.chatId, `${built.summary}\n저장할까요?`, { inline_keyboard: [[{ text: '저장', callback_data: `f1:${id}:y` }, { text: '취소', callback_data: `f1:${id}:n` }]] });
@@ -411,6 +411,15 @@ function tgOnMessage(env, ev) {
       const eqArg = c.pos[1] === undefined ? undefined : schemaDecString(c.pos[1], '평가액', { positive: true });
       return { status: 'handled', action: 'plan', ...reply(tgPlanText(env, sid, eqArg)) };
     }
+    if (c.cmd === 'watchlist') {
+      const list = tgWatchChoices(env), active = list.filter(x => x.choice === 'interest');
+      const shown = active.slice(0, 15).map(x => `• ${x.symbol} · ${x.source === 'B' ? '기본 레이더' : '매집 감시'} · ${x.dir === 'WATCH' ? '관찰' : x.dir}`);
+      return { status: 'handled', action: 'watchlist', ...reply(
+        active.length ? ['👀 관심 등록 기록 ' + active.length + '건', ...shown,
+          ...(active.length > 15 ? ['외 ' + (active.length - 15) + '건'] : []),
+          '※ 매매일지와 별개 · 자동 매수·실시간 추가 알림 아님'].join('\n')
+          : '등록한 관심 종목이 없습니다. 기본·매집 관찰 알림의 [관심 등록] 버튼으로 기록하세요') };
+    }
     if (c.cmd === 'status') {
       const open = [...pnlComputeAll(storeList(env.storeEnv(), 'fill').map(r => r.data), {}).values()].filter(t => t.status === 'open');
       return { status: 'handled', action: 'status', ...reply(open.length ? ['열린 포지션', ...open.slice(0, 8).map(t => `${t.sid} ${t.dir} ${tgNum(t.openQty)} @ ${tgNum(t.avgEntry)}`)].join('\n') : '열린 포지션 없음') };
@@ -427,10 +436,34 @@ function tgOnCallback(env, ev) {
   const answer = t => { const r = tgAnswer(env, ev.cbId, t); ev.ack = r.ok ? 'ok' : r.code === 'stale-callback' ? 'stale' : 'failed'; return r; }, parts = ev.data.split(':');   // 응답(answerCallbackQuery) 결과를 ok|stale(제한 시간 만료)|failed 로 분리해 둔다(진단용, 값 없음)
   const cb = { chatId: ev.chatId, messageId: ev.messageId, photo: ev.isPhoto === true };
   if (parts[0] === 'r1' && parts.length === 3 && TG_RESP[parts[2]]) return tgOnResponse(env, ev, parts[1], TG_RESP[parts[2]], cb, answer);
+  if (parts[0] === 'w1' && parts.length === 3 && (parts[2] === 'a' || parts[2] === 'p')) return tgOnWatchChoice(env, ev, parts[1], parts[2], cb, answer);
   if (parts[0] === 'h1' && parts.length === 3 && (parts[2] === 'k' || parts[2] === 'c')) return tgOnFollow(env, ev, parts[1], parts[2], cb, answer);
   if (parts[0] === 'v1' && (parts.length === 3 || (parts.length === 4 && parts[3] === 's'))) return tgOnReview(env, ev, parts, cb, answer);
   if (parts[0] === 'f1' && parts.length === 3 && (parts[2] === 'y' || parts[2] === 'n')) return tgOnDraft(env, ev, parts[1], parts[2], cb, answer);
   const a = answer('처리할 수 없는 버튼입니다'); return { status: 'handled', action: 'unknown-button', replyFailed: !tgOkOrBenign(a) };
+}
+// Interest list lives only in tg:wc:* Script Properties, never in trade Signal/Response/Fill sheets.
+export function tgWatchChoices(env) {
+  if (typeof env.kv.keys !== 'function') return [];
+  return env.kv.keys().filter(k => k.startsWith('wc:')).map(k => tgKvGet(env, k)).filter(x =>
+    x && x.sid && x.symbol && ['interest', 'pass'].includes(x.choice) && Number.isFinite(x.recordedAt))
+    .sort((a,b) => b.recordedAt - a.recordedAt);
+}
+function tgOnWatchChoice(env, ev, sid, action, cb, answer) {
+  const parsed = w1ParseWatch(ev.msgText);
+  if (!parsed || parsed.sid !== sid || !TG_SID_RE.test(sid)) {
+    const a = answer('관찰 알림 원문을 확인할 수 없습니다');
+    return { status: 'handled', action: 'watch-invalid', replyFailed: !tgOkOrBenign(a) };
+  }
+  const key = 'wc:' + sid, current = tgKvGet(env, key);
+  const choice = action === 'a' ? 'interest' : 'pass';
+  const chosen = current ? current.choice : choice, label = chosen === 'interest' ? '관심 등록' : '패스';
+  if (!current) tgKvPut(env, key, { ...parsed, choice, recordedAt: env.now() }, 30 * 86400);
+  const content = w1StripLine(ev.msgText).replace(/\n→ (관심 등록|패스) 완료(?:.*)?$/, '');
+  const a = answer(current ? '이미 ' + label + ' 처리됨' : label + ' 완료');
+  const e = tgEdit(env, cb, content.slice(0, ev.isPhoto ? 900 : 3700) + '\n→ ' + label + ' 완료 (매매일지 미반영)');
+  return { status: 'handled', action: current ? 'watch-duplicate' : (choice === 'interest' ? 'watch-added' : 'watch-passed'),
+    replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
 function tgOnResponse(env, ev, sid, choice, cb, answer) {
   const se = env.storeEnv();
@@ -566,7 +599,7 @@ export function tgGc(env) {
   if (typeof env.kv.keys !== 'function' || tgKvGet(env, 'gc')) return { ran: false };
   tgKvPut(env, 'gc', 1, 3600); let removed = 0;
   for (const k of env.kv.keys()) {
-    if (k.startsWith('d:') || k.startsWith('fail:')) { if (tgKvGet(env, k) === null) removed++; }
+    if (k.startsWith('d:') || k.startsWith('fail:') || k.startsWith('wc:')) { if (tgKvGet(env, k) === null) removed++; }
     else if (k.startsWith('rp:')) { const at = Number(env.kv.get(k)); if (!Number.isFinite(at) || env.now() - at > 30 * 86400000) { env.kv.del(k); removed++; } }
   }
   return { ran: true, removed };
