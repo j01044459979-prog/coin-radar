@@ -39,7 +39,7 @@ test('rejects stale/future/invalid candles and non-positive directional money-fl
   const c = mkHour();
   assert.equal(accumulationWatch(c, NOW + 2 * H1), null, 'stale');
   assert.equal(accumulationWatch(c, NOW - H1), null, 'future');
-  assert.equal(accumulationWatch(c.map((b, i) => i === 10 ? { ...b, q: null } : b), NOW), null);
+  assert.equal(accumulationWatch(c.map((b, i) => i === 75 ? { ...b, q: null } : b), NOW), null);
   assert.equal(accumulationWatch(c.map((b, i) => i === 75 ? { ...b, t: b.t + H1 } : b), NOW), null);
   const down = mkHour();
   for (let i = 69; i < down.length; i++) {
