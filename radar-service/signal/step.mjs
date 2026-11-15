@@ -14,6 +14,7 @@ import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { ACCUMULATION, accumulationMode, accumulationWatch, accumulationMessage } from './accumulation.mjs';
+import { DONCHIAN, evaluateDonchian, donchianMessage } from './donchian.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
 import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
 import { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
@@ -294,6 +295,25 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   base.accumulation = { mode: accMode, observed: accAll.length, eligible: accEligible.length,
     preview: accAll.slice(0, 3).map(a => ({ symbol: a.symbol, stage: a.entry.stage, score: a.entry.score, btc: a.context.status })) };
   const accWatch = accMode === 'on' ? accEligible.slice(0, accLimit) : [];
+  // Independent live Donchian alerts share confirmed 1H/4H candles; never place an order or alter RICH300 entries.
+  const dcMode = String(env.RADAR_DONCHIAN ?? 'on').trim().toLowerCase();
+  const dcSent = sg.donchian?.sent && typeof sg.donchian.sent === 'object' && !Array.isArray(sg.donchian.sent)
+    ? Object.fromEntries(Object.entries(sg.donchian.sent).filter(([k, t]) =>
+      /^[A-Z0-9]+USDT:(WATCH|BREAKOUT)$/.test(k) && Number.isFinite(t) && now >= t && now - t <= 14 * 86400000)) : {};
+  const dcAll = dcMode !== 'on' ? [] : rows.flatMap(r => {
+    if (!r.c1h || !r.c4h) return [];
+    try {
+      const entry = evaluateDonchian(r.c1h, r.c4h, now);
+      return entry ? [{ symbol: r.symbol, entry, key: r.symbol + ':' + entry.stage }] : [];
+    } catch { return []; }
+  }).sort((a, b) => Number(b.entry.stage === 'BREAKOUT') - Number(a.entry.stage === 'BREAKOUT') ||
+    b.entry.score - a.entry.score || a.symbol.localeCompare(b.symbol));
+  const dcEligible = dcAll.filter(a => now - (dcSent[a.key] ?? -Infinity) >=
+    (a.entry.stage === 'BREAKOUT' ? DONCHIAN.breakoutCooldownMs : DONCHIAN.watchCooldownMs));
+  const dcToday = Object.values(dcSent).filter(t => dayKey(t) === dayKey(now)).length;
+  const dcLimit = Math.min(DONCHIAN.maxPerRun, Math.max(0, DONCHIAN.maxPerDay - dcToday));
+  const dcAlerts = dcEligible.slice(0, dcLimit);
+  base.donchian = { mode: dcMode, observed: dcAll.length, eligible: dcEligible.length, selected: 0 };
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
@@ -310,6 +330,15 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const btc = btcFor(i);
     return { i, btc, m: r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now, btc }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) };
   });
+  for (const a of dcAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    msgs.push({
+      i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key,
+        event: { type: 'watch', id: 'DC:' + a.key + ':' + a.entry.asOf },
+        committed: null },
+      m: donchianMessage(a.symbol, a.entry),
+    });
+  }
+  base.donchian.selected = msgs.filter(x => x.i.channel === 'donchian').length;
   for (const a of accWatch.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
     msgs.push({
       i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key,
@@ -400,6 +429,11 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
         sg.accumulation = { sent: { ...(sg.accumulation?.sent ?? accSent), [i.accKey]: now } };
         base.accumulation.sent = (base.accumulation.sent ?? 0) + 1;
         return; // observation only: no signal state, RICH300 feed/buttons, paper trade or candidate counter
+      }
+      if (i.channel === 'donchian') {
+        sg.donchian = { sent: { ...dcSent, [i.dcKey]: now } };
+        base.donchian.sent = (base.donchian.sent ?? 0) + 1;
+        return; // separate live alert only: no trade journal, EMA state, RICH300 feed or auto-order
       }
       (i.channel === 'ema' ? sg.emaCoins : sg.coins)[i.symbol] = i.committed;
       if (i.event.type === 'candidate') dy.candidates += 1; else dy.invalidated += 1;
