@@ -1,6 +1,7 @@
 // Experimental consolidation/accumulation-proxy watch. No orders, no entry signal, no whale inference.
 // Uses confirmed OKX 1H candles already collected by signalStep. Funding/open interest unavailable.
-import { H1 } from '../opportunity/indicators.mjs';
+import { H1, atr } from '../opportunity/indicators.mjs';
+import { SIG } from './evaluate.mjs';
 import { btcContextLines } from './btc-context.mjs';
 import { bold, fmtPrice, htmlToPlain } from '../format.mjs';
 
@@ -90,4 +91,70 @@ export function accumulationMessage(symbol, candidate, btc) {
   ];
   const text = lines.join('\n');
   return { text, plain: htmlToPlain(text), html: true, kind: 'accumulation-watch' };
+}
+
+
+// Independent stage 3: confirmed 1H breakout retest. A recorded high-volume breakout is
+// required first; stage 1 WATCH alone NEVER becomes an entry candidate.
+// Deliberately no auto-orders, whale claim, or performance/edge assumption.
+export const ACC_RETEST = Object.freeze({
+  maxAgeMs: 18 * H1, touchPct: 0.6, holdPct: 0.08, invalidPct: 0.5,
+  chasePct: 1.2, bufferAtr: 0.20, minRiskPct: 0.30, maxRiskPct: 4.5,
+  cooldownMs: 48 * H1,
+});
+export function anchorOfBreakout(x) {
+  if (!x || x.stage !== 'BREAKOUT' || ![x.asOf, x.upper, x.lower, x.close].every(Number.isFinite)) return null;
+  return { status: 'watching', breakoutAt: x.asOf, upper: x.upper, lower: x.lower,
+    breakoutClose: x.close, score: x.score };
+}
+export function accumulationRetest(c1h, anchor, now, P = ACC_RETEST) {
+  if (!anchor || anchor.status !== 'watching' ||
+    ![anchor.breakoutAt, anchor.upper, anchor.lower].every(Number.isFinite) ||
+    !(anchor.upper > anchor.lower && anchor.lower > 0) || !Number.isFinite(now)) return null;
+  if (!Array.isArray(c1h) || c1h.length < 25 || !clean(c1h.slice(-25))) return null;
+  const last = c1h.at(-1), prior = c1h.at(-2), asOf = last.t + H1;
+  // A later, fresh confirmed candle is mandatory; cannot retest inside the breakout candle.
+  if (asOf <= anchor.breakoutAt || asOf > now || now - asOf >= H1) return null;
+  if (asOf - anchor.breakoutAt > P.maxAgeMs) return { status: 'expired' };
+  const after = c1h.filter(b => b.t + H1 > anchor.breakoutAt);
+  if (!after.length || after.some(b => b.c < anchor.upper * (1 - P.invalidPct / 100)))
+    return { status: 'invalidated' };
+  if (last.l > anchor.upper * (1 + P.touchPct / 100) ||
+      last.c < anchor.upper * (1 + P.holdPct / 100) ||
+      last.c <= last.o || last.c <= prior.c ||
+      (last.c / anchor.upper - 1) * 100 > P.chasePct) return null;
+  const a1 = atr(c1h, 14).at(-1);
+  if (!(a1 > 0)) return null;
+  const entry = last.c;
+  const stop = Math.min(last.l, anchor.upper) - P.bufferAtr * a1;
+  const risk = entry - stop, riskPct = risk / entry * 100;
+  if (!(stop > 0 && riskPct >= P.minRiskPct && riskPct <= P.maxRiskPct)) return null;
+  const t1 = entry + 1.5 * risk, t2 = entry + 2 * risk;
+  const costR = entry * SIG.costPct / 100 / risk;
+  return { stage: 'RETEST', dir: 'LONG', asOf, breakoutAt: anchor.breakoutAt,
+    upper: anchor.upper, lower: anchor.lower, entry, stop, t1, t2,
+    riskPct, costPct: SIG.costPct, netR1: 1.5 - costR, netR2: 2 - costR,
+    atr1: a1, retestLow: last.l, score: anchor.score ?? null };
+}
+export function accumulationRetestMessage(symbol, x, btc) {
+  const f = fmtPrice, time = t => new Date(t + 9 * H1).toISOString().slice(5, 16).replace('T', ' ') + ' KST';
+  const lines = [
+    '🎯 [실험] ' + bold(symbol.replace(/USDT$/, '')) + ' · ' + bold('매집 3단계 진입 관심 후보'),
+    '✅ 1H 돌파 → 재접촉 → 종가 상단 지지 확인',
+    '⏱ 재지지 확정 ' + time(x.asOf),
+    '📦 종전 박스 상단 ' + f(x.upper) + ' · 하단 ' + f(x.lower),
+    '💰 진입 관심가 ' + f(x.entry) + ' (확정 종가)',
+    '🛑 재지지 저점 기준 손절 ' + f(x.stop) + ' (' + x.riskPct.toFixed(2) + '%)',
+    '🎯 1차 1.5R 가상 목표 ' + f(x.t1),
+    '🎯 2차 2R 가상 목표 ' + f(x.t2),
+    '⚖️ 비용 ' + x.costPct.toFixed(2) + '% 가정 후 ' +
+      x.netR1.toFixed(2) + 'R / ' + x.netR2.toFixed(2) + 'R',
+    '⚠️ 돌파선 하향 재이탈·손절가 이탈 시 재검토',
+    '', ...btcContextLines(btc, symbol, 'LONG'), '',
+    '※ 진입 관심 후보 · 현재 호가·실제 체결가 아님',
+    '※ 수익성 미검증 · 가짜 돌파/급락/청산 위험',
+    '※ 자동 주문 없음 · 매매일지 자동 등록 없음',
+  ];
+  const text = lines.join('\n');
+  return { text, plain: htmlToPlain(text), html: true, kind: 'accumulation-retest' };
 }
