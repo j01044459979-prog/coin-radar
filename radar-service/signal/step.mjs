@@ -15,6 +15,7 @@ import { btcContext } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { ACCUMULATION, accumulationMode, accumulationWatch, accumulationMessage } from './accumulation.mjs';
 import { DONCHIAN, evaluateDonchian, donchianMessage } from './donchian.mjs';
+import { renderDonchianChart, donchianCaption } from './donchian-chart.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
 import { emaSetup, evaluateEmaPullback, EMA_PRIORITY } from './ema-pullback.mjs';
 import { evaluateFibPullback, applyFibGate } from './fib-pullback.mjs';
@@ -332,7 +333,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   });
   for (const a of dcAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
     msgs.push({
-      i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key,
+      i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key, dcSignal: a.entry,
         event: { type: 'watch', id: 'DC:' + a.key + ':' + a.entry.asOf },
         committed: null },
       m: donchianMessage(a.symbol, a.entry),
@@ -376,6 +377,24 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).
   if (sendPhoto) {
     for (const x of msgs) {
+      if (x.i.channel === 'donchian' && !expired('beforeChart')) {
+        let timer;
+        try {
+          const row = rows.find(r => r.symbol === x.i.symbol);
+          const png = await Promise.race([
+            renderDonchianChart(x.i.symbol, x.i.dcSignal, row?.c1h, row?.c4h),
+            new Promise((_, rej) => {
+              timer = setTimeout(() => rej(new Error('Donchian chart timeout')), CHART_TIMEOUT_MS);
+            }),
+          ]);
+          x.m.photo = { png, caption: donchianCaption(x.i.symbol, x.i.dcSignal) };
+          base.donchian.chartRendered = (base.donchian.chartRendered ?? 0) + 1;
+        } catch (error) {
+          x.m.chartError = String(error.message).slice(0, 80);
+          base.donchian.chartFailed = (base.donchian.chartFailed ?? 0) + 1;
+        } finally { clearTimeout(timer); }
+        continue; // Existing legacy and EMA chart handling stays unchanged.
+      }
       if (x.i.event.type !== 'candidate' || expired('beforeChart')) continue;
       let timer;
       try {
