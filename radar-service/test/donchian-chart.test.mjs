@@ -38,7 +38,14 @@ test('Chart refuses a mismatched final candle rather than showing wrong prices',
   assert.throws(() => validateDonchianChart('ETHUSDT', { ...breakout, asOf: breakout.asOf + H4 }, one, four), /불일치/);
 });
 
-test('Donchian PNG can be rendered with shared Korean font', async () => {
+test('Donchian PNG can be rendered with shared Korean font', async t => {
+  // RICH300 CI intentionally skips optional chart dependency installation;
+  // radar-pr-check and production radar install @resvg/resvg-js before running.
+  try { await import('@resvg/resvg-js'); }
+  catch (error) {
+    if (error.code === 'ERR_MODULE_NOT_FOUND') { t.skip('optional renderer not installed in this job'); return; }
+    throw error;
+  }
   const png = await renderDonchianChart('ETHUSDT', breakout, one, four);
   assert.ok(png.length > 3000);
   assert.equal(Buffer.from(png).subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
