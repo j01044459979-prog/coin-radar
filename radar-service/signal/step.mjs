@@ -13,7 +13,9 @@ import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
-import { ACCUMULATION, accumulationMode, accumulationWatch, accumulationMessage } from './accumulation.mjs';
+import { ACCUMULATION, ACC_RETEST, accumulationMode, accumulationWatch, accumulationMessage,
+  anchorOfBreakout, accumulationRetest, accumulationRetestMessage } from './accumulation.mjs';
+import { renderAccumulationChart, accumulationCaption } from './accumulation-chart.mjs';
 import { DONCHIAN, evaluateDonchian, donchianMessage } from './donchian.mjs';
 import { renderDonchianChart, donchianCaption } from './donchian-chart.mjs';
 import { evaluatePullback } from './pullback-alert.mjs';
@@ -94,6 +96,10 @@ export function watchlist(state, sg, now, paper = null, limit = SIGNAL_WATCH_LIM
   for (const t of paper?.open ?? []) add(t?.symbol, true);
   for (const [sym, c] of Object.entries(paper?.coins ?? {})) if (c?.status === 'active') add(sym, true);
   for (const [sym, c] of Object.entries(paper?.emaCoins ?? {})) if (c?.status === 'active') add(sym, true);
+  // Keep stage-2 breakout symbols in the 32-slot 1H watch so stage-3 retest is not missed.
+  for (const [sym, c] of Object.entries(sg.accumulation?.breakouts ?? {}))
+    if (c?.status === 'watching' && Number.isFinite(c.breakoutAt) &&
+        now >= c.breakoutAt && now - c.breakoutAt <= ACC_RETEST.maxAgeMs) add(sym, true);
   // Give requested majors priority while leaving the rest of the 80-coin rotation intact.
   if (prioritizeEma) for (const sym of EMA_PRIORITY) add(sym);
 
@@ -140,6 +146,9 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
     ...(paper?.open ?? []).map(p => p?.symbol),
     ...Object.entries(paper?.coins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
     ...Object.entries(paper?.emaCoins ?? {}).filter(([, c]) => c?.status === 'active').map(([sym]) => sym),
+    ...Object.entries(sg.accumulation?.breakouts ?? {}).filter(([, c]) =>
+      c?.status === 'watching' && Number.isFinite(c.breakoutAt) &&
+      now >= c.breakoutAt && now - c.breakoutAt <= ACC_RETEST.maxAgeMs).map(([sym]) => sym),
   ]);
   // 기존 레이더와 동일하게 핀 고정 대상은 제한보다 많아도 우선 보존한다.
   for (const sym of legacy) if (pinned.has(sym) && !seen.has(sym)) { seen.add(sym); watch.push(sym); }
@@ -277,7 +286,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const accMode = accumulationMode(env);
   const accSent = sg.accumulation?.sent && typeof sg.accumulation.sent === 'object' && !Array.isArray(sg.accumulation.sent)
     ? Object.fromEntries(Object.entries(sg.accumulation.sent).filter(([k, t]) =>
-      /^[A-Z0-9]+USDT:(WATCH|BREAKOUT)$/.test(k) && Number.isFinite(t) && now - t >= 0 && now - t <= 14 * 86400000)) : {};
+      /^[A-Z0-9]+USDT:(WATCH|BREAKOUT|RETEST)$/.test(k) && Number.isFinite(t) && now - t >= 0 && now - t <= 14 * 86400000)) : {};
   const btcRow = hourData.coins?.['BTC-USDT-SWAP'];
   const btcHourly = btcRow?.status === 'fresh' ? btcRow.c1h : null;
   const accAll = accMode === 'off' ? [] : rows.flatMap(r => {
@@ -290,10 +299,44 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       return [{ symbol: r.symbol, entry, context, key: r.symbol + ':' + entry.stage }];
     } catch { return []; }
   }).sort((a, b) => b.entry.score - a.entry.score || a.symbol.localeCompare(b.symbol));
+  // Anchor only genuine stage-2 detected breakouts. Persist anchors separately from
+  // Telegram watch registration so a busy message quota does not hide a valid retest.
+  const accBreakouts = Object.fromEntries(Object.entries(sg.accumulation?.breakouts ?? {})
+    .filter(([sym, a]) => validWatchSymbol(sym) && a && a.status === 'watching' &&
+      Number.isFinite(a.breakoutAt) && now >= a.breakoutAt &&
+      now - a.breakoutAt <= ACC_RETEST.maxAgeMs));
+  if (accMode === 'on') {
+    for (const a of accAll.filter(e => e.entry.stage === 'BREAKOUT')) {
+      const prior = accBreakouts[a.symbol];
+      if (!prior || prior.breakoutAt < a.entry.asOf) accBreakouts[a.symbol] = anchorOfBreakout(a.entry);
+    }
+  }
+  const accRetestAll = accMode === 'off' ? [] : rows.flatMap(r => {
+    const anchor = accBreakouts[r.symbol];
+    if (!anchor || !r.c1h) return [];
+    try {
+      const entry = accumulationRetest(r.c1h, anchor, now);
+      if (entry?.status === 'expired' || entry?.status === 'invalidated') {
+        delete accBreakouts[r.symbol];
+        return [];
+      }
+      if (entry?.stage !== 'RETEST') return [];
+      const context = btcContext({ btc4h: hourData.btc4h, btc1h: btcHourly,
+        coin1h: r.c1h, dir: 'LONG', at: entry.asOf });
+      return [{ symbol: r.symbol, entry, context, key: r.symbol + ':RETEST' }];
+    } catch { return []; }
+  }).sort((a, b) => b.entry.score - a.entry.score || a.symbol.localeCompare(b.symbol));
+  const accRetestToday = Object.entries(accSent).filter(([k, t]) =>
+    k.endsWith(':RETEST') && dayKey(t) === dayKey(now)).length;
+  const accRetestEligible = accRetestAll.filter(a => now - (accSent[a.key] ?? -Infinity) >= ACC_RETEST.cooldownMs);
+  const accRetestAlerts = accMode === 'on'
+    ? accRetestEligible.slice(0, Math.min(2, Math.max(0, 4 - accRetestToday))) : [];
   const accEligible = accAll.filter(a => now - (accSent[a.key] ?? -Infinity) >= ACCUMULATION.cooldownMs);
   const accToday = Object.values(accSent).filter(t => dayKey(t) === dayKey(now)).length;
   const accLimit = Math.min(ACCUMULATION.maxPerRun, Math.max(0, ACCUMULATION.maxPerDay - accToday));
   base.accumulation = { mode: accMode, observed: accAll.length, eligible: accEligible.length,
+    retestObserved: accRetestAll.length, retestEligible: accRetestEligible.length,
+    watchingBreakouts: Object.keys(accBreakouts).length,
     preview: accAll.slice(0, 3).map(a => ({ symbol: a.symbol, stage: a.entry.stage, score: a.entry.score, btc: a.context.status })) };
   const accWatch = accMode === 'on' ? accEligible.slice(0, accLimit) : [];
   // Independent live Donchian alerts share confirmed 1H/4H candles; never place an order or alter RICH300 entries.
@@ -331,6 +374,16 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const btc = btcFor(i);
     return { i, btc, m: r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now, btc }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) };
   });
+  // Stage 3 has priority over new watch alerts, but never displaces legacy entry/invalidation.
+  for (const a of accRetestAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    msgs.push({
+      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry,
+        event: { type: 'watch', id: 'ACC:RETEST:' + a.symbol + ':' + a.entry.breakoutAt + ':' + a.entry.asOf },
+        committed: null },
+      m: watchDecorate(accumulationRetestMessage(a.symbol, a.entry, a.context),
+        { symbol: a.symbol, source: 'C', dir: 'WATCH', at: a.entry.asOf }, env),
+    });
+  }
   for (const a of dcAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
     msgs.push({
       i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key, dcSignal: a.entry,
@@ -342,7 +395,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   base.donchian.selected = msgs.filter(x => x.i.channel === 'donchian').length;
   for (const a of accWatch.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
     msgs.push({
-      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key,
+      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry,
         event: { type: 'watch', id: 'ACC:' + a.key + ':' + a.entry.asOf },
         committed: null },
       m: watchDecorate(accumulationMessage(a.symbol, a.entry, a.context),
@@ -350,6 +403,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     });
   }
   base.accumulation.selected = msgs.filter(x => x.i.channel === 'accumulation').length;
+  base.accumulation.retestSelected = msgs.filter(x => x.i.accSignal?.stage === 'RETEST').length;
   // 모의매매 추적: 실제 신호 경로와 완전히 격리한다(예외는 삼키고, 전송하지 않으며, state.signal.paper에만 쓴다).
   let paperChanged = false;
   if (paperOn) {
@@ -362,6 +416,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
 
   attach();
+  if (accMode === 'on') sg.accumulation = { ...(sg.accumulation ?? {}), breakouts: accBreakouts };
   // 성공적으로 분석한 후보만 최종 시각을 기록한다. 실패/미분석 종목은 다음 슬롯에서 다시 앞선다.
   if (market?.symbols?.length && base.analyzed > 0) {
     const last = { ...(sg.breadth?.last ?? {}) }, pool = new Set(market.symbols);
@@ -377,6 +432,22 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   // 신호 이미지: 진입 후보마다 실제 확정 15분봉으로 PNG 1장을 만든다. 실패·시간 초과는 그 신호만 기존 텍스트 알림으로 대체한다(예외를 던지지 않는다).
   if (sendPhoto) {
     for (const x of msgs) {
+      if (x.i.channel === 'accumulation' && !expired('beforeChart')) {
+        let timer;
+        try {
+          const row = rows.find(r => r.symbol === x.i.symbol);
+          const png = await Promise.race([
+            renderAccumulationChart(x.i.symbol, x.i.accSignal, row?.c1h),
+            new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('accumulation chart timeout')), CHART_TIMEOUT_MS); }),
+          ]);
+          x.m.photo = { png, caption: accumulationCaption(x.i.symbol, x.i.accSignal) };
+          base.accumulation.photoRendered = (base.accumulation.photoRendered ?? 0) + 1;
+        } catch (error) {
+          x.m.chartError = String(error.message).slice(0, 80);
+          base.accumulation.photoFailed = (base.accumulation.photoFailed ?? 0) + 1;
+        } finally { clearTimeout(timer); }
+        continue;
+      }
       if (x.i.channel === 'donchian' && !expired('beforeChart')) {
         let timer;
         try {
@@ -445,9 +516,12 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     const key = `${i.event.id}:${i.event.type}`;
     const out = await deliver(m, key, assumed => {
       if (i.channel === 'accumulation') {
-        sg.accumulation = { sent: { ...(sg.accumulation?.sent ?? accSent), [i.accKey]: now } };
+        if (i.accSignal?.stage === 'RETEST') delete accBreakouts[i.symbol];
+        sg.accumulation = { ...(sg.accumulation ?? {}),
+          sent: { ...(sg.accumulation?.sent ?? accSent), [i.accKey]: now },
+          breakouts: accBreakouts };
         base.accumulation.sent = (base.accumulation.sent ?? 0) + 1;
-        return; // observation only: no signal state, RICH300 feed/buttons, paper trade or candidate counter
+        return; // independent observation/entry-interest only: no auto order, RICH300 feed or trade journal
       }
       if (i.channel === 'donchian') {
         sg.donchian = { sent: { ...(sg.donchian?.sent ?? dcSent), [i.dcKey]: now } };
