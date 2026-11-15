@@ -207,7 +207,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     if (entry.status !== 'fresh') { rows.push({ symbol, instId, why: entry.reason ?? entry.status, pending: entry.status === 'pending' }); continue; }
     rows.push({ symbol, instId, a: analyze(entry.c1h, entry.c4h, hourData.btc4h), c1h: entry.c1h,
       ...(emaEnabled ? { ema: emaSetup(entry.c1h, entry.c4h, now) } : {}),
-      ...((fibSetting !== 'off' || emaEnabled) ? { c4h: entry.c4h } : {}) });
+      c4h: entry.c4h });
   }
   const need = rows.filter(r => r.a?.status === 'ok' && (r.a.stage >= 2 || sg.coins[r.symbol]?.status === 'active' || paper?.open.some(t => t.symbol === r.symbol) || paper?.coins[r.symbol]?.status === 'active' ||
     (emaEnabled && (r.ema || sg.emaCoins[r.symbol]?.status === 'active' || paper?.emaCoins?.[r.symbol]?.status === 'active'))));
