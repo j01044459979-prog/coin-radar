@@ -431,7 +431,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
         return; // observation only: no signal state, RICH300 feed/buttons, paper trade or candidate counter
       }
       if (i.channel === 'donchian') {
-        sg.donchian = { sent: { ...dcSent, [i.dcKey]: now } };
+        sg.donchian = { sent: { ...(sg.donchian?.sent ?? dcSent), [i.dcKey]: now } };
         base.donchian.sent = (base.donchian.sent ?? 0) + 1;
         return; // separate live alert only: no trade journal, EMA state, RICH300 feed or auto-order
       }
