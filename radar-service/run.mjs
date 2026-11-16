@@ -10,7 +10,7 @@ import { modeOf } from './opportunity/config.mjs';           // opportunity rada
 import { runAfterCycle } from './opportunity/integrate.mjs';
 import { runSignalAfterCycle } from './signal/integrate.mjs';   // 실시간 신호(feature flag RADAR_SIGNAL, default off)
 import { quietMode, mutedSender } from './quiet.mjs';
-import { checkBonkFollowup } from './positions/bonk-followup.mjs'; // 독립 3시간 보유 관찰          // P1: RADAR_TELEGRAM_QUIET(기본 off)
+import { checkBonkFollowup } from './positions/bonk-followup.mjs'; // isolated BONK watch; sends on its own 3h cooldown          // P1: RADAR_TELEGRAM_QUIET(기본 off)
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
 const args = new Set(process.argv.slice(2));
