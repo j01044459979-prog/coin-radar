@@ -32,12 +32,12 @@ test('원래 레이더 추천 이유 3줄을 추출해 신호에 보존한다(�
   const x = setup(); press(x, 'e', { text });
   assert.equal(rows(x, 'signal')[0].summary, why);
 });
-test('[진입했어]: 신호·응답과 1시간 추적 상태가 저장되고 Fill과 추가 메시지는 생기지 않는다', () => {
+test('[진입했어]: 신호·응답과 3시간 추적 상태가 저장되고 Fill과 추가 메시지는 생기지 않는다', () => {
   const x = setup(); const r = press(x, 'e');
   assert.equal(r.handled, 1); const sg = rows(x, 'signal'); assert.equal(sg.length, 1);
   assert.deepEqual({ ...sg[0] }, { sid: SID, strategy: 'S', symbolId: 'ETHUSDT', dir: 'LONG', signalAt: EV.triggerT, entry: '3012.5', stop: '2980', tp1: '3075', tp2: '3120', score: 72 });
   assert.deepEqual(rows(x, 'response').map(r => [r.sid, r.choice]), [[SID, 'entered']]); assert.equal(rows(x, 'fill').length, 0);
-  const ed = x.tele.edits[0]; assert.match(ed.text, /1시간 분석 등록/); assert.ok(!/R9 v1/.test(ed.text)); assert.deepEqual(ed.reply_markup, { inline_keyboard: [] });
+  const ed = x.tele.edits[0]; assert.match(ed.text, /3시간 분석 등록/); assert.ok(!/R9 v1/.test(ed.text)); assert.deepEqual(ed.reply_markup, { inline_keyboard: [] });
   assert.equal(x.tele.sent.length, 0); assert.ok(x.kv.get('follow:'+SID));
 });
 test('[안 했어]와 과거 코드 [놓쳤어]는 체결·손익·1시간 추적을 만들지 않는다', () => {
@@ -59,7 +59,7 @@ test('거부: 낯선 사용자·sid 불일치·값이 잘못된 줄은 아무것
 });
 test('사진 추천 메시지: 설명(caption)을 읽고 editMessageCaption 으로 결과를 표시한다', () => {
   const x = setup(); x.tele.click(OWNER, radarMsg(x), `r1:${SID}:e`, { caption: RADAR_TEXT, photo: true }); tgPoll(x.env);
-  assert.equal(rows(x, 'signal').length, 1); const ed = x.tele.edits[0]; assert.equal(ed.viaCaption, true); assert.match(ed.text, /1시간 분석 등록/);
+  assert.equal(rows(x, 'signal').length, 1); const ed = x.tele.edits[0]; assert.equal(ed.viaCaption, true); assert.match(ed.text, /3시간 분석 등록/);
   assert.ok(x.tele.calls.every(c => c.method !== 'editMessageText'));
 });
 test('같은 신호가 재전송돼도 신호는 처음 저장된 값 그대로(불변), 응답만 새로 가능', () => {
