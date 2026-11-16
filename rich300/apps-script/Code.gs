@@ -2884,6 +2884,127 @@ function followAssess({ signal, market, now }) {
     trendText: '1H ' + followTrendLabel(t1.state) + ' · 4H ' + followTrendLabel(t4.state) + ' · 1H 거래량 ' + volText(v1),
     m15Text: fifteenText + ' · 15분 거래량 ' + volText(v15) };
 }
+// Confirmed-candle price structure for 3-hour reports only. These are observable
+// historical zones, NOT verified order-book support/resistance or price forecasts.
+// Bar integrity and recency are checked even when called independently of followTick.
+const followLevelNumber = n => typeof n === 'number' && Number.isFinite(n) && n > 0;
+const FOLLOW_LEVEL_BUFFER = 0.001; // 0.1% before a visible target/behind a stop level; illustrative only
+const followLevelFmt = (value, ref) => {
+  if (!followLevelNumber(value)) return '확인 불가';
+  const m = Math.abs(ref), d = m < 0.0001 ? 10 : m < 0.01 ? 8 : m < 1 ? 6 : m < 10 ? 4 : m < 100 ? 3 : 2;
+  return value.toFixed(d);
+};
+const followLevelBars = (bars, count, step, now) => {
+  if (!Array.isArray(bars) || bars.length < count) return null;
+  const a = bars.slice(-count);
+  if (!a.every((b, i) => Number.isFinite(b.t) && followLevelNumber(b.l) && followLevelNumber(b.h) &&
+      followLevelNumber(b.c) && b.l <= b.c && b.c <= b.h &&
+      (i === 0 || b.t - a[i - 1].t === step))) return null;
+  const closedAt = a[a.length - 1].t + step;
+  if (closedAt > now || now - closedAt > 2 * step + 10 * 60000) return null;
+  return a;
+};
+function followLevels({ market, now }) {
+  const price = followPrice(market && market.price);
+  if (!Number.isFinite(price) || !Number.isFinite(now)) return { ok: false, reason: '시세 확인 불가' };
+  const h = followLevelBars(market.bars1h, 36, FOLLOW_HOUR_MS, now);
+  const f = followLevelBars(market.bars4h, 18, 4 * FOLLOW_HOUR_MS, now);
+  if (!h || !f) return { ok: false, reason: '확정 1H/4H 봉 누락·지연 또는 가격 오류' };
+  const raw = [];
+  const put = (priceValue, kind, source) => { if (followLevelNumber(priceValue)) raw.push({ price: priceValue, kind, source }); };
+  const pivots = (bars, wing, source) => {
+    for (let i = wing; i < bars.length - wing; i++) {
+      const left = bars.slice(i - wing, i), right = bars.slice(i + 1, i + wing + 1);
+      if (left.every(b => bars[i].h > b.h) && right.every(b => bars[i].h >= b.h)) put(bars[i].h, '저항', source + ' 확정 고점');
+      if (left.every(b => bars[i].l < b.l) && right.every(b => bars[i].l <= b.l)) put(bars[i].l, '지지', source + ' 확정 저점');
+    }
+  };
+  pivots(h, 2, '1H');
+  pivots(f, 1, '4H');
+  for (const [bars, source] of [[h.slice(-24), '1H 최근24봉'], [f.slice(-12), '4H 최근12봉']]) {
+    put(Math.max(...bars.map(b => b.h)), '저항', source + ' 고점');
+    put(Math.min(...bars.map(b => b.l)), '지지', source + ' 저점');
+  }
+  const unique = (arr, desc) => {
+    const sorted = arr.sort((a, b) => desc ? b.price - a.price : a.price - b.price);
+    const out = [];
+    for (const item of sorted) if (!out.some(x => Math.abs(x.price - item.price) / price < 0.0015)) out.push(item);
+    return out.slice(0, 2);
+  };
+  const tolerance = 0.0005;
+  // A price above all known highs/below all known lows has no confirmed level
+  // on that side. Never extrapolate a target into an unobserved breakout.
+  const support = unique(raw.filter(x => x.kind === '지지' && x.price < price * (1 - tolerance)), true);
+  const resistance = unique(raw.filter(x => x.kind === '저항' && x.price > price * (1 + tolerance)), false);
+  return { ok: true, support, resistance, price };
+}
+function followDetailedPlan({ signal, market, now }) {
+  const levels = followLevels({ market, now });
+  const dir = signal.dir, sign = dir === 'LONG' ? 1 : dir === 'SHORT' ? -1 : 0;
+  const entry = followPrice(signal.entry), stop = followPrice(signal.stop);
+  const tp = [followPrice(signal.tp1), followPrice(signal.tp2)];
+  const price = followPrice(market.price);
+  const fmt = n => followLevelFmt(n, price);
+  const old = n => Number.isFinite(n) ? fmt(n) : '미설정';
+  const header = ['','③ 확정봉 지지·저항 (참고 구간)'];
+  if (!levels.ok || !sign || !Number.isFinite(entry) || !Number.isFinite(stop) ||
+      (entry - stop) * sign <= 0) {
+    return [...header, '수치 분석 보류: ' + (levels.reason || '진입 방향·최초 손절 기준 불명확'),
+      '④ 최초 계획과 조정 검토',
+      'TP1 최초 ' + old(tp[0]) + ' · TP2 최초 ' + old(tp[1]) + ' → 변경 보류',
+      '손절 최초 ' + old(stop) + ' → 변경 보류 (근거 부족)',
+      '※ 가격 근거가 확인되기 전 목표·손절을 임의로 이동하지 마세요.'];
+  }
+  const show = (items, name) => items.length
+    ? items.map(x => fmt(x.price) + ' (' + x.source + ')').join(' / ')
+    : '확인 불가 (현재가 ' + (name === '지지' ? '아래' : '위') + ' 확정 구간 부족)';
+  const risk = Math.abs(entry - stop);
+  const rNow = (price - entry) * sign / risk;
+  const favorable = dir === 'LONG' ? levels.resistance : levels.support;
+  const defensive = dir === 'LONG' ? levels.support : levels.resistance;
+  const failed = (price - stop) * sign <= 0;
+  const tpLines = tp.map((original, i) => {
+    const base = 'TP' + (i + 1) + ' 최초 ' + old(original) + ' → ';
+    if (failed) return base + '재설정 보류 (최초 손절선 이탈, 체결 확인 우선)';
+    const level = favorable[i];
+    if (!level) return base + '조정 보류 (다음 ' + (dir === 'LONG' ? '저항' : '지지') + ' 확인 불가)';
+    const candidate = level.price * (1 - sign * FOLLOW_LEVEL_BUFFER);
+    const ahead = (candidate - price) * sign / price;
+    const reward = (candidate - entry) * sign / risk;
+    const hit = Number.isFinite(original) && (price - original) * sign >= 0;
+    const reason = '(' + level.source + ' 앞 0.1%, 최초 위험폭 대비 ' + reward.toFixed(2) + 'R)';
+    const state = reward < 1 || ahead < 0.0025
+      ? '변경 보류 · 보상/거리 부족'
+      : hit ? '기존 TP 시세 도달 · 체결 확인 후 잔량의 조건부 목표'
+        : (Number.isFinite(original) && (candidate - original) * sign > 0 ? '연장 후보 · 1H 종가 돌파 확인 뒤만' : '보수적 조정 후보');
+    return base + fmt(candidate) + ' ' + reason + ' · ' + state;
+  });
+  let stopLine = '손절 최초 ' + fmt(stop) + ' → 변경 보류 (원래 위험 한도 유지)';
+  if (!failed && rNow >= 1 && defensive.length) {
+    const anchor = defensive[0], candidate = anchor.price * (1 - sign * FOLLOW_LEVEL_BUFFER);
+    // Never widen stop; price must be beyond proposal by at least 0.3% to
+    // avoid treating an already-crossed level as an actionable stop.
+    if ((candidate - stop) * sign >= 0.25 * risk && (price - candidate) * sign / price >= 0.003) {
+      stopLine = '손절 최초 ' + fmt(stop) + ' → 당기기 검토 ' + fmt(candidate) +
+        ' (' + anchor.source + ' 뒤 0.1%, 1R 이상 유리한 움직임, 기존선보다 방어적)';
+    }
+  }
+  const bearish = dir === 'LONG' ? levels.support[0] : levels.resistance[0];
+  const bullish = dir === 'LONG' ? levels.resistance[0] : levels.support[0];
+  const ifs = '⑤ 유지·축소 판단 기준';
+  const long = dir === 'LONG';
+  return [...header,
+    '지지: ' + show(levels.support, '지지'),
+    '저항: ' + show(levels.resistance, '저항'),
+    '④ 최초 TP → 새 가격 조정 검토 (자동 수정 아님)',
+    ...tpLines, stopLine,
+    ifs,
+    '유지 조건: ' + (bullish ? '1H 종가가 ' + fmt(bullish.price) + (long ? ' 위' : ' 아래') + ' 돌파·안착하면 목표 재평가' : '유리한 방향의 새 확정 구조가 생길 때만 목표 재평가'),
+    '위험 조건: ' + (bearish ? '1H 종가가 ' + fmt(bearish.price) + (long ? ' 아래' : ' 위') + ' 이탈하면 유지 근거 약화·축소/정리 검토' : '가까운 방어 구간 미확인, 기존 손절·추세 역행 우선'),
+    '※ 최초 목표는 거래소 주문과 자동 연동되지 않으며 변경 후보는 확정봉 기반 시나리오입니다.',
+  ];
+}
+
 function followReport({ signal, market, now, enteredAt, urgent = false }) {
   const a = followAssess({ signal, market, now });
   const time = new Date(now + 9 * FOLLOW_HOUR_MS).toISOString().slice(5, 16).replace('T', ' ');
@@ -2910,8 +3031,8 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
     '② 추세 · 확인된 15분봉',
     a.trendText,
     a.m15Text,
-    '',
-    '③ 지금 판단과 대응',
+    ...(urgent ? [''] : followDetailedPlan({ signal, market, now }).concat([''])),
+    urgent ? '③ 지금 판단과 대응' : '⑥ 지금 판단과 대응',
     '근거: ' + a.why,
     '대응: ' + a.next,
     '다음 점검: ' + a.trigger,
@@ -4319,7 +4440,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, FOLLOW_LEVEL_BUFFER, followLevels, followDetailedPlan, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -4413,7 +4534,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '550e0d1bf7c0';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '171f3ed1d562';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {

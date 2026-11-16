@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { memEnv } from './helpers/memenv.mjs';
 import { storeInit, storeCreate, storeList } from '../lib/store.mjs';
-import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, followAssess, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS } from '../lib/follow.mjs';
+import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, followAssess, followLevels, followDetailedPlan, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS } from '../lib/follow.mjs';
 import { dayStartMs } from '../lib/time.mjs';
 
 const NOW = dayStartMs('2026-11-05') + 12 * 3600000 + 12 * 60000;
@@ -139,4 +139,60 @@ test('긴급 알림도 정리 버튼·오래된 시세·preview 조건에서는 
   x.env.mode=()=> 'on';followChoice(x.kv,SIG.sid,'close',NOW+21*60000);
   assert.equal(followTick(x.env).sent,0);
   assert.equal(x.calls.length,1);
+});
+
+
+test('3시간 리포트: 확정봉 지지·저항, 최초 TP1/TP2와 보수적 조정 후보, 손절 당기기 근거를 함께 제공한다',()=>{
+  const now = NOW, hBase = Math.floor(now/3600000)*3600000-3600000,
+    fBase = Math.floor(now/(4*3600000))*(4*3600000)-4*3600000;
+  const bars = (size, last, step) => Array.from({length:size},(_,i)=>({
+    t:last-(size-1-i)*step,o:100,c:100,h:101,l:99,v:100
+  }));
+  const a=bars(60,hBase,3600000),b=bars(60,fBase,4*3600000);
+  a[a.length-28].h=112; a[a.length-12].h=108;
+  a[a.length-19].l=95; a[a.length-8].l=97;
+  b[b.length-13].h=120; b[b.length-7].l=90;
+  b[b.length-1].h=103;b[b.length-1].l=98;
+  const m={ok:true,source:'OKX',price:100,priceAt:now-60000,bars1h:a,bars4h:b,
+    bars15m:market(now,100).bars15m};
+  const levels=followLevels({market:m,now});
+  assert.equal(levels.ok,true);
+  assert.ok(levels.support.length>=1 && levels.support[0].price<100);
+  assert.ok(levels.resistance.length>=2 && levels.resistance[0].price>100);
+  const long={...SIG,dir:'LONG',entry:'94',stop:'90',tp1:'115',tp2:'122'};
+  const msg=followReport({signal:long,market:m,now,enteredAt:AT});
+  for(const re of [/3시간 포지션 점검/,/③ 확정봉 지지·저항/,/지지: [0-9.]+/,/저항: [0-9.]+/,
+    /TP1 최초 115/,/TP2 최초 122/,/조정 검토/,/손절 최초 90/,/당기기 검토/,/유지 조건:/,/위험 조건:/,/자동 수정 아님/,/실제 Binance 체결 아님/])
+    assert.match(msg,re,String(re));
+  assert.ok(msg.length<=3600);
+  const plan=followDetailedPlan({signal:long,market:m,now}).join('\n');
+  const l1=plan.match(/TP1 최초 [^\n]+ → ([0-9.]+)/);
+  assert.ok(l1);
+  assert.ok(Number(l1[1])>100 && Number(l1[1])<levels.resistance[0].price);
+  const short={...SIG,dir:'SHORT',entry:'106',stop:'110',tp1:'91',tp2:'85'};
+  const s=followDetailedPlan({signal:short,market:m,now}).join('\n');
+  const s1=s.match(/TP1 최초 [^\n]+ → ([0-9.]+)/);
+  assert.ok(s1);assert.ok(Number(s1[1])<100 && Number(s1[1])>levels.support[0].price);
+});
+test('지지·저항이 확인되지 않으면 새 TP를 지어내지 않고 변경 보류한다',()=>{
+  const bad={...market(NOW),bars4h:[]};
+  const s=followDetailedPlan({signal:SIG,market:bad,now:NOW}).join('\n');
+  assert.match(s,/확정 1H\/4H 봉 누락/);
+  assert.match(s,/TP1 최초 0\.900000 · TP2 최초 0\.800000 → 변경 보류/);
+  assert.doesNotMatch(s,/당기기 검토/);
+});
+test('긴급 알림은 기존의 짧은 위험 경고 형식 그대로 유지한다',()=>{
+  const s=followReport({signal:SIG,market:market(NOW,1.09),now:NOW,enteredAt:AT,urgent:true});
+  assert.match(s,/포지션 전략 변경 경고/);
+  assert.doesNotMatch(s,/④ 최초 TP/);
+  assert.match(s,/③ 지금 판단과 대응/);
+});
+test('작은 가격대 BONK 수준의 지지·저항 값도 충분한 소수점으로 표기한다',()=>{
+  const m=market(NOW);
+  const scaled={...m,price:.00001,bars1h:m.bars1h.map(x=>({...x,o:x.o/100000,c:x.c/100000,h:x.h/100000,l:x.l/100000})),
+    bars4h:m.bars4h.map(x=>({...x,o:x.o/100000,c:x.c/100000,h:x.h/100000,l:x.l/100000}))};
+  const sig={...SIG,entry:'0.000011',stop:'0.000012',tp1:'0.000009',tp2:'0.000008'};
+  const mtxt=followDetailedPlan({signal:sig,market:scaled,now:NOW}).join('\n');
+  assert.match(mtxt,/0\.0000[0-9]{6}/);
+  assert.match(mtxt,/TP1 최초 0\.0000090000/);
 });
