@@ -1,4 +1,4 @@
-// RICH300 hourly Telegram follow-up: ONLY user-confirmed "entered" signals.
+// RICH300 3-hour Telegram follow-up: ONLY user-confirmed "entered" signals.
 // An entered response is not a Fill; this module never creates trades, profit or exchange orders.
 // State in the existing tg: KV namespace (Script Properties), entirely separate from trading ledger.
 // Explicit opt-in via response button; explicit stop with "closed" is irreversible from old cards.
@@ -8,6 +8,7 @@ import { pnlComputeAll } from './pnl.mjs';
 import { watchAssessMarket, watchTrend, watchVolRatio, wAligned, wAgainst, wFmt, wHhmm } from './watch.mjs';
 
 export const FOLLOW_HOUR_MS = 3600000;
+export const FOLLOW_REPORT_INTERVAL_MS = 3 * FOLLOW_HOUR_MS; // regular reports every 3 hours; emergency 15m monitoring remains unchanged
 export const FOLLOW_MAX_POSITIONS = 12; // prevent unlimited API calls or alert floods per run
 export const FOLLOW_RETRY_MS = 10 * 60000;
 export const FOLLOW_MAX_STALE_MS = 10 * 60000;
@@ -155,7 +156,7 @@ export function followReport({ signal, market, now, enteredAt, urgent = false })
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
   return [
-    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 1시간 포지션 점검',
+    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 3시간 포지션 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
     '🔎 판단: [' + a.status + '] ' + a.verdict,
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
@@ -208,10 +209,10 @@ export function followTick(env) {
     const sig = signals.get(r.sid);
     if (!sig) { out.missing++; continue; }
     out.active++;
-    const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_HOUR_MS;
+    const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_REPORT_INTERVAL_MS;
     const hourly = now >= next && !(st.retryAt && now < st.retryAt) && st.pendingHour !== h;
     // Existing five-minute trigger evaluates market at most once per 15-minute slot
-    // between hourly reports. Do not add a trigger or poll the exchange every five minutes.
+    // between regular 3-hour reports. Do not add a trigger or poll the exchange every five minutes.
     if (!hourly && (now < Math.max(st.enteredAt, r.at) || st.lastMonitorSlot === slot)) continue;
     if (out.scanned >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
     out.scanned++;
@@ -237,7 +238,7 @@ export function followTick(env) {
       }
       continue;
     }
-    // Significant changes outside the normal hour: stop, TP, close-to-stop or
+    // Significant changes outside the regular report: stop, TP, close-to-stop or
     // confirmed adverse trend. Alert only on a transition, with a cooldown.
     const changed = assessment.urgent && assessment.urgent !== st.lastUrgentKey;
     const cooldown = now - (st.lastUrgentAt || 0) >= FOLLOW_ALERT_COOLDOWN_MS;

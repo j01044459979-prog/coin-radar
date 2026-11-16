@@ -19,7 +19,7 @@ test('진입했어 → 추적 상태 등록, 체결 0건, 보고서는 유지 �
  assert.equal(storeList(x.mem.env,'fill').length,0);
  assert.equal(followRead(x.kv,SID).status,'open');
  assert.equal(x.tele.sent.length,1); // no noisy /fill follow-up
- const report='1시간 ONDO 점검, 실제 체결 미확인';
+ const report='3시간 ONDO 점검, 실제 체결 미확인';
  assert.equal(tgSendFollow(x.env,OWNER,report,SID).ok,true);
  const msg=x.tele.last();
  assert.deepEqual(msg.reply_markup.inline_keyboard[0].map(b=>b.text),['유지 중','정리했어']);
@@ -28,7 +28,7 @@ test('진입했어 → 추적 상태 등록, 체결 0건, 보고서는 유지 �
  assert.match(x.tele.answers.at(-1).text,/유지 중/);
  press(x,msg,'정리했어');
  assert.equal(followRead(x.kv,SID).status,'closed');
- assert.match(x.tele.answers.at(-1).text,/1시간 분석 중단/);
+ assert.match(x.tele.answers.at(-1).text,/3시간 분석 중단/);
  press(x,msg,'유지 중');assert.equal(followRead(x.kv,SID).status,'closed');
  assert.equal(x.tele.sent.length,2);
 });

@@ -28,7 +28,7 @@ for (const photo of [false, true]) test(`종단 간(${photo ? '사진' : '텍스
   const g = world(), msg = await radarMessage({ photo }), sid = msg.markup.inline_keyboard[0][0].callback_data.split(':')[1];
   assert.match(sid, /^SG-ETH-L-/); assert.deepEqual(msg.markup.inline_keyboard[0].map(b => b.text), ['진입했어', '안 했어']);
   press(g, msg, 'e'); assert.equal(g.rows('signal').length, 1); assert.equal(g.rows('signal')[0].strategy, 'S'); assert.deepEqual(g.rows('response').map(r => r.choice), ['entered']);
-  assert.ok(g.tele.edits.some(e => /→ 진입 확인 · 웹앱 매매일지 기록 · 1시간 분석 등록 \(실제 체결 미확인\)/.test(e.text) && !!e.viaCaption === photo)); assert.ok(!g.tele.sent.some(m => /진입 기록/.test(m.text)), '버튼만으로 /fill 안내·체결 생성 없음'); assert.equal(g.rows('fill').length, 0);
+  assert.ok(g.tele.edits.some(e => /→ 진입 확인 · 웹앱 매매일지 기록 · 3시간 분석 등록 \(실제 체결 미확인\)/.test(e.text) && !!e.viaCaption === photo)); assert.ok(!g.tele.sent.some(m => /진입 기록/.test(m.text)), '버튼만으로 /fill 안내·체결 생성 없음'); assert.equal(g.rows('fill').length, 0);
   const sig = g.rows('signal')[0], t0 = 1790000000000 - 5 * 3600000, day = '2026-09-21';
   const submit = f => g.ctx.rich300FillSubmit({ sid, ...f });
   let r = submit({ kind: 'entry', formId: 'e1', margin: '30', leverage: '10', entry: String(sig.entry), qty: '0.1', stop: String(sig.stop), at: `${day}T00:30` }); assert.equal(r.ok, true, JSON.stringify(r));

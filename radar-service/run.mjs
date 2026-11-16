@@ -9,8 +9,7 @@ import { refreshNews } from './news.mjs';
 import { modeOf } from './opportunity/config.mjs';           // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
 import { runAfterCycle } from './opportunity/integrate.mjs';
 import { runSignalAfterCycle } from './signal/integrate.mjs';   // 실시간 신호(feature flag RADAR_SIGNAL, default off)
-import { quietMode, mutedSender } from './quiet.mjs';
-import { checkBonkFollowup } from './positions/bonk-followup.mjs'; // isolated BONK watch; sends on its own 3h cooldown          // P1: RADAR_TELEGRAM_QUIET(기본 off)
+import { quietMode, mutedSender } from './quiet.mjs';          // P1: RADAR_TELEGRAM_QUIET(기본 off)
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
 const args = new Set(process.argv.slice(2));
@@ -41,7 +40,6 @@ const quiet = quietMode(process.env), muted = mutedSender();   // 조용한 모�
 const opportunity = options => runAfterCycle({ state, save, env: process.env, ...options, ...(quiet ? { send: muted.send } : {}) }).catch(() => null);
 // Signal (15m trigger) runs after the opportunity radar and never throws; it is a no-op unless RADAR_SIGNAL=preview|on.
 const signal = options => runSignalAfterCycle({ state, save, env: process.env, ...options }).catch(() => null);
-const bonkFollowup = async send => checkBonkFollowup({ state, save, env: process.env, send }).catch(error => ({ status: 'error', reason: String(error.message).slice(0, 100) }));
 
 if (args.has('--gate')) {
   // 실행 여부 판단만 한다(수집·전송 없음). 결과는 GITHUB_OUTPUT의 run=true|false, alert=true|false.
@@ -123,7 +121,6 @@ if (args.has('--gate')) {
     console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render: quiet ? null : render, sendPhoto, quietReports: quiet })));
     await opportunity({ send });
     await signal({ send, sendPhoto });                                      // A급 신호·무효화는 항상 그대로 전송
-    console.log('BONK_FOLLOWUP ' + JSON.stringify(await bonkFollowup(send)));
     if (quiet) console.log('QUIET ' + JSON.stringify({ mode: 'on', mutedOpportunityMessages: muted.stat.count, reportMuted: state.reportMuted ?? null }));
   } else {
     let stopped = false;
@@ -131,7 +128,7 @@ if (args.has('--gate')) {
     let wake;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopped = true; clearTimeout(timer); wake?.(); });
     while (!stopped) {
-      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); await signal({ send, sendPhoto }); console.log('BONK_FOLLOWUP ' + JSON.stringify(await bonkFollowup(send))); }
+      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); await signal({ send, sendPhoto }); }
       catch { console.error('분석/알림 처리 실패: 다음 주기에 재확인'); }
       // Start shortly after each 5-minute boundary, never overlap cycles.
       if (!stopped) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, 300000 - Date.now() % 300000 + 5000); });
