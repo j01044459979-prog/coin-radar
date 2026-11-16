@@ -2005,14 +2005,14 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
   // 진입 응답은 실제 체결이 아니다. 매매일지의 '진입 확인·체결 미입력'으로만 표시하며,
   // /fill 안내 메시지와 추가 알림은 보내지 않는다. 안 했어 응답은 여기서 종료한다.
-  // An entered response opts in to 1-hour reassessment. No Fill is created.
+  // An entered response opts in to 3-hour reassessment. No Fill is created.
   // If an opt-in state update fails after the response is stored, the response still remains recorded.
   if (choice === 'entered') followStart(env.kv, sid, env.now());
-  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 1시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
+  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 3시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
   const a = answer(`기록: ${choiceLabel}`), e = tgEdit(env, cb, `${shown}\n→ ${outcome}`);
   return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
-/** User can keep hourly analysis coming, or stop it without pretending the position was actually closed at the exchange. */
+/** User can keep 3-hour analysis coming, or stop it without pretending the position was actually closed at the exchange. */
 function tgOnFollow(env, ev, sid, action, cb, answer) {
   if (!TG_SID_RE.test(sid)) { const a = answer('유효하지 않은 신호입니다'); return { status: 'handled', action: 'follow-invalid', replyFailed: !tgOkOrBenign(a) }; }
   const se = env.storeEnv(), response = storeGet(se, 'response', sid);
@@ -2023,7 +2023,7 @@ function tgOnFollow(env, ev, sid, action, cb, answer) {
   const choice = followChoice(env.kv, sid, action === 'k' ? 'keep' : 'close', env.now());
   if (choice.status === 'not-tracked') { const a = answer('추적 정보가 없습니다'); return { status: 'handled', action: 'follow-not-tracked', replyFailed: !tgOkOrBenign(a) }; }
   const closed = choice.status === 'closed' || choice.status === 'already-closed';
-  const label = closed ? '정리됨 · 1시간 분석 중단' : '유지 중 · 1시간 분석 계속';
+  const label = closed ? '정리됨 · 3시간 분석 중단' : '유지 중 · 3시간 분석 계속';
   const a = answer(label);
   const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\n→ 상태: .+$/, '');
   const e = tgEdit(env, cb, base.slice(0, 3400) + '\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
@@ -2739,13 +2739,14 @@ function watchSymbolVerdict(okxJson, bybitJson) {
 }
 
 // ── follow.mjs ──
-// RICH300 hourly Telegram follow-up: ONLY user-confirmed "entered" signals.
+// RICH300 3-hour Telegram follow-up: ONLY user-confirmed "entered" signals.
 // An entered response is not a Fill; this module never creates trades, profit or exchange orders.
 // State in the existing tg: KV namespace (Script Properties), entirely separate from trading ledger.
 // Explicit opt-in via response button; explicit stop with "closed" is irreversible from old cards.
 // Safe default OFF. Every send has a pre-send attempt marker to prevent scheduler duplicates.
 
 const FOLLOW_HOUR_MS = 3600000;
+const FOLLOW_REPORT_INTERVAL_MS = 3 * FOLLOW_HOUR_MS; // regular reports every 3 hours; emergency 15m monitoring remains unchanged
 const FOLLOW_MAX_POSITIONS = 12; // prevent unlimited API calls or alert floods per run
 const FOLLOW_RETRY_MS = 10 * 60000;
 const FOLLOW_MAX_STALE_MS = 10 * 60000;
@@ -2893,7 +2894,7 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
   return [
-    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 1시간 포지션 점검',
+    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 3시간 포지션 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
     '🔎 판단: [' + a.status + '] ' + a.verdict,
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
@@ -2946,10 +2947,10 @@ function followTick(env) {
     const sig = signals.get(r.sid);
     if (!sig) { out.missing++; continue; }
     out.active++;
-    const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_HOUR_MS;
+    const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_REPORT_INTERVAL_MS;
     const hourly = now >= next && !(st.retryAt && now < st.retryAt) && st.pendingHour !== h;
     // Existing five-minute trigger evaluates market at most once per 15-minute slot
-    // between hourly reports. Do not add a trigger or poll the exchange every five minutes.
+    // between regular 3-hour reports. Do not add a trigger or poll the exchange every five minutes.
     if (!hourly && (now < Math.max(st.enteredAt, r.at) || st.lastMonitorSlot === slot)) continue;
     if (out.scanned >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
     out.scanned++;
@@ -2975,7 +2976,7 @@ function followTick(env) {
       }
       continue;
     }
-    // Significant changes outside the normal hour: stop, TP, close-to-stop or
+    // Significant changes outside the regular report: stop, TP, close-to-stop or
     // confirmed adverse trend. Alert only on a transition, with a cooldown.
     const changed = assessment.urgent && assessment.urgent !== st.lastUrgentKey;
     const cooldown = now - (st.lastUrgentAt || 0) >= FOLLOW_ALERT_COOLDOWN_MS;
@@ -4412,7 +4413,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '099d7dff2870';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '7aa47c90aac4';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -5009,7 +5010,7 @@ function rich300WatchCanSend_() {
 function rich300WatchTick() {
   var out = rich300WatchRun_(rich300WatchMode_());                                    // 실제 보유 포지션 감시(기존 동작 그대로)
   try { var sm = rich300StrategyMode_(); if (sm !== 'off') rich300StrategyRun_(sm); } catch (err) { /* 전략 추적 실패가 위치 감시를 막지 않는다 */ }      // 추천 전략 자동 추적(별도 설정·별도 상태)
-  try { var fm = rich300FollowMode_(); if (fm !== 'off') rich300FollowRun_(fm); } catch (err) { /* 1시간 후속 보고 실패가 기존 감시/전략 추적에 영향을 주지 않음 */ }
+  try { var fm = rich300FollowMode_(); if (fm !== 'off') rich300FollowRun_(fm); } catch (err) { /* 3시간 후속 보고 실패가 기존 감시/전략 추적에 영향을 주지 않음 */ }
   return out;
 }
 /** 편집기에서 직접 실행하는 미리보기: 전송·상태 저장 없이 계산 결과 개수만 돌려준다(설정과 무관, 어떤 속성도 쓰지 않는다). */
@@ -5572,8 +5573,8 @@ function rich300BotCheck() {
 
 // ── gas/Follow.gs ──
 /**
- * Opt-in hourly follow-up for Telegram "진입했어" signals.
- * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once each hour.
+ * Opt-in 3-hour follow-up for Telegram "진입했어" signals.
+ * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once per 3 hours.
  * OFF by default until owner explicitly configures RICH300_HOURLY_FOLLOW=on.
  * Reuses RICH300 sheet, existing tg: Script Properties namespace and guarded bot transport.
  * Public OKX/Bybit market data only; no exchange orders or account reads.
