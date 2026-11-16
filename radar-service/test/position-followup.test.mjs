@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bonkEnabled, BONK_INTERVAL_MS, bonkFollowupMessage, checkBonkFollowup } from '../position-followup.mjs';
+import { bonkEnabled, BONK_INTERVAL_MS, bonkFollowupMessage, checkBonkFollowup } from '../positions/bonk-followup.mjs';
 
 const BASE = Date.UTC(2026, 10, 16, 12, 5);
 const hour = 3600000;
