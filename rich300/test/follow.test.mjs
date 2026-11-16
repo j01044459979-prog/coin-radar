@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { memEnv } from './helpers/memenv.mjs';
 import { storeInit, storeCreate, storeList } from '../lib/store.mjs';
-import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, followAssess, FOLLOW_HOUR_MS } from '../lib/follow.mjs';
+import { followStart, followRead, followChoice, followKeyboard, followTick, followReport, followAssess, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS } from '../lib/follow.mjs';
 import { dayStartMs } from '../lib/time.mjs';
 
 const NOW = dayStartMs('2026-11-05') + 12 * 3600000 + 12 * 60000;
-const AT = NOW - FOLLOW_HOUR_MS - 60000;
+const AT = NOW - FOLLOW_REPORT_INTERVAL_MS - 60000;
 const SIG = { sid:'SG-ONDO-S-123', strategy:'S', symbolId:'ONDOUSDT', dir:'SHORT', signalAt: AT - 600000, entry:'1', stop:'1.1', tp1:'0.9', tp2:'0.8' };
 const candle = (t,c) => ({t,o:c,h:c*1.002,l:c*0.998,c,v:100});
 function market(now=NOW, price=.98) {
@@ -27,17 +27,20 @@ function setup(){
   const env={now:()=>t,mode:()=> 'on',storeEnv:()=>m.env,kv,market:()=>market(t),send:(msg,sid)=>{calls.push({msg,sid});return {ok:true}}};
   return {m,map,calls,kv,env,setNow:v=>{t=v}};
 }
-test('최초 진입 확인부터 1시간 뒤 첫 보고, 5분 재실행은 중복 전송하지 않는다',()=>{
+test('최초 진입 확인부터 3시간 뒤 첫 보고, 5분 재실행은 중복 전송하지 않는다',()=>{
   const x=setup(),r=followStart(x.kv,SIG.sid,AT);
   assert.equal(r.status,'added');assert.equal(followStart(x.kv,SIG.sid,AT).status,'duplicate');
   let out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,1);
+  assert.match(x.calls[0].msg,/3시간 포지션 점검/);
   assert.match(x.calls[0].msg,/4H 추세·1H 눌림/);assert.match(x.calls[0].msg,/실제 체결 미확인/);
   assert.match(x.calls[0].msg,/손절/);assert.match(x.calls[0].msg,/TP1/);
   assert.equal(storeList(x.m.env,'fill').length,0); // fake Telegram entry != exchange execution
   x.setNow(NOW+5*60000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
-  x.setNow(NOW+FOLLOW_HOUR_MS+5000);out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,2);
+  x.setNow(NOW+FOLLOW_HOUR_MS+5000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
+  x.setNow(NOW+2*FOLLOW_HOUR_MS+5000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
+  x.setNow(NOW+FOLLOW_REPORT_INTERVAL_MS+5000);out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,2);
 });
-test('유지 중을 눌러도 1시간 주기 유지, 정리했어는 완전히 중단, 이전 버튼으로 재활성화 불가',()=>{
+test('유지 중을 눌러도 3시간 주기 유지, 정리했어는 완전히 중단, 이전 버튼으로 재활성화 불가',()=>{
   const x=setup();followStart(x.kv,SIG.sid,AT);followTick(x.env);
   assert.equal(followChoice(x.kv,SIG.sid,'keep',NOW+1000).status,'kept');
   assert.equal(followRead(x.kv,SIG.sid).confirmedAt,NOW+1000);
@@ -62,7 +65,7 @@ test('초기 상태가 없는 과거 버튼·미진입 신호는 후속 분석�
   const out=followTick(x.env);assert.equal(out.closed,1);assert.equal(out.sent,0);
   assert.equal(followRead(x.kv,SIG.sid).status,'closed');
 });
-test('1시간 리포트는 SHORT 손절가 이탈을 먼저 알리고 실제 손익을 주장하지 않는다',()=>{
+test('3시간 리포트는 SHORT 손절가 이탈을 먼저 알리고 실제 손익을 주장하지 않는다',()=>{
   const text=followReport({signal:SIG,market:market(NOW,1.13),now:NOW,enteredAt:AT});
   assert.match(text,/손절 기준 이탈/);assert.match(text,/실제 손익 아님/);
   assert.match(text,/진입 응답/);assert.match(text,/현재 공개 시세/);
@@ -110,7 +113,7 @@ test('추세 역행·유효하지 않은 위험 가격·오래된 15분봉을 �
   assert.match(stale.fifteenText,/비교 불가/);assert.equal(stale.v15,null);
 });
 
-test('15분 단위 긴급 변경만 추가 전송하고 정상 시간 보고 주기는 유지한다',()=>{
+test('15분 단위 긴급 변경만 추가 전송하고 정상 3시간 보고 주기는 유지한다',()=>{
   const x=setup();followStart(x.kv,SIG.sid,AT);
   let r=followTick(x.env);assert.equal(r.sent,1);assert.equal(r.alerts,0);
   x.setNow(NOW+20*60000);x.env.market=()=>market(NOW+20*60000,1.09);
@@ -119,6 +122,8 @@ test('15분 단위 긴급 변경만 추가 전송하고 정상 시간 보고 주
   x.setNow(NOW+25*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
   x.setNow(NOW+40*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
   x.setNow(NOW+FOLLOW_HOUR_MS+5000);x.env.market=()=>market(NOW+FOLLOW_HOUR_MS+5000,1.09);r=followTick(x.env);
+  assert.equal(r.sent,0);assert.equal(r.alerts,0);assert.equal(x.calls.length,2);
+  x.setNow(NOW+FOLLOW_REPORT_INTERVAL_MS+5000);x.env.market=()=>market(NOW+FOLLOW_REPORT_INTERVAL_MS+5000,1.09);r=followTick(x.env);
   assert.equal(r.sent,1);assert.equal(r.alerts,0);assert.equal(x.calls.length,3);
   assert.equal(storeList(x.m.env,'fill').length,0);
 });
