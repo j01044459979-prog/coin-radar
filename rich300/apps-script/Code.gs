@@ -2739,14 +2739,14 @@ function watchSymbolVerdict(okxJson, bybitJson) {
 }
 
 // ── follow.mjs ──
-// RICH300 3-hour Telegram follow-up: ONLY user-confirmed "entered" signals.
+// RICH300 2-hour Telegram follow-up: ONLY user-confirmed "entered" signals.
 // An entered response is not a Fill; this module never creates trades, profit or exchange orders.
 // State in the existing tg: KV namespace (Script Properties), entirely separate from trading ledger.
 // Explicit opt-in via response button; explicit stop with "closed" is irreversible from old cards.
 // Safe default OFF. Every send has a pre-send attempt marker to prevent scheduler duplicates.
 
 const FOLLOW_HOUR_MS = 3600000;
-const FOLLOW_REPORT_INTERVAL_MS = 3 * FOLLOW_HOUR_MS; // regular reports every 3 hours; emergency 15m monitoring remains unchanged
+const FOLLOW_REPORT_INTERVAL_MS = 2 * FOLLOW_HOUR_MS; // regular reports every 2 hours; emergency 15m monitoring remains unchanged
 const FOLLOW_MAX_POSITIONS = 12; // prevent unlimited API calls or alert floods per run
 const FOLLOW_RETRY_MS = 10 * 60000;
 const FOLLOW_MAX_STALE_MS = 10 * 60000;
@@ -2884,7 +2884,7 @@ function followAssess({ signal, market, now }) {
     trendText: '1H ' + followTrendLabel(t1.state) + ' · 4H ' + followTrendLabel(t4.state) + ' · 1H 거래량 ' + volText(v1),
     m15Text: fifteenText + ' · 15분 거래량 ' + volText(v15) };
 }
-// Confirmed-candle price structure for 3-hour reports only. These are observable
+// Confirmed-candle price structure for 2-hour reports only. These are observable
 // historical zones, NOT verified order-book support/resistance or price forecasts.
 // Bar integrity and recency are checked even when called independently of followTick.
 const followLevelNumber = n => typeof n === 'number' && Number.isFinite(n) && n > 0;
@@ -3015,7 +3015,7 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
   return [
-    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 3시간 포지션 점검',
+    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 2시간 포지션 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
     '🔎 판단: [' + a.status + '] ' + a.verdict,
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
@@ -3071,7 +3071,7 @@ function followTick(env) {
     const next = (st.lastSentAt === null ? Math.max(st.enteredAt, r.at) : st.lastSentAt) + FOLLOW_REPORT_INTERVAL_MS;
     const hourly = now >= next && !(st.retryAt && now < st.retryAt) && st.pendingHour !== h;
     // Existing five-minute trigger evaluates market at most once per 15-minute slot
-    // between regular 3-hour reports. Do not add a trigger or poll the exchange every five minutes.
+    // between regular 2-hour reports. Do not add a trigger or poll the exchange every five minutes.
     if (!hourly && (now < Math.max(st.enteredAt, r.at) || st.lastMonitorSlot === slot)) continue;
     if (out.scanned >= FOLLOW_MAX_POSITIONS) { out.capped++; continue; }
     out.scanned++;
@@ -4534,7 +4534,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '171f3ed1d562';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '9b5b18867a1a';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -5694,8 +5694,8 @@ function rich300BotCheck() {
 
 // ── gas/Follow.gs ──
 /**
- * Opt-in 3-hour follow-up for Telegram "진입했어" signals.
- * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once per 3 hours.
+ * Opt-in 2-hour follow-up for Telegram "진입했어" signals.
+ * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once per 2 hours.
  * OFF by default until owner explicitly configures RICH300_HOURLY_FOLLOW=on.
  * Reuses RICH300 sheet, existing tg: Script Properties namespace and guarded bot transport.
  * Public OKX/Bybit market data only; no exchange orders or account reads.
