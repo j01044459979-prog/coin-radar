@@ -27,20 +27,23 @@ function setup(){
   const env={now:()=>t,mode:()=> 'on',storeEnv:()=>m.env,kv,market:()=>market(t),send:(msg,sid)=>{calls.push({msg,sid});return {ok:true}}};
   return {m,map,calls,kv,env,setNow:v=>{t=v}};
 }
-test('최초 진입 확인부터 3시간 뒤 첫 보고, 5분 재실행은 중복 전송하지 않는다',()=>{
+test('최초 진입 확인부터 2시간 뒤 첫 보고, 5분 재실행은 중복 전송하지 않는다',()=>{
   const x=setup(),r=followStart(x.kv,SIG.sid,AT);
+  assert.equal(FOLLOW_REPORT_INTERVAL_MS,2*FOLLOW_HOUR_MS);
   assert.equal(r.status,'added');assert.equal(followStart(x.kv,SIG.sid,AT).status,'duplicate');
+  x.setNow(AT+FOLLOW_REPORT_INTERVAL_MS-1);
+  assert.equal(followTick(x.env).sent,0); // first regular report must not arrive early
+  x.setNow(NOW);
   let out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,1);
-  assert.match(x.calls[0].msg,/3시간 포지션 점검/);
+  assert.match(x.calls[0].msg,/2시간 포지션 점검/);
   assert.match(x.calls[0].msg,/4H 추세·1H 눌림/);assert.match(x.calls[0].msg,/실제 체결 미확인/);
   assert.match(x.calls[0].msg,/손절/);assert.match(x.calls[0].msg,/TP1/);
   assert.equal(storeList(x.m.env,'fill').length,0); // fake Telegram entry != exchange execution
   x.setNow(NOW+5*60000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
   x.setNow(NOW+FOLLOW_HOUR_MS+5000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
-  x.setNow(NOW+2*FOLLOW_HOUR_MS+5000);out=followTick(x.env);assert.equal(out.sent,0);assert.equal(x.calls.length,1);
   x.setNow(NOW+FOLLOW_REPORT_INTERVAL_MS+5000);out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,2);
 });
-test('유지 중을 눌러도 3시간 주기 유지, 정리했어는 완전히 중단, 이전 버튼으로 재활성화 불가',()=>{
+test('유지 중을 눌러도 2시간 주기 유지, 정리했어는 완전히 중단, 이전 버튼으로 재활성화 불가',()=>{
   const x=setup();followStart(x.kv,SIG.sid,AT);followTick(x.env);
   assert.equal(followChoice(x.kv,SIG.sid,'keep',NOW+1000).status,'kept');
   assert.equal(followRead(x.kv,SIG.sid).confirmedAt,NOW+1000);
@@ -65,7 +68,7 @@ test('초기 상태가 없는 과거 버튼·미진입 신호는 후속 분석�
   const out=followTick(x.env);assert.equal(out.closed,1);assert.equal(out.sent,0);
   assert.equal(followRead(x.kv,SIG.sid).status,'closed');
 });
-test('3시간 리포트는 SHORT 손절가 이탈을 먼저 알리고 실제 손익을 주장하지 않는다',()=>{
+test('2시간 리포트는 SHORT 손절가 이탈을 먼저 알리고 실제 손익을 주장하지 않는다',()=>{
   const text=followReport({signal:SIG,market:market(NOW,1.13),now:NOW,enteredAt:AT});
   assert.match(text,/손절 기준 이탈/);assert.match(text,/실제 손익 아님/);
   assert.match(text,/진입 응답/);assert.match(text,/현재 공개 시세/);
@@ -113,7 +116,7 @@ test('추세 역행·유효하지 않은 위험 가격·오래된 15분봉을 �
   assert.match(stale.fifteenText,/비교 불가/);assert.equal(stale.v15,null);
 });
 
-test('15분 단위 긴급 변경만 추가 전송하고 정상 3시간 보고 주기는 유지한다',()=>{
+test('15분 단위 긴급 변경만 추가 전송하고 정상 2시간 보고 주기는 유지한다',()=>{
   const x=setup();followStart(x.kv,SIG.sid,AT);
   let r=followTick(x.env);assert.equal(r.sent,1);assert.equal(r.alerts,0);
   x.setNow(NOW+20*60000);x.env.market=()=>market(NOW+20*60000,1.09);
@@ -142,7 +145,7 @@ test('긴급 알림도 정리 버튼·오래된 시세·preview 조건에서는 
 });
 
 
-test('3시간 리포트: 확정봉 지지·저항, 최초 TP1/TP2와 보수적 조정 후보, 손절 당기기 근거를 함께 제공한다',()=>{
+test('2시간 리포트: 확정봉 지지·저항, 최초 TP1/TP2와 보수적 조정 후보, 손절 당기기 근거를 함께 제공한다',()=>{
   const now = NOW, hBase = Math.floor(now/3600000)*3600000-3600000,
     fBase = Math.floor(now/(4*3600000))*(4*3600000)-4*3600000;
   const bars = (size, last, step) => Array.from({length:size},(_,i)=>({
@@ -161,7 +164,7 @@ test('3시간 리포트: 확정봉 지지·저항, 최초 TP1/TP2와 보수적 �
   assert.ok(levels.resistance.length>=2 && levels.resistance[0].price>100);
   const long={...SIG,dir:'LONG',entry:'94',stop:'90',tp1:'115',tp2:'122'};
   const msg=followReport({signal:long,market:m,now,enteredAt:AT});
-  for(const re of [/3시간 포지션 점검/,/③ 확정봉 지지·저항/,/지지: [0-9.]+/,/저항: [0-9.]+/,
+  for(const re of [/2시간 포지션 점검/,/③ 확정봉 지지·저항/,/지지: [0-9.]+/,/저항: [0-9.]+/,
     /TP1 최초 115/,/TP2 최초 122/,/조정 검토/,/손절 최초 90/,/당기기 검토/,/유지 조건:/,/위험 조건:/,/자동 수정 아님/,/실제 Binance 체결 아님/])
     assert.match(msg,re,String(re));
   assert.ok(msg.length<=3600);
