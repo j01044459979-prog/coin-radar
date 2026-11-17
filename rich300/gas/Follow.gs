@@ -1,6 +1,6 @@
 /**
- * Opt-in 3-hour follow-up for Telegram "진입했어" signals.
- * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once per 3 hours.
+ * Opt-in 2-hour follow-up for Telegram "진입했어" signals.
+ * No separate trigger: piggybacks on existing rich300WatchTick every 5 min, reports at most once per 2 hours.
  * OFF by default until owner explicitly configures RICH300_HOURLY_FOLLOW=on.
  * Reuses RICH300 sheet, existing tg: Script Properties namespace and guarded bot transport.
  * Public OKX/Bybit market data only; no exchange orders or account reads.
