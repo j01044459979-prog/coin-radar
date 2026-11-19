@@ -3599,11 +3599,13 @@ function strategyTick(env) {
       const watches = v.watches.map(x => feedParseWatchInterest(x, now));
       out.autoInterest = { received: watches.length, invalid: watches.filter(x => !x.ok).length,
         added: 0, existing: 0 };
-      if (live) {
-        const watchResult = tgAutoRegisterWatchInterests(env, watches.filter(x => x.ok));
+      if (live && env.watchInterestKv) {
+        // Telegram /watchlist uses tg: properties, not strategy state w: properties.
+        const watchResult = tgAutoRegisterWatchInterests(
+          { now: env.now, kv: env.watchInterestKv }, watches.filter(x => x.ok));
         out.autoInterest.added = watchResult.added;
         out.autoInterest.existing = watchResult.existing;
-      }
+      } else if (live) out.autoInterest.store = 'unavailable';
       const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
       const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
@@ -4587,7 +4589,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '6f38e5fc0b40';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '1428df76bd0b';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
@@ -5525,6 +5527,8 @@ function rich300StrategyEnv_(mode) {
   base.feed = rich300StrategyFeed_;
   base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k && String(k).length >= 32 ? String(k) : null; };      // 없거나 약하면 null → 피드 거부(서명 필수)
   base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); };
+  // Watchlist is persisted in tg:wc:* Script Properties; strategy state uses w:*.
+  base.watchInterestKv = rich300TgEnv_().kv;
   base.budgetMs = 150000;
   return base;
 }
@@ -5539,7 +5543,7 @@ function rich300StrategyRun_(want) {
     out = RICH300_ENGINE.strategyTick(rich300StrategyEnv_(mode)); out.requested = want; delete out.preview;
   } catch (err) { out = { status: 'exception', code: String(err && err.code || err && err.name || 'error').slice(0, 24) }; }
   finally { if (lk) lk.releaseLock(); }
-  if (want !== 'preview') try { props.setProperty('strategy:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || want, requested: want, created: out.created || 0, cancelled: out.cancelled || 0, tracked: out.tracked || 0, active: out.active || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, feed: out.feed || null, code: out.code || null })); } catch (err2) { /* 기록 실패는 무시 */ }
+  if (want !== 'preview') try { props.setProperty('strategy:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || want, requested: want, created: out.created || 0, cancelled: out.cancelled || 0, tracked: out.tracked || 0, active: out.active || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, feed: out.feed || null, autoInterest: out.autoInterest || null, code: out.code || null })); } catch (err2) { /* 기록 실패는 무시 */ }
   return out;
 }
 /** 편집기 직접 실행용 미리보기(설정과 무관, 저장·전송 없음). */
