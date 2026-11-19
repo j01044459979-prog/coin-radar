@@ -57,7 +57,7 @@ export function signalCaption(symbol, ev, opts = {}) {
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
     `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
-    '🧭 지금: 확정 조건 충족 · 현재 호가 확인 후 판단',
+    '🧭 지금: 조건 확정 · 호가 확인',
     ...(ev.fib?.ok && ev.fib.fib ? [
       `📐 FIB 0.5~0.618 · ${f(ev.fib.fib.lo)}~${f(ev.fib.fib.hi)}`,
       `RSI14 1H ${Number(ev.fib.rsi1).toFixed(0)} · 15m ${Number(ev.fib.rsi15).toFixed(0)}`,
