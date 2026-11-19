@@ -60,3 +60,26 @@ test('전송 실패·불확실 전달: Telegram 전송이 실패했거나 전달
 test('플래그 off(기본): radar 상태에 피드가 없고 산출물도 만들어지지 않는다', async () => {
   const r = await radar({}, { env: { RADAR_RICH300_FEED: 'off' } }); assert.equal(r.out.sentMessages, 1); assert.equal(r.st.signal.feed, undefined); assert.deepEqual(feedArtifactOf(r.st, { ...ENVA, RADAR_RICH300_FEED: 'off' }), { ok: false, reason: 'flag-off' });
 });
+
+test('signed feed auto-registers ALL accumulation stage-one interests in /watchlist without entry/trade', () => {
+  const at = NOW;
+  const syms = ['BNBUSDT', 'ALGOUSDT', 'SOLUSDT', 'ADAUSDT'];
+  const state = { signal: { feed: [], accumulation: { autoInterest: Object.fromEntries(
+    syms.map(symbol => [symbol, { sid: 'WK-' + symbol.slice(0, -4) + '-C-' +
+      Math.floor(at / 60000).toString(36), symbol, source: 'C',
+      dir: 'WATCH', at, lastSeenAt: NOW + 3 * 60000 }])) } } };
+  const signed = publish(state);
+  assert.equal(signed.ok, true, JSON.stringify(signed));
+  const w = gas({ raw: signed.raw });
+  const tick = w.at(6 * 60000);
+  assert.equal(tick.autoInterest.added, syms.length, JSON.stringify(tick));
+  assert.equal(w.g.rows('strategy').length, 0, 'stage-one cannot create a virtual trade');
+  assert.equal(w.g.rows('signal').length, 0, 'stage-one cannot create a trade signal');
+  const repeated = w.at(11 * 60000);
+  assert.equal(repeated.autoInterest.added, 0, 'same symbols are idempotent');
+  w.g.tele.say(OWNER, '/watchlist'); w.g.ctx.rich300TgPoll();
+  const reply = w.g.tele.last().text;
+  for (const symbol of syms) assert.match(reply, new RegExp(symbol));
+  assert.match(reply, /자동관심/);
+  assert.equal(w.g.rows('fill').length, 0);
+});
