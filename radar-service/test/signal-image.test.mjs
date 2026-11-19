@@ -44,8 +44,12 @@ test('신호 이미지 입력 검증: 후보가 아니거나 봉이 부족·불�
 test('캡션: A급 상세(진입가·손절·1·2차 목표·손익비·유효 종료·남은 시간), 1024자 이하, 모바일 폭, 금지 표현 없음', () => {
   for (const ev of [evalL(), evalS()]) {
     const now = ev.validUntil - 30 * 60000, cap = signalCaption('ETHUSDT', ev, { now }), lines = cap.split('\n');
-    assert.ok(lines.length >= 8 && lines.length <= 13, `줄 수 ${lines.length}`); assert.ok(cap.length <= 1024); lines.forEach(l => assert.ok(displayWidth(l) <= 66, l));
+    assert.ok(lines.length >= 8 && lines.length <= 15, `줄 수 ${lines.length}`); assert.ok(cap.length <= 1024); lines.forEach(l => assert.ok(displayWidth(l) <= 82, l));
     for (const v of [ev.entry, ev.stop, ev.t1.price]) assert.ok(cap.includes(v.toFixed(2)));
+    assert.match(cap, /지금: 확정 조건 충족/);
+    assert.match(cap, /손절 기준 .*가격 [−+][0-9.]+%/);
+    assert.match(cap, /1차 .*\([−+][0-9.]+%\)/);
+    assert.match(cap, /추격 금지/);
     assert.match(cap, /A급 진입 후보/); assert.match(cap, /진입 관심가/); assert.match(cap, /손절 기준/); assert.match(cap, /1차/); assert.match(cap, /순손익비/);
     assert.match(cap, /유효 종료 \d\d-\d\d \d\d:\d\d KST/); assert.match(cap, /남은 30분/); assert.match(cap, /현시세 아님/);
     assert.ok(cap.includes('미검증')); assert.ok(!FORBID.test(cap.replace('주문 권고 아님', '')));
