@@ -50,7 +50,7 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
   if (ev.btcAlign === '역방향' && (!btc || (!btc.trend4h && !Number.isFinite(btc.btc1hPct))))
     lines.push('⚠️ BTC 4H 방향과 반대');
   lines.push('', '🚫 무효화 조건', `   15분 종가 ${fmtPrice(ev.stop)} ${L ? '하향' : '상향'} 이탈`, '   또는 유효시간 경과');
-  lines.push('', '⚠️ 가격이 관심가에서 크게 벗어났거나 만료되면 추격 금지', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
+  lines.push('', '⚠️ 만료 또는 추격 구간이면 진입 금지', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
   const text = lines.join('\n');
   return { text, plain: htmlToPlain(text), html: true, kind: 'candidate' };
 }
