@@ -320,11 +320,13 @@ export function strategyTick(env) {
       const watches = v.watches.map(x => feedParseWatchInterest(x, now));
       out.autoInterest = { received: watches.length, invalid: watches.filter(x => !x.ok).length,
         added: 0, existing: 0 };
-      if (live) {
-        const watchResult = tgAutoRegisterWatchInterests(env, watches.filter(x => x.ok));
+      if (live && env.watchInterestKv) {
+        // Telegram /watchlist uses tg: properties, not strategy state w: properties.
+        const watchResult = tgAutoRegisterWatchInterests(
+          { now: env.now, kv: env.watchInterestKv }, watches.filter(x => x.ok));
         out.autoInterest.added = watchResult.added;
         out.autoInterest.existing = watchResult.existing;
-      }
+      } else if (live) out.autoInterest.store = 'unavailable';
       const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
       const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
