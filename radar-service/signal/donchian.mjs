@@ -65,30 +65,39 @@ export function evaluateDonchian(c1h, c4h, now, P = DONCHIAN) {
 }
 
 export function donchianMessage(symbol, signal) {
-  const s = signal, L = s.dir === 'LONG';
-  const title = s.stage === 'BREAKOUT' ? '4H 확정 돌파 · 진입 관심 후보' : '1H 돌파 접근 · 사전 관찰';
+  const s = signal, L = s.dir === 'LONG', breakout = s.stage === 'BREAKOUT';
+  const pctFromEntry = value => {
+    const pct = changePct(value, s.entry);
+    return (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
+  };
+  const boundary = L ? s.upper : s.lower;
+  const confirm = '4H 종가 ' + fmtPrice(boundary) + (L ? ' 초과 · 양봉 · EMA200 위' : ' 미만 · 음봉 · EMA200 아래');
+  const title = breakout ? '4H 확정 돌파 · 진입 관심 후보' : '1H 돌파 접근 · 사전 관찰';
   const lines = [
     (L ? '🟢 ' : '🔴 ') + bold(symbol.replace(/USDT$/, '')) + ' · ' + bold(s.dir),
     '📈 ' + bold('RICH 돈치안 추세 전략'),
     bold(title),
     '🕓 확정봉 ' + timeKst(s.asOf) + ' KST',
+    '🧭 지금 할 일: ' + (breakout ? '실시간 가격 확인 · 추격 진입 금지' : '관망 · 4H 확정봉 대기'),
+    (breakout ? '✅ 충족된 4H 조건: ' : '🔎 진입 확인 조건: ') + confirm,
     '📦 4H 20봉 채널 ' + fmtPrice(s.lower) + ' ~ ' + fmtPrice(s.upper),
     '📊 4H EMA200 ' + fmtPrice(s.ema200),
   ];
-  if (s.stage === 'BREAKOUT') {
-    lines.push('💰 확정 종가(관심가) ' + fmtPrice(s.entry),
-      '🛑 ATR 기준 손절 ' + fmtPrice(s.stop) + ' (' + s.riskPct.toFixed(2) + '%)',
-      '🎯 2.5R 가상 목표 ' + fmtPrice(s.t1),
-      '🎯 4R 가상 목표 ' + fmtPrice(s.t2),
+  if (breakout) {
+    lines.push('💰 확정 종가(진입 관심가) ' + fmtPrice(s.entry),
+      '🛑 손절 ' + fmtPrice(s.stop) + ' (가격 ' + pctFromEntry(s.stop) + ' · 손실)',
+      '🎯 1차 익절 2.5R ' + fmtPrice(s.t1) + ' (가격 ' + pctFromEntry(s.t1) + ' · 수익)',
+      '🎯 2차 익절 4R ' + fmtPrice(s.t2) + ' (가격 ' + pctFromEntry(s.t2) + ' · 수익)',
+      'ℹ️ %는 관심가 대비 가격변동 · 레버리지/비용 미반영',
       '⚖️ 비용 ' + SIG.costPct.toFixed(2) + '% 가정 시 2.5R ≈ ' + (2.5 - s.costR).toFixed(2) + 'R',
       '↗️ 추세 지속 시 2 ATR 트레일링 검토',
       ...(s.volRel ? ['📊 거래대금 직전 20봉 대비 ×' + s.volRel.toFixed(2)] : []),
-      '⚠️ 돌파 후 추격 진입 금지 · 실시간 호가 재확인');
+      '⚠️ 실시간 호가·스프레드 재확인 · 자동 주문 없음');
   } else {
-    const boundary = L ? s.upper : s.lower;
-    lines.push('현재 1H 확정 종가 ' + fmtPrice(s.entry),
-      '👀 4H 돌파 확인 기준 ' + fmtPrice(boundary),
-      '⚠️ 관찰 전용 · 아직 진입 조건 미완성');
+    lines.push('💰 현재 1H 확정 종가 ' + fmtPrice(s.entry),
+      '👀 4H 돌파 확인선 ' + fmtPrice(boundary) + ' (1H 종가 대비 ' + pctFromEntry(boundary) + ')',
+      '🛑 손절 / 🎯 익절: 미산정 (4H 확정 돌파 후 계산)',
+      '⚠️ 확정 후 ATR 손절폭·추격 거리 검증 필요 · 진입 조건 미완성');
   }
   lines.push('', '※ 신규 실험 전략 · 백테스트 생략 · 수익성 미검증',
     '※ 자동 주문 없음 · 수수료·펀딩비·슬리피지·급변동 위험');
