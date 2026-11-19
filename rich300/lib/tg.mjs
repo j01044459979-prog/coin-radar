@@ -413,7 +413,7 @@ function tgOnMessage(env, ev) {
     }
     if (c.cmd === 'watchlist') {
       const list = tgWatchChoices(env), active = list.filter(x => x.choice === 'interest');
-      const shown = active.slice(0, 15).map(x => `• ${x.symbol} · ${x.source === 'B' ? '기본 레이더' : '매집 감시'} · ${x.dir === 'WATCH' ? '관찰' : x.dir}`);
+      const shown = active.slice(0, 15).map(x => `• ${x.symbol} · ${x.auto ? '매집 1단계 자동관심' : x.source === 'B' ? '기본 레이더' : '매집 감시'} · ${x.dir === 'WATCH' ? '관찰' : x.dir}`);
       return { status: 'handled', action: 'watchlist', ...reply(
         active.length ? ['👀 관심 등록 기록 ' + active.length + '건', ...shown,
           ...(active.length > 15 ? ['외 ' + (active.length - 15) + '건'] : []),
@@ -449,6 +449,32 @@ export function tgWatchChoices(env) {
     x && x.sid && x.symbol && ['interest', 'pass'].includes(x.choice) && Number.isFinite(x.recordedAt))
     .sort((a,b) => b.recordedAt - a.recordedAt);
 }
+// Called only after the RICH300 feed's HMAC verification and watch-schema check.
+// One interest per symbol even when the stage-1 condition recurs in later hours.
+export function tgAutoRegisterWatchInterests(env, verifiedWatches = []) {
+  if (!Array.isArray(verifiedWatches) || typeof env.kv.keys !== 'function')
+    return { added: 0, existing: 0, rejected: 0 };
+  const interested = new Set(tgWatchChoices(env)
+    .filter(x => x.choice === 'interest' && x.source === 'C').map(x => x.symbol));
+  let added = 0, existing = 0, rejected = 0;
+  for (const x of verifiedWatches.slice(0, 200)) {
+    if (!x || x.kind !== 'watch-interest' || x.source !== 'C' ||
+        x.dir !== 'WATCH' || !/^[A-Z0-9]{2,20}USDT$/.test(x.symbol) ||
+        !Number.isSafeInteger(x.at) ||
+        x.sid !== 'WK-' + x.symbol.slice(0, -4) + '-C-' +
+          Math.floor(x.at / 60000).toString(36)) { rejected++; continue; }
+    if (interested.has(x.symbol)) { existing++; continue; }
+    const key = 'wc:' + x.sid;
+    if (tgKvGet(env, key)) { existing++; continue; }
+    tgKvPut(env, key, { sid: x.sid, symbol: x.symbol, source: 'C',
+      dir: 'WATCH', at: x.at, choice: 'interest', recordedAt: env.now(),
+      auto: true, stage: 'WATCH' }, 30 * 86400);
+    interested.add(x.symbol);
+    added++;
+  }
+  return { added, existing, rejected };
+}
+
 function tgOnWatchChoice(env, ev, sid, action, cb, answer) {
   const parsed = w1ParseWatch(ev.msgText);
   if (!parsed || parsed.sid !== sid || !TG_SID_RE.test(sid)) {
