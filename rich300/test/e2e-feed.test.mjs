@@ -78,7 +78,8 @@ test('signed feed auto-registers ALL accumulation stage-one interests in /watchl
   assert.equal(tick.autoInterest.added, syms.length, JSON.stringify(tick));
   assert.equal(w.g.rows('strategy').length, 0, 'stage-one cannot create a virtual trade');
   assert.equal(w.g.rows('signal').length, beforeSignals, 'stage-one cannot create a trade signal');
-  const repeated = w.at(11 * 60000);
+  w.at(11 * 60000);
+  const repeated = JSON.parse(w.g.P.getProperty('strategy:last') || '{}');
   assert.equal(repeated.autoInterest.added, 0, 'same symbols are idempotent');
   w.g.tele.say(OWNER, '/watchlist'); w.g.ctx.rich300TgPoll();
   const reply = w.g.tele.last().text;
