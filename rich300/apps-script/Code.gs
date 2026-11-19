@@ -1929,7 +1929,7 @@ function tgOnMessage(env, ev) {
     }
     if (c.cmd === 'watchlist') {
       const list = tgWatchChoices(env), active = list.filter(x => x.choice === 'interest');
-      const shown = active.slice(0, 15).map(x => `• ${x.symbol} · ${x.source === 'B' ? '기본 레이더' : '매집 감시'} · ${x.dir === 'WATCH' ? '관찰' : x.dir}`);
+      const shown = active.slice(0, 15).map(x => `• ${x.symbol} · ${x.auto ? '매집 1단계 자동관심' : x.source === 'B' ? '기본 레이더' : '매집 감시'} · ${x.dir === 'WATCH' ? '관찰' : x.dir}`);
       return { status: 'handled', action: 'watchlist', ...reply(
         active.length ? ['👀 관심 등록 기록 ' + active.length + '건', ...shown,
           ...(active.length > 15 ? ['외 ' + (active.length - 15) + '건'] : []),
@@ -1965,6 +1965,32 @@ function tgWatchChoices(env) {
     x && x.sid && x.symbol && ['interest', 'pass'].includes(x.choice) && Number.isFinite(x.recordedAt))
     .sort((a,b) => b.recordedAt - a.recordedAt);
 }
+// Called only after the RICH300 feed's HMAC verification and watch-schema check.
+// One interest per symbol even when the stage-1 condition recurs in later hours.
+function tgAutoRegisterWatchInterests(env, verifiedWatches = []) {
+  if (!Array.isArray(verifiedWatches) || typeof env.kv.keys !== 'function')
+    return { added: 0, existing: 0, rejected: 0 };
+  const interested = new Set(tgWatchChoices(env)
+    .filter(x => x.choice === 'interest' && x.source === 'C').map(x => x.symbol));
+  let added = 0, existing = 0, rejected = 0;
+  for (const x of verifiedWatches.slice(0, 200)) {
+    if (!x || x.kind !== 'watch-interest' || x.source !== 'C' ||
+        x.dir !== 'WATCH' || !/^[A-Z0-9]{2,20}USDT$/.test(x.symbol) ||
+        !Number.isSafeInteger(x.at) ||
+        x.sid !== 'WK-' + x.symbol.slice(0, -4) + '-C-' +
+          Math.floor(x.at / 60000).toString(36)) { rejected++; continue; }
+    if (interested.has(x.symbol)) { existing++; continue; }
+    const key = 'wc:' + x.sid;
+    if (tgKvGet(env, key)) { existing++; continue; }
+    tgKvPut(env, key, { sid: x.sid, symbol: x.symbol, source: 'C',
+      dir: 'WATCH', at: x.at, choice: 'interest', recordedAt: env.now(),
+      auto: true, stage: 'WATCH' }, 30 * 86400);
+    interested.add(x.symbol);
+    added++;
+  }
+  return { added, existing, rejected };
+}
+
 function tgOnWatchChoice(env, ev, sid, action, cb, answer) {
   const parsed = w1ParseWatch(ev.msgText);
   if (!parsed || parsed.sid !== sid || !TG_SID_RE.test(sid)) {
@@ -3147,10 +3173,13 @@ function feedVerify(env, raw, key, opts = {}) {
   if (Number.isSafeInteger(opts.lastTs) && msg.ts < opts.lastTs) return { ok: false, reason: 'replay' };                              // 이미 받은 것보다 오래된 피드(되돌려 쓰기) 거부
   const body = msg.body, entries = body && Array.isArray(body.entries) ? body.entries : null, meta = body && body.meta;
   if (!entries || entries.length > FEED_MAX_ENTRIES) return { ok: false, reason: 'bad-entries' };
+  // Watch interests are separately signed, validated and never parsed as trades.
+  const watches = body.watches === undefined ? [] : body.watches;
+  if (!Array.isArray(watches) || watches.length > 200) return { ok: false, reason: 'bad-watches' };
   if (!meta || typeof meta !== 'object' || !/^\d{1,20}$/.test(String(meta.runId)) || meta.ref !== 'refs/heads/main' || meta.mode !== 'once' || !FEED_META_EVENTS.includes(meta.event) || !/^\d{10,14}$/.test(String(meta.at))) return { ok: false, reason: 'bad-meta' };
   const genAge = now - Number(meta.at);
   if (age > FEED_MAX_AGE_MS || genAge > FEED_MAX_AGE_MS) return { ok: false, reason: 'stale', ageMs: Math.max(age, genAge) };            // 오래된 피드로 새 전략을 만들지 않는다
-  return { ok: true, signed: true, ageMs: Math.max(0, genAge), ts: msg.ts, entries, runId: String(meta.runId) };
+  return { ok: true, signed: true, ageMs: Math.max(0, genAge), ts: msg.ts, entries, watches, runId: String(meta.runId) };
 }
 // 항목 하나를 검증해 전략 입력으로 바꾼다. 실패하면 { ok:false, why }.
 function feedParseEntry(e) {
@@ -3167,6 +3196,21 @@ function feedParseEntry(e) {
   const ref = [fdNum(e.ref1), fdNum(e.ref2)], ev = Array.isArray(e.evidence) ? e.evidence.slice(0, 3).map(x => String(x).slice(0, 80)) : [];
   const zlo = fdNum(e.zlo), zhi = fdNum(e.zhi), lvl = fdNum(e.lvl), atr = fdNum(e.atr);
   return { ok: true, kind: 'candidate', zlo: zlo === null ? undefined : zlo, zhi: zhi === null ? undefined : zhi, lvl: lvl === null ? undefined : lvl, atr: atr === null ? undefined : atr, sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+}
+
+/** Signed watch records only; never create a trade signal, strategy or position. */
+function feedParseWatchInterest(x, now) {
+  if (!x || typeof x !== 'object' || Array.isArray(x) || x.type !== 'watch-interest' ||
+      x.source !== 'C' || x.dir !== 'WATCH' ||
+      !FEED_SYM_RE.test(String(x.symbol)) || !/^\d{13}$/.test(String(x.at)))
+    return { ok: false, why: 'bad-watch' };
+  const at = Number(x.at), sid = 'WK-' + x.symbol.slice(0, -4) + '-C-' +
+    Math.floor(at / 60000).toString(36);
+  if (x.sid !== sid || !/^[A-Za-z0-9_.-]{1,54}$/.test(sid) ||
+      !Number.isSafeInteger(at) || at > now ||
+      now - at > 30 * 86400000) return { ok: false, why: 'bad-watch-time' };
+  return { ok: true, kind: 'watch-interest', sid, symbol: x.symbol,
+    source: 'C', dir: 'WATCH', at };
 }
 
 // ── stages.mjs ──
@@ -3551,6 +3595,15 @@ function strategyTick(env) {
     out.feed = v.ok ? { ok: true, signed: true, ageMin: Math.round(v.ageMs / 60000), entries: v.entries.length } : { ok: false, code: v.reason };
     if (v.ok && live && v.ts !== lastTs) { try { env.kv.put('sgfeedts', String(v.ts)); } catch (e_) { /* 기록 실패 시 다음 실행에서 다시 */ } }
     if (v.ok) {
+      // Watch records are separate from trade strategy entries and do not create positions.
+      const watches = v.watches.map(x => feedParseWatchInterest(x, now));
+      out.autoInterest = { received: watches.length, invalid: watches.filter(x => !x.ok).length,
+        added: 0, existing: 0 };
+      if (live) {
+        const watchResult = tgAutoRegisterWatchInterests(env, watches.filter(x => x.ok));
+        out.autoInterest.added = watchResult.added;
+        out.autoInterest.existing = watchResult.existing;
+      }
       const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
       const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
@@ -4440,7 +4493,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, FOLLOW_LEVEL_BUFFER, followLevels, followDetailedPlan, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgAutoRegisterWatchInterests, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, FOLLOW_LEVEL_BUFFER, followLevels, followDetailedPlan, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, feedParseWatchInterest, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -4534,7 +4587,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '9b5b18867a1a';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '6f38e5fc0b40';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
