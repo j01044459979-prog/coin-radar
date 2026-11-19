@@ -56,7 +56,7 @@ export function feedParseEntry(e) {
 export function feedParseWatchInterest(x, now) {
   if (!x || typeof x !== 'object' || Array.isArray(x) || x.type !== 'watch-interest' ||
       x.source !== 'C' || x.dir !== 'WATCH' ||
-      !FEED_SYM_RE.test(String(x.symbol)) || !/^\\d{13}$/.test(String(x.at)))
+      !FEED_SYM_RE.test(String(x.symbol)) || !/^\d{13}$/.test(String(x.at)))
     return { ok: false, why: 'bad-watch' };
   const at = Number(x.at), sid = 'WK-' + x.symbol.slice(0, -4) + '-C-' +
     Math.floor(at / 60000).toString(36);
