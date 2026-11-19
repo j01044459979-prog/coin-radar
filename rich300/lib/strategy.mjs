@@ -9,7 +9,8 @@ import { splanBuild, splanSign, splanTpLegs, splanExec, splanStopExec, splanReas
 import { storeList, storeGet, storeCreate, storeRevise } from './store.mjs';
 import { kstDayOf } from './time.mjs';
 import { nullishOr } from './nullish.mjs';
-import { feedVerify, feedParseEntry } from './feed.mjs';
+import { feedVerify, feedParseEntry, feedParseWatchInterest } from './feed.mjs';
+import { tgAutoRegisterWatchInterests } from './tg.mjs';
 import { stgPlan } from './stages.mjs';
 import { WATCH, watchAssessMarket, watchTrend, watchVolRatio, wDeliver, wLoadState, wSaveState, wFmt, wAgainst } from './watch.mjs';
 
@@ -315,6 +316,15 @@ export function strategyTick(env) {
     out.feed = v.ok ? { ok: true, signed: true, ageMin: Math.round(v.ageMs / 60000), entries: v.entries.length } : { ok: false, code: v.reason };
     if (v.ok && live && v.ts !== lastTs) { try { env.kv.put('sgfeedts', String(v.ts)); } catch (e_) { /* 기록 실패 시 다음 실행에서 다시 */ } }
     if (v.ok) {
+      // Watch records are separate from trade strategy entries and do not create positions.
+      const watches = v.watches.map(x => feedParseWatchInterest(x, now));
+      out.autoInterest = { received: watches.length, invalid: watches.filter(x => !x.ok).length,
+        added: 0, existing: 0 };
+      if (live) {
+        const watchResult = tgAutoRegisterWatchInterests(env, watches.filter(x => x.ok));
+        out.autoInterest.added = watchResult.added;
+        out.autoInterest.existing = watchResult.existing;
+      }
       const parsed = v.entries.map(feedParseEntry); for (const e of parsed) if (e.ok && e.kind === 'invalidated') radarInv.add(e.sid);
       const cands = parsed.filter(e => { if (!e.ok) out.skippedFeed++; return e.ok && e.kind === 'candidate'; }).sort((a, b) => a.triggerT - b.triggerT);
       const day = kstDayOf(now); let activeRows = [...rows.values()].filter(r => sgyIsActive(r.state));
