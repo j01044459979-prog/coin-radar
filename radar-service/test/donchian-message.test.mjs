@@ -43,8 +43,8 @@ test('Donchian SHORT breakout shows price-change percentages for stop and both t
 
 test('Donchian LONG breakout reports downward stop and upward take-profit distances', () => {
   const msg = donchianMessage('ETHUSDT', breakoutLong);
-  assert.match(msg.plain, /충족된 4H 조건: 4H 종가 99\.00 초과 · 양봉 · EMA200 위/);
-  assert.match(msg.plain, /손절 98\.00 \(가격 -2\.00% · 손실\)/);
+  assert.match(msg.plain, /충족된 4H 조건: 4H 종가 99\.000 초과 · 양봉 · EMA200 위/);
+  assert.match(msg.plain, /손절 98\.000 \(가격 -2\.00% · 손실\)/);
   assert.match(msg.plain, /1차 익절 2\.5R 105\.00 \(가격 \+5\.00% · 수익\)/);
   assert.match(msg.plain, /2차 익절 4R 108\.00 \(가격 \+8\.00% · 수익\)/);
   assert.equal(msg.plain.includes('<b>'), false, 'plain text stays HTML-free');
