@@ -3,6 +3,7 @@
 import { C, esc, renderPng } from '../chart.mjs';
 import { fmtPrice, priceDecimals } from '../format.mjs';
 import { H1 } from '../opportunity/indicators.mjs';
+import { accumulationNextSteps, accumulationRetestPlan } from './accumulation.mjs';
 
 export const ACC_CHART = Object.freeze({ W: 1080, H: 1290, BARS: 45 });
 const { W, H, BARS } = ACC_CHART;
@@ -41,6 +42,10 @@ export function buildAccumulationSvg(symbol, x, c1h) {
   const entry = isRetest ? x.entry : x.close;
   if (!valid(entry)) throw new Error('매집 차트 현재가 누락');
   const f = v => fmtPrice(v, priceDecimals(entry));
+  const pct = v => {
+    const p = (v / entry - 1) * 100;
+    return (p > 0 ? '+' : '') + p.toFixed(2) + '%';
+  };
   const priceLevels = [x.upper, x.lower, entry, ...(isRetest ? [x.stop] : [])];
   const allHi = Math.max(...bars.map(b => b.h), ...priceLevels);
   const allLo = Math.min(...bars.map(b => b.l), ...priceLevels);
@@ -88,9 +93,9 @@ export function buildAccumulationSvg(symbol, x, c1h) {
     ['박스 하단',f(x.lower),C.entry],
     [isRetest?'진입 관심가':'확정 종가',f(entry),C.up],
     ...(isRetest?[
-      ['재지지 손절',f(x.stop),C.down],
-      ['가상 목표 1.5R',f(x.t1),C.up],
-      ['가상 목표 2R',f(x.t2),C.up],
+      ['재지지 손절 '+pct(x.stop),f(x.stop),C.down],
+      ['가상 목표 1.5R '+pct(x.t1),f(x.t1),C.up],
+      ['가상 목표 2R '+pct(x.t2),f(x.t2),C.up],
     ]:[['돌파 확인',f(x.upper*1.001),C.entry]]),
   ];
   vals.forEach(([label,val,color],i)=>{
@@ -123,16 +128,23 @@ export function buildAccumulationSvg(symbol, x, c1h) {
   return '<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+
     '" viewBox="0 0 '+W+' '+H+'" font-family="Noto Sans KR">'+out.join('')+'</svg>';
 }
+// Photos are the normal Telegram delivery path, not the text-only fallback.
+// Share action/threshold/plan text with the message formatter so the user sees
+// the same decision guidance under the image.
 export function accumulationCaption(symbol,x){
-  const f=fmtPrice, retest=x.stage==='RETEST';
-  return [
+  const retest=x.stage==='RETEST', f=fmtPrice;
+  const lines=[
     (retest?'🎯':'🧭')+' '+symbol+' · '+(retest?'3단계 재지지 관심 후보':x.stage==='BREAKOUT'?'2단계 돌파 관찰':'1단계 매집 감시'),
     '⏱ 1H 확정 '+kst(x.asOf)+' KST',
     '📦 박스 '+f(x.lower)+' ~ '+f(x.upper),
-    '💰 확정가 '+f(retest?x.entry:x.close),
-    ...(retest?['🛑 손절 '+f(x.stop)+' · 🎯 1.5R '+f(x.t1)+' / 2R '+f(x.t2)]:[]),
-    '※ 수익성 미검증 · 자동주문 없음',
-  ].join('\n');
+    ...(retest ? [] : ['💰 확정 종가 '+f(x.close)]),
+    ...(retest ? accumulationRetestPlan(x) : accumulationNextSteps(x)),
+    '※ 시세·체결가 실시간 재확인 · 수익성 미검증',
+    '※ 자동주문/진입기록 없음 · 수수료·슬리피지 위험',
+  ];
+  const caption=lines.join('\n');
+  if ([...caption].length > 1024) throw new Error('매집 텔레그램 이미지 설명 1024자 초과');
+  return caption;
 }
 export async function renderAccumulationChart(symbol,x,c1h){
   return renderPng(buildAccumulationSvg(symbol,x,c1h),W);
