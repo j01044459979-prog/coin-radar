@@ -71,7 +71,8 @@ test('signed feed auto-registers ALL accumulation stage-one interests in /watchl
   const signed = publish(state);
   assert.equal(signed.ok, true, JSON.stringify(signed));
   const w = gas({ raw: signed.raw });
-  const tick = w.at(6 * 60000);
+  w.at(6 * 60000);
+  const tick = JSON.parse(w.g.P.getProperty('strategy:last') || '{}');
   assert.equal(tick.autoInterest.added, syms.length, JSON.stringify(tick));
   assert.equal(w.g.rows('strategy').length, 0, 'stage-one cannot create a virtual trade');
   assert.equal(w.g.rows('signal').length, 0, 'stage-one cannot create a trade signal');
