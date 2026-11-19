@@ -25,6 +25,10 @@ test('independent accumulation watch flags compressed sideways price + rising qu
   assert.match(text.plain, /주문 아님/);
   assert.match(text.plain, /BTC 비교/);
   assert.doesNotMatch(text.plain, /진입 관심가|1차 목표|R9 v1/);
+  assert.match(text.plain, /상태: 관망/);
+  assert.match(text.plain, /1H 종가/);
+  assert.match(text.plain, /재지지\(3단계\)/);
+  assert.match(text.plain, /손절·익절: 미산정/);
 });
 test('volume-supported confirmed breakout is an observation, not a chase recommendation', () => {
   const c = mkHour(), upper = Math.max(...c.slice(-25, -1).map(b => b.h));
@@ -33,7 +37,11 @@ test('volume-supported confirmed breakout is an observation, not a chase recomme
   last.l = last.o - 0.22; last.q = 2700;
   const ev = accumulationWatch(c, NOW);
   assert.equal(ev?.stage, 'BREAKOUT', JSON.stringify(ev));
-  assert.match(accumulationMessage('DOGEUSDT', ev, null).plain, /추격 진입 금지/);
+  const msg = accumulationMessage('DOGEUSDT', ev, null).plain;
+  assert.match(msg, /추격 진입 금지/);
+  assert.match(msg, /재지지 확정 전 신규 진입 대기/);
+  assert.match(msg, /저가 ≤/);
+  assert.match(msg, /종가 ≥/);
 });
 test('rejects stale/future/invalid candles and non-positive directional money-flow', () => {
   const c = mkHour();
