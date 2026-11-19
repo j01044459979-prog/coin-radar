@@ -4,6 +4,7 @@
 import { C, esc, renderPng } from '../chart.mjs';
 import { fmtPrice, priceDecimals } from '../format.mjs';
 import { H1, H4 } from '../opportunity/indicators.mjs';
+import { donchianMessage } from './donchian.mjs';
 
 export const DONCHIAN_CHART = Object.freeze({ W: 1080, H: 1370, bars: 42 });
 const { W, H } = DONCHIAN_CHART;
@@ -41,6 +42,7 @@ export function buildDonchianSvg(symbol, signal, c1h, c4h) {
   const { bars, four } = validateDonchianChart(symbol, signal, c1h, c4h);
   const s = signal, isLong = s.dir === 'LONG', accent = isLong ? C.up : C.down;
   const f = v => fmtPrice(v, priceDecimals(s.entry));
+  const pct = v => { const p = (v / s.entry - 1) * 100; return (p > 0 ? '+' : '') + p.toFixed(2) + '%'; };
   const h = bars.map(c => c.h), l = bars.map(c => c.l);
   const levels = [s.upper, s.lower, s.entry, ...(four ? [s.stop] : [])];
   const hi0 = Math.max(...h, ...levels), lo0 = Math.min(...l, ...levels);
@@ -96,11 +98,11 @@ export function buildDonchianSvg(symbol, signal, c1h, c4h) {
     ['채널 하단', f(s.lower), C.entry],
     [four ? '진입 관심가' : '확정 종가', f(s.entry), accent],
     ...(four ? [
-      ['손절 기준', f(s.stop), C.down],
-      ['가상 목표 2.5R', f(s.t1), C.up],
-      ['가상 목표 4R', f(s.t2), C.up],
+      ['손절 (' + pct(s.stop) + ')', f(s.stop), C.down],
+      ['목표 2.5R (' + pct(s.t1) + ')', f(s.t1), C.up],
+      ['목표 4R (' + pct(s.t2) + ')', f(s.t2), C.up],
     ] : [
-      ['돌파 기준', f(isLong ? s.upper : s.lower), C.entry],
+      ['돌파 기준 (' + pct(isLong ? s.upper : s.lower) + ')', f(isLong ? s.upper : s.lower), C.entry],
       ['상태', '4H 마감 대기', C.muted],
     ]),
     ['EMA200 (4H)', f(s.ema200), C.muted],
@@ -135,18 +137,15 @@ export function buildDonchianSvg(symbol, signal, c1h, c4h) {
     '" font-family="Noto Sans KR">' + out.join('') + '</svg>';
 }
 
+// The PNG caption is what users actually read on Telegram (rather than the fallback
+// text message). Derive it from the same message formatter to keep action/stop/TP
+// percentages in sync. Telegram photo captions have a 1024-character limit.
 export function donchianCaption(symbol, s) {
-  const f = v => fmtPrice(v, priceDecimals(s.entry));
-  return [
-    (s.dir === 'LONG' ? '🟢 ' : '🔴 ') + symbol + ' ' + s.dir + ' · DONCHIAN',
-    s.stage === 'BREAKOUT' ? '4H 확정 돌파 · 진입 관심 후보' : '1H 사전 관찰 · 4H 확정 전',
-    '⏱ ' + whenKst(s.asOf),
-    '📦 채널 ' + f(s.lower) + ' ~ ' + f(s.upper),
-    '💰 확정가 ' + f(s.entry) +
-      (s.stage === 'BREAKOUT' ? ' · 🛑 손절 ' + f(s.stop) : ''),
-    ...(s.stage === 'BREAKOUT' ? ['🎯 2.5R ' + f(s.t1) + ' · 4R ' + f(s.t2)] : []),
-    '※ 실험 전략 · 검증 전 · 자동 주문 없음',
-  ].join('\n');
+  const lines = donchianMessage(symbol, s).plain.split('\n');
+  lines.splice(0, 2, (s.dir === 'LONG' ? '🟢 ' : '🔴 ') + symbol + ' ' + s.dir + ' · DONCHIAN');
+  const caption = lines.join('\n');
+  if ([...caption].length > 1024) throw new Error('돈치안 텔레그램 이미지 설명 1024자 초과');
+  return caption;
 }
 
 export async function renderDonchianChart(symbol, signal, c1h, c4h) {
