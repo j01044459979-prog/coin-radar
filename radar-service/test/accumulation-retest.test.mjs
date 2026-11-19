@@ -46,7 +46,12 @@ test('RETEST requires a previous confirmed high-volume breakout, not mere WATCH'
   assert.ok(ev.entry>anchor.upper && ev.stop<anchor.upper);
   assert.ok(ev.t2>ev.t1 && ev.t1>ev.entry);
   assert.ok(ev.riskPct>0 && ev.riskPct<=4.5);
-  assert.match(accumulationRetestMessage('BNBUSDT',ev,null).plain,/재지지|손절|1.5R/);
+  const msg = accumulationRetestMessage('BNBUSDT',ev,null).plain;
+  assert.match(msg,/재지지|손절|1.5R/);
+  assert.match(msg,/상태: 3단계 진입 검토 후보/);
+  assert.match(msg,/손절 .*가격 -[0-9.]+%/);
+  assert.match(msg,/1차 익절 1.5R .*가격 \+[0-9.]+%/);
+  assert.match(msg,/2차 익절 2R .*가격 \+[0-9.]+%/);
 });
 test('failed close, stale bar, and unconfirmed future close cannot trigger stage 3',()=>{
   const {bars} = breakoutBars(), anchor=anchorOfBreakout(accumulationWatch(bars,NOW));
@@ -112,7 +117,17 @@ test('Photo SVG uses matching confirmed 1H candle and real breakout/retest level
   assert.match(svg3,/3단계/);
   assert.match(svg3,/재지지 손절/);
   assert.match(svg3,/가상 목표 1.5R/);
-  assert.match(accumulationCaption('BNBUSDT',s),/손절/);
+  const caption = accumulationCaption('BNBUSDT',s);
+  assert.match(caption,/상태: 3단계 진입 검토 후보/);
+  assert.match(caption,/손절 .*가격 -[0-9.]+%/);
+  assert.match(caption,/1차 익절 1.5R .*가격 \+[0-9.]+%/);
+  assert.match(caption,/2차 익절 2R .*가격 \+[0-9.]+%/);
+  assert.ok([...caption].length <= 1024);
+  const watchCaption = accumulationCaption('BNBUSDT',stage2);
+  assert.match(watchCaption,/상태: 돌파 관찰/);
+  assert.match(watchCaption,/재지지 확정 전/);
+  assert.doesNotMatch(watchCaption,/1차 익절 1.5R|진입 관심가/);
+  assert.ok([...watchCaption].length <= 1024);
   assert.doesNotMatch(svg3,/NaN|Infinity/);
   assert.throws(()=>validateAccumulationChart('BNBUSDT',{...s,asOf:s.asOf+H1},bars),/불일치/);
 });
