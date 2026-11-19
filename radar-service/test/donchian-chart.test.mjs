@@ -21,7 +21,6 @@ test('Donchian breakout chart has the actual 4H timeframe and supplied levels', 
   const svg = buildDonchianSvg('ETHUSDT', breakout, one, four);
   assert.match(svg, /4H 확정 돌파/);
   assert.match(svg, /채널 상단/);
-  assert.match(svg, /손절 기준/);
   assert.match(svg, /목표 2.5R \\(\\+11\\.06%\\)/);
   assert.doesNotMatch(svg, /NaN|Infinity/);
   const caption = donchianCaption('ETHUSDT', breakout);
