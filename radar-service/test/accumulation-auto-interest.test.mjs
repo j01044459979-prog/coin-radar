@@ -59,7 +59,10 @@ test('all stage-one qualifying symbols auto-register, even if only two Telegram 
   const second = await signalStep(input);
   assert.equal(second.accumulation.autoInterestAdded, 0);
   assert.equal(second.accumulation.autoInterestTotal, symbols.length);
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 4, 'two more of the outstanding Telegram alerts fit the existing 4/day quota');
+  const third = await signalStep(input);
+  assert.equal(third.accumulation.autoInterestAdded, 0);
+  assert.equal(sent.length, 4, 'daily Telegram limit remains unchanged');
 });
 
 test('deduplicates per symbol, recognizes breakout as stage-one qualified, rejects stale data', () => {
