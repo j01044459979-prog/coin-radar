@@ -13,6 +13,7 @@ import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
+import { accumulationAutoInterests } from './auto-interest.mjs';
 import { ACCUMULATION, ACC_RETEST, accumulationMode, accumulationWatch, accumulationMessage,
   anchorOfBreakout, accumulationRetest, accumulationRetestMessage } from './accumulation.mjs';
 import { renderAccumulationChart, accumulationCaption } from './accumulation-chart.mjs';
@@ -331,12 +332,18 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const accRetestEligible = accRetestAll.filter(a => now - (accSent[a.key] ?? -Infinity) >= ACC_RETEST.cooldownMs);
   const accRetestAlerts = accMode === 'on'
     ? accRetestEligible.slice(0, Math.min(2, Math.max(0, 4 - accRetestToday))) : [];
+  // Persist every stage-1-qualified symbol, including those excluded from Telegram quotas.
+  // This is a watch preference, not a trade signal or RICH300 position.
+  const autoInterest = accMode === 'on' && live
+    ? accumulationAutoInterests(sg.accumulation?.autoInterest, accAll, now)
+    : { records: sg.accumulation?.autoInterest ?? {}, added: 0, total: Object.keys(sg.accumulation?.autoInterest ?? {}).length };
   const accEligible = accAll.filter(a => now - (accSent[a.key] ?? -Infinity) >= ACCUMULATION.cooldownMs);
   const accToday = Object.values(accSent).filter(t => dayKey(t) === dayKey(now)).length;
   const accLimit = Math.min(ACCUMULATION.maxPerRun, Math.max(0, ACCUMULATION.maxPerDay - accToday));
   base.accumulation = { mode: accMode, observed: accAll.length, eligible: accEligible.length,
     retestObserved: accRetestAll.length, retestEligible: accRetestEligible.length,
     watchingBreakouts: Object.keys(accBreakouts).length,
+    autoInterestAdded: autoInterest.added, autoInterestTotal: autoInterest.total,
     preview: accAll.slice(0, 3).map(a => ({ symbol: a.symbol, stage: a.entry.stage, score: a.entry.score, btc: a.context.status })) };
   const accWatch = accMode === 'on' ? accEligible.slice(0, accLimit) : [];
   // Independent live Donchian alerts share confirmed 1H/4H candles; never place an order or alter RICH300 entries.
@@ -416,7 +423,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
 
   attach();
-  if (accMode === 'on') sg.accumulation = { ...(sg.accumulation ?? {}), breakouts: accBreakouts };
+  if (accMode === 'on') sg.accumulation = { ...(sg.accumulation ?? {}), breakouts: accBreakouts, autoInterest: autoInterest.records };
   // 성공적으로 분석한 후보만 최종 시각을 기록한다. 실패/미분석 종목은 다음 슬롯에서 다시 앞선다.
   if (market?.symbols?.length && base.analyzed > 0) {
     const last = { ...(sg.breadth?.last ?? {}) }, pool = new Set(market.symbols);

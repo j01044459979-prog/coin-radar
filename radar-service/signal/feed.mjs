@@ -53,5 +53,15 @@ export function feedArtifactOf(state, env, now = Date.now()) {
   if (!['schedule', 'workflow_dispatch'].includes(String(env.GITHUB_EVENT_NAME || ''))) return { ok: false, reason: 'bad-event' };
   if (!/^\d{1,20}$/.test(String(env.GITHUB_RUN_ID || ''))) return { ok: false, reason: 'no-run-id' };
   const list = Array.isArray(state?.signal?.feed) ? state.signal.feed : [], entries = list.filter(x => x && typeof x === 'object' && now - Number(x.createdAt ?? x.at ?? now) <= FEED_KEEP_MS).slice(-FEED_MAX);
-  return { ok: true, artifact: { v: 1, meta: { runId: String(env.GITHUB_RUN_ID), attempt: String(env.GITHUB_RUN_ATTEMPT || '1'), ref: String(env.GITHUB_REF), sha: String(env.GITHUB_SHA || '').slice(0, 40), event: String(env.GITHUB_EVENT_NAME), mode: 'once', at: String(Math.round(now)) }, entries } };
+  // Separate signed watch interests; no stop/target, no RICH300 virtual trade.
+  const rawWatches = state?.signal?.accumulation?.autoInterest ?? {};
+  const watches = Object.values(rawWatches).filter(x => x && x.source === 'C' &&
+    x.dir === 'WATCH' && Number.isSafeInteger(x.at) &&
+    Number.isSafeInteger(x.lastSeenAt) && x.lastSeenAt <= now &&
+    now - x.lastSeenAt <= 30 * 86400000)
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, 200)
+    .map(x => ({ type: 'watch-interest', sid: x.sid, symbol: x.symbol,
+      source: 'C', dir: 'WATCH', at: String(x.at) }));
+  return { ok: true, artifact: { v: 1, meta: { runId: String(env.GITHUB_RUN_ID), attempt: String(env.GITHUB_RUN_ATTEMPT || '1'), ref: String(env.GITHUB_REF), sha: String(env.GITHUB_SHA || '').slice(0, 40), event: String(env.GITHUB_EVENT_NAME), mode: 'once', at: String(Math.round(now)) }, entries, watches } };
 }

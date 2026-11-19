@@ -27,10 +27,13 @@ export function feedVerify(env, raw, key, opts = {}) {
   if (Number.isSafeInteger(opts.lastTs) && msg.ts < opts.lastTs) return { ok: false, reason: 'replay' };                              // 이미 받은 것보다 오래된 피드(되돌려 쓰기) 거부
   const body = msg.body, entries = body && Array.isArray(body.entries) ? body.entries : null, meta = body && body.meta;
   if (!entries || entries.length > FEED_MAX_ENTRIES) return { ok: false, reason: 'bad-entries' };
+  // Watch interests are separately signed, validated and never parsed as trades.
+  const watches = body.watches === undefined ? [] : body.watches;
+  if (!Array.isArray(watches) || watches.length > 200) return { ok: false, reason: 'bad-watches' };
   if (!meta || typeof meta !== 'object' || !/^\d{1,20}$/.test(String(meta.runId)) || meta.ref !== 'refs/heads/main' || meta.mode !== 'once' || !FEED_META_EVENTS.includes(meta.event) || !/^\d{10,14}$/.test(String(meta.at))) return { ok: false, reason: 'bad-meta' };
   const genAge = now - Number(meta.at);
   if (age > FEED_MAX_AGE_MS || genAge > FEED_MAX_AGE_MS) return { ok: false, reason: 'stale', ageMs: Math.max(age, genAge) };            // 오래된 피드로 새 전략을 만들지 않는다
-  return { ok: true, signed: true, ageMs: Math.max(0, genAge), ts: msg.ts, entries, runId: String(meta.runId) };
+  return { ok: true, signed: true, ageMs: Math.max(0, genAge), ts: msg.ts, entries, watches, runId: String(meta.runId) };
 }
 // 항목 하나를 검증해 전략 입력으로 바꾼다. 실패하면 { ok:false, why }.
 export function feedParseEntry(e) {
@@ -47,4 +50,19 @@ export function feedParseEntry(e) {
   const ref = [fdNum(e.ref1), fdNum(e.ref2)], ev = Array.isArray(e.evidence) ? e.evidence.slice(0, 3).map(x => String(x).slice(0, 80)) : [];
   const zlo = fdNum(e.zlo), zhi = fdNum(e.zhi), lvl = fdNum(e.lvl), atr = fdNum(e.atr);
   return { ok: true, kind: 'candidate', zlo: zlo === null ? undefined : zlo, zhi: zhi === null ? undefined : zhi, lvl: lvl === null ? undefined : lvl, atr: atr === null ? undefined : atr, sid: e.sid, symbolId: e.symbol, dir: e.dir, entry, stop, triggerT, closeT, validUntil, score, rr1: rr, ref1: ref[0], ref2: ref[1], evidence: ev, volRel: fdNum(e.volRel), btcAlign: e.btcAlign ? String(e.btcAlign).slice(0, 10) : null, stageLabel: e.stageLabel ? String(e.stageLabel).slice(0, 30) : null, costPct: fdNum(e.costPct), createdAt: fdMs(e.createdAt) };
+}
+
+/** Signed watch records only; never create a trade signal, strategy or position. */
+export function feedParseWatchInterest(x, now) {
+  if (!x || typeof x !== 'object' || Array.isArray(x) || x.type !== 'watch-interest' ||
+      x.source !== 'C' || x.dir !== 'WATCH' ||
+      !FEED_SYM_RE.test(String(x.symbol)) || !/^\d{13}$/.test(String(x.at)))
+    return { ok: false, why: 'bad-watch' };
+  const at = Number(x.at), sid = 'WK-' + x.symbol.slice(0, -4) + '-C-' +
+    Math.floor(at / 60000).toString(36);
+  if (x.sid !== sid || !/^[A-Za-z0-9_.-]{1,54}$/.test(sid) ||
+      !Number.isSafeInteger(at) || at > now ||
+      now - at > 30 * 86400000) return { ok: false, why: 'bad-watch-time' };
+  return { ok: true, kind: 'watch-interest', sid, symbol: x.symbol,
+    source: 'C', dir: 'WATCH', at };
 }

@@ -23,7 +23,9 @@ export function buildFeedFile(rawArtifact, { key, run, now = Date.now() } = {}) 
   if (!/^\d{10,14}$/.test(String(m.at)) || now - Number(m.at) > PUBLISH_MAX_AGE_MS || Number(m.at) - now > 5 * 60000) return { ok: false, reason: 'stale-artifact' };
   const env = { now: () => now, hmacSha256: (k, msg) => createHmac('sha256', k).update(msg, 'utf8').digest('hex'), newNonce: () => randomBytes(18).toString('base64url') };
   const entries = a.entries.filter(x => x && typeof x === 'object' && !Array.isArray(x)).slice(-30);
-  try { return { ok: true, raw: authBuildRequest(env, key, { entries, meta: { runId: String(m.runId), attempt: String(m.attempt || '1'), ref: m.ref, sha: String(m.sha || '').slice(0, 40), event: m.event, mode: 'once', at: String(m.at) } }), count: entries.length }; }
+  const watches = Array.isArray(a.watches)
+    ? a.watches.filter(x => x && typeof x === 'object' && !Array.isArray(x)).slice(0, 200) : [];
+  try { return { ok: true, raw: authBuildRequest(env, key, { entries, watches, meta: { runId: String(m.runId), attempt: String(m.attempt || '1'), ref: m.ref, sha: String(m.sha || '').slice(0, 40), event: m.event, mode: 'once', at: String(m.at) } }), count: entries.length }; }
   catch { return { ok: false, reason: 'build-failed' }; }
 }
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

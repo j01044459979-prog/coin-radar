@@ -26,6 +26,8 @@ function rich300StrategyEnv_(mode) {
   base.feed = rich300StrategyFeed_;
   base.feedKey = function () { var k = props.getProperty('RICH300_FEED_KEY'); return k && String(k).length >= 32 ? String(k) : null; };      // 없거나 약하면 null → 피드 거부(서명 필수)
   base.hmacSha256 = function (key, message) { return rich300Hex_(Utilities.computeHmacSha256Signature(message, key, Utilities.Charset.UTF_8)); };
+  // Watchlist is persisted in tg:wc:* Script Properties; strategy state uses w:*.
+  base.watchInterestKv = rich300TgEnv_().kv;
   base.budgetMs = 150000;
   return base;
 }
@@ -40,7 +42,7 @@ function rich300StrategyRun_(want) {
     out = RICH300_ENGINE.strategyTick(rich300StrategyEnv_(mode)); out.requested = want; delete out.preview;
   } catch (err) { out = { status: 'exception', code: String(err && err.code || err && err.name || 'error').slice(0, 24) }; }
   finally { if (lk) lk.releaseLock(); }
-  if (want !== 'preview') try { props.setProperty('strategy:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || want, requested: want, created: out.created || 0, cancelled: out.cancelled || 0, tracked: out.tracked || 0, active: out.active || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, feed: out.feed || null, code: out.code || null })); } catch (err2) { /* 기록 실패는 무시 */ }
+  if (want !== 'preview') try { props.setProperty('strategy:last', JSON.stringify({ at: t0, ms: Date.now() - t0, status: out.status, mode: out.mode || want, requested: want, created: out.created || 0, cancelled: out.cancelled || 0, tracked: out.tracked || 0, active: out.active || 0, events: out.events || 0, sent: out.sent || 0, failed: out.failed || 0, marketFail: out.marketFail || 0, feed: out.feed || null, autoInterest: out.autoInterest || null, code: out.code || null })); } catch (err2) { /* 기록 실패는 무시 */ }
   return out;
 }
 /** 편집기 직접 실행용 미리보기(설정과 무관, 저장·전송 없음). */
