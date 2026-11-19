@@ -57,18 +57,19 @@ export function signalCaption(symbol, ev, opts = {}) {
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
     `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
+    '🧭 지금: 조건 확정 · 호가 확인',
     ...(ev.fib?.ok && ev.fib.fib ? [
       `📐 FIB 0.5~0.618 · ${f(ev.fib.fib.lo)}~${f(ev.fib.fib.hi)}`,
       `RSI14 1H ${Number(ev.fib.rsi1).toFixed(0)} · 15m ${Number(ev.fib.rsi15).toFixed(0)}`,
     ] : []),
     `💰 진입 관심가 ${f(ev.entry)}`,
-    `🛑 손절 기준 ${f(ev.stop)} · 손절폭 ${ev.riskPct.toFixed(2)}%`,
-    `🎯 1차 ${f(ev.t1.price)}${ev.t2 ? ` · 2차 ${f(ev.t2.price)}` : ''}`,
+    `🛑 손절 기준 ${f(ev.stop)} · 가격 ${signPct((ev.stop - ev.entry) / ev.entry * 100)}`,
+    `🎯 1차 ${f(ev.t1.price)} (${signPct(ev.t1.pct)})${ev.t2 ? ` · 2차 ${f(ev.t2.price)} (${signPct(ev.t2.pct)})` : ''}`,
     `⚖️ 1차 순손익비 ${ev.t1.net.toFixed(2)}R(비용 후)${score}`,
     ...btcContextLines(opts.btc, symbol, ev.dir),
     timing.deadlineLine,
     ...(timing.remainingLine ? [timing.remainingLine] : []),
-    '⚠️ 기준가는 확정봉 종가 · 현시세 아님',
+    '⚠️ 확정 종가 · 현시세 아님 · 추격 금지',
     '※ 미검증 · 주문 권고 아님',
     `※ 왕복 비용 ${ev.costPct.toFixed(2)}% 가정`,
   ].join('\n');

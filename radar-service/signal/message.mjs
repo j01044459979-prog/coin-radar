@@ -28,11 +28,12 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
+  lines.push('🧭 지금: 실시간 호가 확인', '   유효시간 내만 검토 · 추격 금지');
   lines.push(`⏱ 생성 ${kst(ev.triggerCloseT)} KST (15분봉 확정)`, `   유효 ${kst(ev.triggerCloseT)}~${kst(ev.validUntil)} KST`);
   const timing = signalDeadline(ev, now);
   lines.push(timing.deadlineLine);
   if (timing.remainingLine) lines.push(timing.remainingLine);
-  lines.push('', `💰 진입 관심가 ${fmtPrice(ev.entry)}`, `🛑 손절 기준 ${fmtPrice(ev.stop)} (${pct(-ev.riskPct * (L ? 1 : -1))})`);
+  lines.push('', `💰 진입 관심가 ${fmtPrice(ev.entry)} (신호 당시 종가)`, `🛑 손절 기준 ${fmtPrice(ev.stop)} (${pct(-ev.riskPct * (L ? 1 : -1))})`);
   lines.push(`🎯 1차 ${fmtPrice(ev.t1.price)} (${pct(ev.t1.pct)})`);
   lines.push(ev.t2 ? `🎯 2차 ${fmtPrice(ev.t2.price)} (${pct(ev.t2.pct)})` : '🎯 2차 산정 불가');
   const r = x => x.toFixed(2);
@@ -49,7 +50,7 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
   if (ev.btcAlign === '역방향' && (!btc || (!btc.trend4h && !Number.isFinite(btc.btc1hPct))))
     lines.push('⚠️ BTC 4H 방향과 반대');
   lines.push('', '🚫 무효화 조건', `   15분 종가 ${fmtPrice(ev.stop)} ${L ? '하향' : '상향'} 이탈`, '   또는 유효시간 경과');
-  lines.push('', '⚠️ 관심가는 신호 당시 종가', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
+  lines.push('', '⚠️ 만료 또는 추격 구간이면 진입 금지', '   실시간 시세·체결가 아님', escHtml(SIGNAL_DISCLAIMER.replace('{cost}', ev.costPct.toFixed(2))));
   const text = lines.join('\n');
   return { text, plain: htmlToPlain(text), html: true, kind: 'candidate' };
 }

@@ -18,6 +18,47 @@ const clean = bars => Array.isArray(bars) && bars.every((b, i) =>
   b.c > 0 && b.q >= 0 && b.l > 0 && b.l <= Math.min(b.o, b.c) &&
   b.h >= Math.max(b.o, b.c) && (!i || b.t - bars[i - 1].t === H1));
 const two = n => n.toFixed(2);
+const signedPct = (value, entry) => {
+  const p = (value / entry - 1) * 100;
+  return (p > 0 ? '+' : '') + p.toFixed(2) + '%';
+};
+// These are explicit *next conditions*, never prices for an unconfirmed position.
+// The same content is shown under Telegram photos and in text-only fallbacks.
+export function accumulationNextSteps(x) {
+  const f = fmtPrice;
+  if (x.stage === 'WATCH') return [
+    '🟡 상태: 관망 · 지금은 진입 단계 아님',
+    '👀 다음 확인: 1H 종가 ' + f(x.upper * (1 + ACCUMULATION.minBreakPct / 100)) +
+      ' 이상 + 거래량 ×' + ACCUMULATION.breakoutVol.toFixed(1) + ' 이상',
+    '   (돌파 봉 방향·꼬리 등 다른 조건도 확인)',
+    '⏭ 돌파 확정 → 박스 상단 재지지(3단계) 대기',
+    '🛑 손절·익절: 미산정(재지지 확정 전)',
+  ];
+  if (x.stage === 'BREAKOUT') return [
+    '🟠 상태: 돌파 관찰 · 재지지 확정 전 신규 진입 대기',
+    '👀 다음 확인: 18시간 내 1H 재접촉 + 종가 지지',
+    '   저가 ≤ ' + f(x.upper * (1 + ACC_RETEST.touchPct / 100)) +
+      ' · 종가 ≥ ' + f(x.upper * (1 + ACC_RETEST.holdPct / 100)),
+    '   양봉·전봉보다 높은 종가·추격 제한 추가 확인',
+    '🛑 손절·익절: 미산정(3단계 진입 후보 전)',
+    '⚠️ 돌파 직후 추격 진입 금지',
+  ];
+  return [];
+}
+export function accumulationRetestPlan(x) {
+  const f = fmtPrice;
+  return [
+    '🟢 상태: 3단계 진입 검토 후보 · 현재 호가 재확인',
+    '💰 진입 관심가 ' + f(x.entry) + ' (1H 확정 종가)',
+    '🛑 손절 ' + f(x.stop) + ' (가격 ' + signedPct(x.stop, x.entry) + ' · 손실 방향)',
+    '🎯 1차 익절 1.5R ' + f(x.t1) + ' (가격 ' + signedPct(x.t1, x.entry) + ' · 수익 방향)',
+    '🎯 2차 익절 2R ' + f(x.t2) + ' (가격 ' + signedPct(x.t2, x.entry) + ' · 수익 방향)',
+    '⚖️ 비용 ' + x.costPct.toFixed(2) + '% 가정 후 순손익비 ' +
+      x.netR1.toFixed(2) + 'R / ' + x.netR2.toFixed(2) + 'R',
+    '🚫 손절·박스 상단 재이탈 / 추격 구간 진입 금지',
+    'ℹ️ %는 관심가 대비 가격변동 · 레버리지·비용 미반영',
+  ];
+}
 export function accumulationWatch(c1h, now, P = ACCUMULATION) {
   if (!Array.isArray(c1h) || c1h.length < P.minBars || !Number.isFinite(now)) return null;
   const cs = c1h.slice(-P.minBars);
@@ -82,8 +123,7 @@ export function accumulationMessage(symbol, candidate, btc) {
     '현재 확정 종가 ' + fmtPrice(x.close),
     '폭 ' + two(x.boxPct) + '% · 변동성 압축비 ' + two(x.squeeze),
     'CMF ' + two(x.cmf) + ' · 거래량 ×' + two(x.volMultiple),
-    ...(x.stage === 'BREAKOUT' ? ['⚠️ 상단 돌파 확인 · 추격 진입 금지'] :
-      ['👀 상단까지 ' + two(Math.max(0, -x.breakPct)) + '% · 돌파 전 대기']),
+    ...accumulationNextSteps(x),
     '', ...btcContextLines(btc, symbol, 'LONG'), '',
     '※ 큰손 매집 여부는 확인 불가',
     '※ 실험적 관찰 알림 · 진입추천/주문 아님',
@@ -143,13 +183,7 @@ export function accumulationRetestMessage(symbol, x, btc) {
     '✅ 1H 돌파 → 재접촉 → 종가 상단 지지 확인',
     '⏱ 재지지 확정 ' + time(x.asOf),
     '📦 종전 박스 상단 ' + f(x.upper) + ' · 하단 ' + f(x.lower),
-    '💰 진입 관심가 ' + f(x.entry) + ' (확정 종가)',
-    '🛑 재지지 저점 기준 손절 ' + f(x.stop) + ' (' + x.riskPct.toFixed(2) + '%)',
-    '🎯 1차 1.5R 가상 목표 ' + f(x.t1),
-    '🎯 2차 2R 가상 목표 ' + f(x.t2),
-    '⚖️ 비용 ' + x.costPct.toFixed(2) + '% 가정 후 ' +
-      x.netR1.toFixed(2) + 'R / ' + x.netR2.toFixed(2) + 'R',
-    '⚠️ 돌파선 하향 재이탈·손절가 이탈 시 재검토',
+    ...accumulationRetestPlan(x),
     '', ...btcContextLines(btc, symbol, 'LONG'), '',
     '※ 진입 관심 후보 · 현재 호가·실제 체결가 아님',
     '※ 수익성 미검증 · 가짜 돌파/급락/청산 위험',
