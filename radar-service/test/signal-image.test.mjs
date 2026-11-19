@@ -46,7 +46,7 @@ test('캡션: A급 상세(진입가·손절·1·2차 목표·손익비·유효 �
     const now = ev.validUntil - 30 * 60000, cap = signalCaption('ETHUSDT', ev, { now }), lines = cap.split('\n');
     assert.ok(lines.length >= 8 && lines.length <= 15, `줄 수 ${lines.length}`); assert.ok(cap.length <= 1024); lines.forEach(l => assert.ok(displayWidth(l) <= 82, l));
     for (const v of [ev.entry, ev.stop, ev.t1.price]) assert.ok(cap.includes(v.toFixed(2)));
-    assert.match(cap, /지금: 확정 조건 충족/);
+    assert.match(cap, /지금: 조건 확정/);
     assert.match(cap, /손절 기준 .*가격 [−+][0-9.]+%/);
     assert.match(cap, /1차 .*\([−+][0-9.]+%\)/);
     assert.match(cap, /추격 금지/);
