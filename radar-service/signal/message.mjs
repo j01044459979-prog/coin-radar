@@ -28,7 +28,7 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
-  lines.push('🧭 지금 할 일: 실시간 호가·스프레드 확인 / 유효시간 안에서만 진입 검토');
+  lines.push('🧭 지금: 실시간 호가 확인', '   유효시간 내만 검토 · 추격 금지');
   lines.push(`⏱ 생성 ${kst(ev.triggerCloseT)} KST (15분봉 확정)`, `   유효 ${kst(ev.triggerCloseT)}~${kst(ev.validUntil)} KST`);
   const timing = signalDeadline(ev, now);
   lines.push(timing.deadlineLine);
