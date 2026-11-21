@@ -24,7 +24,7 @@ test('strong 0개여도 진입 근접 후보가 출력되고 강한 신호처럼
   const text = reportMessages(rows, failures, now).join('\n');
   assert.match(text, /현재 확정 조건 없음/); assert.match(text, /\[진입 근접 TOP 3\]\n※ 강한 신호가 아니며/); assert.match(text, /1\) \w+USDT · 롱 관찰 · 점수 [\d.]+\/100/);
   assert.doesNotMatch(text, /즉시 진입 조건 충족/); assert.match(text, /조건부 관찰/);
-  assert.match(text, /부족: /); assert.match(text, /조건부 진입 참고가/);
+  assert.match(text, /부족: /); assert.match(text, /관찰 신호/);
 });
 test('근접 후보는 실제 후보만 출력(1~2개), 3개로 채우지 않는다', () => {
   const mk = (symbol, score) => ({ ...base({ symbol }), candidate: { dir: 'LONG', score, blockers: [], dist: { atrUnits: 0.5, pct: 0.5, level: 101, broken: false } } });
@@ -210,7 +210,7 @@ test('캐시 복원: 같은 시간대 재실행은 재전송 없음, 캐시 유�
 test('강한 신규 신호 알림은 짧은 HTML 요약이며 점수·시나리오·주의를 포함', async () => {
   const row = await strongRow();
   const t = alertReport(row, now).plain;
-  assert.match(t, /^🚨 신규 조건 포착\nBTCUSDT · 롱 관찰 \(\d+점\)/); assert.match(t, /진입 참고 [\d.]+\n손절 [\d.]+\nTP1 [\d.]+ · TP2 [\d.]+/); assert.match(t, /조건부 참고값 · 매매 지시 아님/);
+  assert.match(t, /^🚨 신규 조건 포착\nBTCUSDT · 롱 관찰 \(\d+점\)/); assert.match(t, /⛔ 지금:/); assert.match(t, /👀 다음:/); assert.match(t, /진입·손절·익절 미산정/); assert.match(t, /관찰은 진입 신호 아님/); assert.doesNotMatch(t, /TP1 |TP2 |손절 [\\d.]+/);
   assert.ok(t.length < 400, `길이 ${t.length}`);
   const state = { reportHour: Math.floor(now / 3600000) }, sent = [];
   await cycle({ now, state, collect: async () => ({ rows: [row], failures: [] }), send: async m => sent.push(m), save: async () => {} });
