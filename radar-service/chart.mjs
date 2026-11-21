@@ -3,6 +3,7 @@
 import { checkPhrases, pickTop2 } from './scoring.mjs';
 import { fmtPrice, priceDecimals } from './format.mjs';
 import { volumeProfile, volumeSeries } from './volume.mjs';
+import { watchDecision } from './watch-decision.mjs';
 
 const W = 1200, H = 940;
 // 영역 분리: [캔들 플롯 X0~X1] [매물대 열 XP0~XP1] [가격 태그 열 XT~] — 세 영역이 서로 겹치지 않는다. 아래쪽은 거래량 패널(VY0~VY1)과 시간축.
@@ -45,7 +46,7 @@ export function makeSpec(row, tf, candles, kind, reason, fallback = false) {
   return {
     symbol: row.symbol, kind, tf, reason: reason + (fallback ? ' (요청 시간봉 없음 → 대체)' : ''),
     dir: market ? null : c?.dir ?? null, strong: Boolean(row.strong), score: c?.score ?? null, grade: row.grade ?? null,
-    price: row.price, priceAt: row.priceAt, atr: row.atr, plan: market ? null : c?.plan ?? null, level: market ? null : c?.dist?.level ?? null,
+    price: row.price, priceAt: row.priceAt, atr: row.atr, plan: null, decision: market ? null : watchDecision(row), level: market ? null : c?.dist?.level ?? null,
     structureAhead: market ? null : c?.plan?.structureAhead ?? null, risk: c?.risk?.level ?? null, conflict: Boolean(c?.mtfConflict),
     checks: market ? [] : checkPhrases(row, c?.dir), mtf: row.mtf ?? null, trend: row.trend, collectedAt: row.collectedAt,
     source: row.source ?? 'OKX', candles: candles.slice(-48), vol: volumeSeries(candles, 48), profile: volumeProfile(candles.slice(-48), { bins: 24, price: row.price }), marketLevels: market ? { r: row.mtf?.[tf]?.resistance?.slice(-2) ?? [], s: row.mtf?.[tf]?.support?.slice(-2) ?? [] } : null,
@@ -56,7 +57,13 @@ export function makeSpec(row, tf, candles, kind, reason, fallback = false) {
 export function chartCaption(spec) {
   const medal = spec.rank === 1 ? '🥇 1순위 ' : spec.rank === 2 ? '🥈 2순위 ' : '';
   const head = spec.kind === 'market' ? `${spec.symbol} · 시장 기준 · ${spec.tf}봉` : `${medal}${spec.symbol} · ${dirKo(spec.dir)} 관찰 · ${spec.tf}봉`;
-  return `${head}\n${spec.kind === 'market' ? '시장 참고 차트 · 매매 지시 아님' : '조건부 참고 시나리오 · 매매 지시 아님'}`;
+  if (spec.kind === 'market') return head + '\n시장 참고 차트 · 매매 지시 아님';
+  const d = spec.decision;
+  return [head,
+    '⛔ 지금: ' + (d?.action ?? '관망') + ' · 진입 보류',
+    '👀 다음: ' + (d?.trigger ?? '기준선 확인 대기'),
+    '⚠️ 진입·손절·익절 미산정 · 확정 신호 후 재계산',
+  ].join('\n');
 }
 
 // 가격 태그 겹침 방지: y 순서대로 최소 간격을 확보한다.
@@ -76,9 +83,8 @@ export const textW = (str, size) => [...String(str)].reduce((w, ch) => w + (ch.c
 export function buildSvg(spec) {
   const dec = priceDecimals(spec.price), fmt = v => fmtPrice(v, dec); // 가격 표시 자릿수는 자산 가격대에 맞추고 계산값은 바꾸지 않는다
   const candles = spec.candles, n = candles.length;
-  const p = spec.plan, prof = spec.profile, vol = spec.vol;
+  const decision = spec.decision, prof = spec.profile, vol = spec.vol;
   const levels = [spec.price];
-  if (p) levels.push(p.entry, p.stop, p.tp1, p.tp2);
   if (spec.level != null) levels.push(spec.level);
   let hi0 = Math.max(...candles.map(c => c.h), ...levels), lo0 = Math.min(...candles.map(c => c.l), ...levels);
   // 1시간 구조선은 화면 범위 근처일 때만 그린다(멀면 차트가 납작해지므로 생략)
@@ -146,16 +152,8 @@ export function buildSvg(spec) {
     add(`<text x="${XP0}" y="${Y0 - 8}" font-size="14" fill="${C.muted}">추정 매물대</text>`);
   }
 
-  // 핵심 구간(박스): 진입 참고가 ± 구간
-  let zone = null;
-  if (p) {
-    const half = Math.max(0.3 * (spec.atr || 0), p.entry * 0.0015);
-    zone = { top: y(p.entry + half), bottom: y(p.entry - half) };
-    add(`<rect x="${X0}" y="${zone.top}" width="${X1 - X0}" height="${zone.bottom - zone.top}" fill="${C.zone}" fill-opacity="0.13" stroke="${C.zone}" stroke-opacity="0.45" stroke-dasharray="6 5"/>`);
-    const zy = (zone.top + zone.bottom) / 2;
-    add(`<rect x="${X0 + 1}" y="${zy - 11}" width="64" height="22" rx="3" fill="${C.bg}" fill-opacity="0.85"/>`);
-    add(`<text x="${X0 + 5}" y="${zy + 5}" font-size="14" font-weight="700" fill="${C.zone}">핵심 구간</text>`);
-  }
+  // No simulated entry zone in observation-only reports.
+  // A-grade confirmed alerts are rendered by signal/chart.mjs instead.
   if (spec.marketLevels) for (const v of [...spec.marketLevels.r, ...spec.marketLevels.s]) add(`<line x1="${X0}" x2="${X1}" y1="${y(v)}" y2="${y(v)}" stroke="${C.struct}" stroke-dasharray="4 6" opacity="0.8"/>`);
   if (structure != null) {
     add(`<line x1="${X0}" x2="${X1}" y1="${y(structure)}" y2="${y(structure)}" stroke="${C.struct}" stroke-dasharray="3 6" opacity="0.85"/>`);
@@ -196,14 +194,9 @@ export function buildSvg(spec) {
     add(`<line x1="${X1}" x2="${XT}" y1="${y(v)}" y2="${y(v)}" stroke="${color}" stroke-width="1" stroke-opacity="0.45"/>`);
     tags.push({ y: y(v), color, label, id });
   };
-  if (p) {
-    const sg = spec.dir === 'LONG' ? ['+', '-'] : ['-', '+']; // 가격 변동 방향: 목표(수익 쪽), 손절(손실 쪽)
-    hline(p.tp2, C.tp, '10 6', 2, `TP2 ${fmt(p.tp2)} (${sg[0]}${p.tp2Pct.toFixed(2)}%)`);
-    hline(p.tp1, C.tp, '10 6', 2, `TP1 ${fmt(p.tp1)} (${sg[0]}${p.tp1Pct.toFixed(2)}%)`);
-    hline(p.entry, C.entry, '14 6', 2.4, `진입 ${fmt(p.entry)}`);
-    hline(p.stop, C.stop, null, 2.6, `손절 ${fmt(p.stop)} (${sg[1]}${p.stopPct.toFixed(2)}%)`);
-  } else if (spec.level != null) {
-    hline(spec.level, C.entry, '14 6', 2.4, `기준선 ${fmt(spec.level)}`);
+  if (spec.level != null) {
+    hline(spec.level, C.entry, '14 6', 2.4,
+      `${spec.dir === 'SHORT' ? '이탈' : '돌파'} 확인선 ${fmt(spec.level)}`);
   }
   add(`<line x1="${X0}" x2="${X1}" y1="${y(spec.price)}" y2="${y(spec.price)}" stroke="${C.now}" stroke-width="1.4" stroke-dasharray="2 4"/>`);
   tags.push({ y: y(spec.price), color: C.now, label: `현재 ${fmt(spec.price)}`, id: 'now' });
@@ -215,26 +208,24 @@ export function buildSvg(spec) {
     add(`<text x="${XT + 9}" y="${t.ty + 6}" font-size="${size}" font-weight="700" fill="${t.color === C.stop ? '#fecaca' : t.color}">${esc(t.label)}</text>`);
   }
 
-  // 시나리오 화살표(참고): 현재가 → 진입 구간(돌파/리테스트 확인) → TP1
-  if (p) {
-    const long = spec.dir === 'LONG';
-    const xr = xLast + (X1 - xLast) * 0.42, xe = X1 - 22;
-    const pathD = `M ${xLast} ${y(spec.price)} Q ${xLast + (xr - xLast) * 0.7} ${y(p.entry) + (long ? 14 : -14)} ${xr} ${y(p.entry)} T ${xe} ${y(p.tp1)}`;
-    add(`<path d="${pathD}" fill="none" stroke="${C.entry}" stroke-width="3" stroke-dasharray="9 6" stroke-linecap="round"/>`);
-    const ang = Math.atan2(y(p.tp1) - y(p.entry), xe - xr);
-    const ax = xe, ay = y(p.tp1), s = 13;
-    add(`<polygon points="${ax},${ay} ${ax - s * Math.cos(ang - 0.45)},${ay - s * Math.sin(ang - 0.45)} ${ax - s * Math.cos(ang + 0.45)},${ay - s * Math.sin(ang + 0.45)}" fill="${C.entry}"/>`);
-    const above = long ? spec.price >= p.entry : spec.price <= p.entry;
-    const note = long ? (above ? '여기 지지 확인 필요' : '여기 돌파 확인 필요') : (above ? '여기 저항 확인 필요' : '여기 이탈 확인 필요');
-    const ny = zone ? (long ? zone.bottom + 22 : zone.top - 28) : y(p.entry) + 22;
-    add(`<text x="${xr}" y="${ny}" font-size="19" font-weight="700" text-anchor="middle" fill="${C.entry}">${esc(note)}</text>`);
+  // Never draw a profit arrow for an unconfirmed observation.
+  // The free right-hand plot space carries a direct next-action hint instead.
+  if (!market && decision) {
+    add(`<text x="${X1 - 12}" y="${Y0 + 28}" text-anchor="end" font-size="19" font-weight="700" fill="${C.entry}">${esc('지금 ' + decision.action)}</text>`);
+    add(`<text x="${X1 - 12}" y="${Y0 + 54}" text-anchor="end" font-size="16" fill="${C.muted}">${esc('조건 확정 전 진입 금지')}</text>`);
   }
 
   // 푸터
   add(`<rect x="0" y="${H - 128}" width="${W}" height="128" fill="#0a111a"/>`);
-  add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">조건부 참고 시나리오 · 매매 지시 아님</text>`);
-  add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.muted}">${p ? '1R/2R 참고값 · 수수료·슬리피지·펀딩비 미반영 · 강제청산가 확인 불가' : '시나리오를 계산할 수 없어 기준 수준만 표시합니다'}</text>`);
-  add(`<text x="${X0}" y="${H - 44}" font-size="17" fill="${C.muted}">${showVol && prof ? PROFILE_NOTE : '거래량 데이터 부족 · 매물대 미표시'}</text>`);
+  if (market) {
+    add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">시장 참고 차트 · 매매 지시 아님</text>`);
+    add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.muted}">진입·손절·목표 미산정</text>`);
+  } else {
+    add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">${esc('지금: ' + (decision?.action ?? '관망') + ' · 진입 보류')}</text>`);
+    add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.text}">${esc('다음: ' + (decision?.trigger ?? '돌파 기준선 확인 대기'))}</text>`);
+  }
+  add(`<text x="${X0}" y="${H - 44}" font-size="17" fill="${C.muted}">${esc(market ? (showVol && prof ? PROFILE_NOTE : '거래량 데이터 부족 · 매물대 미표시') :
+    '확정 신호 전 진입·손절·익절 미산정 · 거래량 및 상위 추세 확인')}</text>`);
   add(`<text x="${X0}" y="${H - 16}" font-size="16" fill="${C.muted}">${esc(spec.source)} (Binance 아님) · 마지막 확정봉 ${esc(kstFull(candles[n - 1].t))} KST · 분석 ${esc(kstFull(spec.collectedAt ?? spec.priceAt))} KST</text>`);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}">${body.join('')}</svg>`;
 }
