@@ -50,12 +50,12 @@ test('유효한 손절·목표를 계산할 수 없으면 숫자를 만들지 �
   assert.equal(planOf(base({ high: NaN }), 'LONG', null), null);
   assert.equal(planOf(base({ atr: 50, price: 100 }), 'LONG', null), null); // 손절 거리 8% 초과
   const text = reportMessages([{ ...base({ symbol: 'BTCUSDT' }), candidate: { dir: 'LONG', score: 50, parts: {}, missing: [], blockers: [], plan: null, met: [], unmet: [], risk: { level: '보통', factors: [] }, dist: { level: 101, pct: 1, atrUnits: 1, broken: false } }, strong: true, mtf: null }], [], now).join('\n');
-  assert.match(text, /계산 불가/);
+  assert.match(text, /진입·손절·익절: 확정 신호 후 재계산/);
 });
 test('1H 구조가 TP1보다 가까우면 표시하되 목표를 확정가로 부르지 않는다', () => {
   const p = planOf(base(), 'LONG', { '1H': { resistance: [101.3, 110] } });
   assert.equal(p.structureAhead, 101.3); assert.equal(p.tp1BeyondStructure, true);
-  assert.match(reportMessages([{ ...base({ symbol: 'BTCUSDT', strong: true, direction: 'LONG' }), candidate: { dir: 'LONG', score: 60, parts: { mtf: { score: 5, max: 20, note: '' } }, missing: [], blockers: [], plan: p, met: [], unmet: [], risk: { level: '보통', factors: [] }, dist: { level: 101, pct: 1, atrUnits: 1, broken: false } }, mtf: null }], [], now).join('\n'), /확정가가 아님/);
+  assert.match(reportMessages([{ ...base({ symbol: 'BTCUSDT', strong: true, direction: 'LONG' }), candidate: { dir: 'LONG', score: 60, parts: { mtf: { score: 5, max: 20, note: '' } }, missing: [], blockers: [], plan: p, met: [], unmet: [], risk: { level: '보통', factors: [] }, dist: { level: 101, pct: 1, atrUnits: 1, broken: false } }, mtf: null }], [], now).join('\n'), /진입·손절·익절: 확정 신호 후 재계산/);
 });
 test('미확정 상위 시간대 캔들은 추세·마지막 확정 시각에 쓰이지 않는다', async () => {
   const { rows } = await collect({ mtf: { '1H': 'up' } });
