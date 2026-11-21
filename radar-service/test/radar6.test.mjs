@@ -126,7 +126,7 @@ test('차트 영역 분리: 캔들 ≤ 플롯 끝 < 매물대 열 < 가격 태�
     for (const c of candles) { const right = c.x !== undefined ? c.x + c.width : c.x1; assert.ok(right <= X1 + 0.01 && (c.x ?? c.x1) >= X0, JSON.stringify(c)); }
     const prof = attrs(svg, 'profile'); assert.ok(prof.length === 24);
     for (const b of prof) assert.ok(b.x >= XP0 && b.x + b.width <= XP1 + 0.01, JSON.stringify(b));
-    const tags = attrs(svg, 'tag'); assert.ok(tags.length >= 5);
+    const tags = attrs(svg, 'tag'); assert.ok(tags.length >= 2);
     for (const t of tags) assert.ok(t.x >= XT && t.x + t.width <= W, JSON.stringify(t));
     for (let i = 1; i < tags.length; i++) assert.ok(Math.abs(tags[i].y - tags[i - 1].y) >= 30, `태그 간격 ${tags[i].y - tags[i - 1].y}`);   // 태그끼리도 겹치지 않음
     const vols = attrs(svg, 'vol'); assert.ok(vols.length === 48); for (const v of vols) assert.ok(v.y >= LAYOUT.VY0 && v.y + v.height <= LAYOUT.VY1 + 0.01 && v.x >= X0 && v.x + v.width <= X1);
@@ -137,7 +137,7 @@ test('차트 영역 분리: 캔들 ≤ 플롯 끝 < 매물대 열 < 가격 태�
 });
 test('거래량 패널·평균선·급증 강조·POC·필수 문구가 차트에 들어간다', () => {
   const svg = buildSvg(specFor('LONG', false));
-  for (const w of ['거래대금(USDT)', '직전 20봉 평균선', '급증 ≥2배', '거래량 급증', 'POC ', '추정 매물대', PROFILE_NOTE, '캔들 거래량 기반 추정 매물대 · 실제 호가 잔량 아님', '조건부 참고 시나리오 · 매매 지시 아님', '진입 ', '손절 ', 'TP1 ', 'TP2 ', '현재 ', '1순위 · 1시간봉']) assert.ok(svg.includes(w), w);
+  for (const w of ['거래대금(USDT)', '직전 20봉 평균선', '급증 ≥2배', '거래량 급증', 'POC ', '추정 매물대', PROFILE_NOTE, '캔들 거래량 기반 추정 매물대 · 실제 호가 잔량 아님', '진입 보류', '돌파 확인선 ', '진입·손절·익절 미산정', '분석 ', '1순위 · 1시간봉']) assert.ok(svg.includes(w), w);
   assert.match(svg, /<polyline points="[^"]+" fill="none" stroke="#e8edf3"/);        // 20봉 평균선
   assert.match(svg, /<rect data-k="vol"[^>]*stroke="#fbbf24"/);                        // 급증 막대 강조
   assert.ok(attrs(svg, 'vol').length === 48);
@@ -147,7 +147,7 @@ test('거래량 패널·평균선·급증 강조·POC·필수 문구가 차트�
 test('거래량 데이터가 부족하면 거래량·매물대를 그리지 않고 이유를 표시(값을 만들지 않음)', () => {
   const svg = buildSvg(specFor('LONG', false, series().map((c, i) => (i % 2 ? { ...c, q: null } : c))));
   assert.ok(svg.includes('거래량 데이터 부족')); assert.ok(svg.includes('거래량·매물대 미표시')); assert.equal(attrs(svg, 'vol').length, 0); assert.equal(attrs(svg, 'profile').length, 0); assert.ok(!svg.includes('POC '));
-  assert.ok(svg.includes('조건부 참고 시나리오 · 매매 지시 아님'));                         // 가격 차트는 그대로
+  assert.ok(svg.includes('진입 보류'));                         // 가격 차트는 그대로
   const zero = buildSvg(specFor('SHORT', true, series().map(c => ({ ...c, q: 0 })))); assert.equal(attrs(zero, 'profile').length, 0); assert.ok(attrs(zero, 'vol').length === 48);   // 전부 0이면 막대는 0, 매물대 없음
 });
 test('모바일 가독성: 가격 태그 글자 13~17px, 눈금·푸터 15px 이상, 캔들 폭 확보, 캔들 수 48', () => {
