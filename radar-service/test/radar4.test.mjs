@@ -41,7 +41,7 @@ test('핵심 요약은 비어 있지 않은 15줄·900자 이내이며 핵심 �
   const lines = t.split('\n').filter(Boolean);
   assert.ok(lines.length <= 16, `줄 수 ${lines.length}`); assert.ok(t.length <= 900, `길이 ${t.length}`);
   assert.match(t, /^📡 RICH FUTURES RADAR\n데이터: OKX USDT 무기한\(SWAP\) \(Binance 아님\)/);
-  for (const w of ['[핵심 요약]', '1순위 후보: DOGEUSDT 롱 관찰 (조건 미완성', '핵심 가격:', '손절 참고:', '목표:', '체크 포인트: 거래대금 증가 필요 · 15분 OI 증가 필요', '위험:', '[시장]', '[요약 판단] 조건부 관찰', '매매 지시 아님']) assert.ok(t.includes(w), w);
+  for (const w of ['[핵심 요약]', '1순위 후보: DOGEUSDT 롱 관찰 (조건 미완성', '지금:', '다음:', '진입·손절·익절:', '체크 포인트: 거래대금 증가 필요 · 15분 OI 증가 필요', '위험:', '[시장]', '[요약 판단] 조건부 관찰', '매매 지시 아님']) assert.ok(t.includes(w), w);
 });
 test('strong / near / 후보 없음 상황별 요약이 자연스럽다', () => {
   const strong = summaryText([btcRow, shortRow], [], now);
@@ -61,7 +61,7 @@ test('전체 분석(2.1 형식) 순서: 핵심 요약 → 차트 → 상세, 상
 });
 test('상세 메시지는 후보→시간대→시나리오→위험→부족 조건→이슈→경고 순서', () => {
   const m = reportMessages([btcRow, longRow], [], now, { news: { status: 'ok', checkedAt: now, items: [] } }).slice(1).join('\n');
-  const idx = ['■ DOGEUSDT', '다중 시간대:', '조건부 참고값', '위험 수준:', '미충족 조건:', '[주요 이슈]', '[참고]'].map(w => m.indexOf(w));
+  const idx = ['■ DOGEUSDT', '다중 시간대:', '관찰 신호', '위험 수준:', '미충족 조건:', '[주요 이슈]', '[참고]'].map(w => m.indexOf(w));
   assert.ok(idx.every(i => i >= 0), JSON.stringify(idx)); assert.deepEqual([...idx].sort((a, b) => a - b), idx);
 });
 // ── 차트 선택 규칙 ──
@@ -86,44 +86,52 @@ test('실제 수집 결과에서 차트용 캔들이 검증을 통과한 시간�
 });
 // ── 차트 도형 ──
 const lineY = (svg, color, dash) => [...svg.matchAll(new RegExp(`<line x1="28" x2="848" y1="([\\d.]+)" y2="[\\d.]+" stroke="${color}" stroke-width="[\\d.]+"${dash ? ' stroke-dasharray' : ''}`, 'g'))].map(m => Number(m[1]));
-test('롱 차트: 손절은 진입 아래(y 큼), TP1<TP2는 진입 위, 필수 요소 문구 포함', () => {
+test('롱 관찰 차트: 돌파 기준선과 대기 조건만 보이며 미확정 손절·익절은 숨긴다', () => {
   const spec = makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', '근접 후보 1위');
   const svg = buildSvg(spec);
-  const stopY = lineY(svg, '#ef4444')[0], [tp2Y, tp1Y] = lineY(svg, '#4ade80', true), entryY = lineY(svg, '#fbbf24', true)[0];
-  assert.ok(stopY > entryY && entryY > tp1Y && tp1Y > tp2Y, JSON.stringify({ stopY, entryY, tp1Y, tp2Y })); // SVG y는 아래가 큼
-  for (const w of ['DOGEUSDT', '롱 관찰', '1시간봉', '조건 미완성', '진입 ', '손절 ', 'TP1 ', 'TP2 ', '현재 100.8', '핵심 구간', '여기 돌파 확인 필요', '조건부 참고 시나리오 · 매매 지시 아님', '거래대금 증가 필요', '상위 시간대 역행 주의', '강제청산가 확인 불가', '(Binance 아님)', '15분 → / 1시간 ↓ / 4시간 →']) assert.ok(svg.includes(w), w);
-  assert.match(svg, /손절 [\d.]+ \(-[\d.]+%\)/); assert.match(svg, /TP1 [\d.]+ \(\+[\d.]+%\)/); // 롱: 손절은 하락, 목표는 상승
+  for (const w of ['DOGEUSDT', '롱 관찰', '1시간봉', '조건 미완성',
+    '돌파 확인선 101', '분석 100.8', '지금: 대기 · 추세 역행',
+    '5분봉 101.00 돌파 확정 확인', '1H 추세 역행 주의',
+    '진입·손절·익절 미산정', '상위 시간대 역행 주의', '(Binance 아님)'])
+    assert.ok(svg.includes(w), w);
+  assert.doesNotMatch(svg, /TP1 |TP2 |손절 [\d.]|진입 [\d.]|핵심 구간|<polygon /);
+  assert.equal(lineY(svg, '#4ade80', true).length, 0, 'profit targets must not render');
 });
-test('숏 차트: 손절은 진입 위(y 작음), TP는 아래, 강한 조건 문구와 재저항 라벨', () => {
+test('숏 강한 관찰도 실행 신호가 아니며 재저항 확인이 우선', () => {
   const spec = makeSpec(shortRow, '1H', data.SOLUSDT['1H'], 'candidate', '강한 후보 1위');
   const svg = buildSvg(spec);
-  const stopY = lineY(svg, '#ef4444')[0], [tp2Y, tp1Y] = lineY(svg, '#4ade80', true), entryY = lineY(svg, '#fbbf24', true)[0];
-  assert.ok(stopY < entryY && entryY < tp1Y && tp1Y < tp2Y, JSON.stringify({ stopY, entryY, tp1Y, tp2Y }));
-  for (const w of ['SOLUSDT', '숏 관찰', '강한 관찰 조건 포착', '재저항 확인 필요', '여기 이탈 확인 필요', '매매 지시 아님']) assert.ok(svg.includes(w), w);
-  assert.match(svg, /손절 [\d.]+ \(\+[\d.]+%\)/); assert.match(svg, /TP1 [\d.]+ \(-[\d.]+%\)/);
+  for (const w of ['SOLUSDT', '숏 관찰', '강한 관찰 조건 포착',
+    '재저항 확인 필요', '이탈 확인선 99', '재저항 대기', '진입·손절·익절 미산정'])
+    assert.ok(svg.includes(w), w);
+  assert.doesNotMatch(svg, /TP1 |TP2 |손절 [\d.]|진입 [\d.]|<polygon /);
 });
-test('진입 참고 구간 박스와 화살표, 현재가 라벨이 있고 계좌별 청산가·확정 표현은 없다', () => {
+test('관찰 차트는 돌파 기준선만 표시하고 가상 진입 박스·목표 화살표를 제거한다', () => {
   const svg = buildSvg(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.match(svg, /<rect x="28" y="[\d.]+" width="820" height="[\d.]+" fill="#fbbf24" fill-opacity="0.13"/); // 핵심 구간 박스
-  assert.match(svg, /<path d="M [\d.]+ [\d.]+ Q [^"]+" fill="none" stroke="#fbbf24"/); assert.match(svg, /<polygon /);
-  assert.ok(svg.includes('현재 100.8'));
+  assert.ok(svg.includes('돌파 확인선 101'));
+  assert.doesNotMatch(svg, /fill-opacity="0.13" stroke="#fbbf24"|<path d="M [\d.]+ [\d.]+ Q /);
   assert.doesNotMatch(svg, /청산가 \d|반드시|확정 수익|수익 보장|지금 진입|매수하세요|매도하세요/);
 });
-test('시나리오가 없으면 기준선만 표시하고 계산 불가를 밝힌다', () => {
+test('참고 시나리오 계산이 안 되어도 돌파 기준선과 대기 사유를 유지한다', () => {
   const r = { ...longRow, candidate: { ...longRow.candidate, plan: null } };
   const svg = buildSvg(makeSpec(r, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.ok(svg.includes('기준선 101')); assert.ok(svg.includes('시나리오를 계산할 수 없어')); assert.ok(!svg.includes('손절 '));
+  assert.ok(svg.includes('돌파 확인선 101')); assert.ok(svg.includes('진입·손절·익절 미산정'));
+  assert.ok(!svg.includes('TP1 '));
 });
 test('BTC 시장 차트는 진입·손절 없이 추세와 구조선만 표시', () => {
   const svg = buildSvg(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x'));
   assert.ok(svg.includes('BTCUSDT') && svg.includes('시장 기준') && svg.includes('BTC 4시간 추세 상승')); assert.ok(!svg.includes('손절 ') && !svg.includes('TP1'));
 });
 function candidatesBtc() { return candles(83000, 8, 60, 120).map(c => ({ ...c })); }
-test('캡션은 1~2줄: 종목·방향·시간봉과 면책 문구만', () => {
+test('실제 텔레그램 사진 캡션은 지금 행동·돌파 조건·부족 사유를 설명하고 가상 손익가격은 노출하지 않는다', () => {
   const cap = chartCaption(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.equal(cap, 'DOGEUSDT · 롱 관찰 · 1H봉\n조건부 참고 시나리오 · 매매 지시 아님');
-  assert.equal(chartCaption(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x')), 'BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
-  assert.equal(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), '🥈 2순위 DOGEUSDT · 롱 관찰 · 1H봉\n조건부 참고 시나리오 · 매매 지시 아님');
+  assert.match(cap, /^DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
+  assert.match(cap, /👀 다음: 5분봉 101.00 돌파 확정 확인/);
+  assert.match(cap, /⚠️ 부족: 1H 추세 역행 주의/);
+  assert.match(cap, /진입·손절·익절 미산정/);
+  assert.doesNotMatch(cap, /TP1|TP2|손절 \d/);
+  assert.equal(chartCaption(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x')),
+    'BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
+  assert.match(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), /^🥈 2순위 DOGEUSDT/);
 });
 // ── PNG 렌더링 ──
 png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, 용량 합리적', async () => {

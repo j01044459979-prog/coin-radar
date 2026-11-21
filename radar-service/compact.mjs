@@ -4,10 +4,11 @@ import { bold, clip, escHtml, fmtPrice, htmlToPlain, link, safeHttpUrl, visibleL
 import { marketState } from './enrich.mjs';
 import { pickNear, pickTop2, RECOMMEND_MIN_SCORE } from './scoring.mjs';
 import { relevantNews } from './news.mjs';
+import { watchDecision } from './watch-decision.mjs';
 
 export const COMPACT_MAX = 800;   // 기본 보고 본문(보이는 글자) 상한. 2.3: 후보 2개 비교형이라 800자(후보 1개·0개는 훨씬 짧음)
 const dirKo = d => (d === 'LONG' ? '롱' : d === 'SHORT' ? '숏' : '대기');
-const FOOTER = '※ 조건부 참고값 · 매매 지시 아님 · 점수는 승률 아님';
+const FOOTER = '※ 관찰은 진입 신호 아님 · 점수는 승률 아님';
 
 export function kstLabel(n) {
   const [d, t] = new Date(n).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).split(' ');
@@ -117,10 +118,11 @@ export function scanLines(scan) {
 }
 
 function candidateModel({ row, rank }, opt) {
-  const c = row.candidate, p = c.plan;
-  const price = [`현재가 ${fmtPrice(row.price)}`];
-  if (p) price.push(`진입 기준 ${fmtPrice(p.entry)}`, `손절 ${fmtPrice(p.stop)}`, `목표 ${fmtPrice(p.tp1)} / ${fmtPrice(p.tp2)}`);
-  else price.push('진입·손절·목표 계산 불가');
+  const c = row.candidate, d = watchDecision(row);
+  const price = [`분석가 ${fmtPrice(row.price)}`,
+    `⛔ 지금: ${d.action} · 진입 보류`,
+    `👀 다음: ${d.trigger}`,
+    '진입·손절·익절 미산정 (확정 신호 후)'];
   return { rank, medal: MEDAL[rank - 1] ?? '▪️', symbol: row.symbol, head: `${dirKo(c.dir)} 관찰`, score: Math.round(c.score), status: row.strong ? '강한 신호' : '조건 미완성', price,
     need: neededConditions(row, c.dir, opt.cond), caution: cautionLines(row, c.dir, opt.caution) };
 }
@@ -159,15 +161,16 @@ export function compactReport(rows, failures, now, ctx = {}) {
 
 // 강한 신규 신호(5분 감시) 알림: 짧은 요약. 차트는 호출자가 1장 덧붙인다.
 export function alertReport(row, now) {
-  const c = row.candidate, p = c?.plan, dir = c?.dir ?? row.direction;
+  const c = row.candidate, dir = c?.dir ?? row.direction, d = watchDecision(row);
   const html = [], plain = [];
   const put = (h, pl = htmlToPlain(h)) => { html.push(h); plain.push(pl); };
   put(bold('🚨 신규 조건 포착'), '🚨 신규 조건 포착');
   put(`${bold(row.symbol)} · ${escHtml(`${dirKo(dir)} 관찰${c ? ` (${Math.round(c.score)}점)` : ''}`)}`, `${row.symbol} · ${dirKo(dir)} 관찰${c ? ` (${Math.round(c.score)}점)` : ''}`);
   put('', '');
-  put(escHtml(`현재가 ${fmtPrice(row.price)}`));
-  if (p) { put(escHtml(`진입 참고 ${fmtPrice(p.entry)}`)); put(escHtml(`손절 ${fmtPrice(p.stop)}`)); put(escHtml(`TP1 ${fmtPrice(p.tp1)} · TP2 ${fmtPrice(p.tp2)}`)); }
-  else put(escHtml('손절·목표 계산 불가'));
+  put(escHtml(`분석가 ${fmtPrice(row.price)}`));
+  put(escHtml(`⛔ 지금: ${d.action} · 진입 보류`));
+  put(escHtml(`👀 다음: ${d.trigger}`));
+  put(escHtml('진입·손절·익절 미산정 (확정 신호 후)'));
   put('', '');
   const need = row.candidate ? neededConditions(row, dir) : [`${dir === 'LONG' ? '재지지' : '재저항'} 확인`];
   need.forEach(l => put(escHtml(`✅ ${l}`)));

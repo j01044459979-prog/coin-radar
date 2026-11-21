@@ -33,19 +33,26 @@ test('기본 보고는 near×2 / strong+near / strong×2 / near×1 / 후보 없�
     const c = compactReport(rows, [], now, { news: n }), len = visibleLength(c.text);
     assert.ok(len <= COMPACT_MAX && len >= 150, `길이 ${len}`); assert.equal(COMPACT_MAX, 800);
     assert.ok(c.text.length < 1400); assert.match(c.text, /\n\n/); assert.ok(c.text.split('\n\n').length >= 3);
-    assert.ok(c.text.endsWith('※ 조건부 참고값 · 매매 지시 아님 · 점수는 승률 아님'));
-    assert.equal((c.plain.match(/매매 지시 아님/g) ?? []).length, 1);
+    assert.ok(c.text.endsWith('※ 관찰은 진입 신호 아님 · 점수는 승률 아님'));
+    assert.equal((c.plain.match(/관찰은 진입 신호 아님/g) ?? []).length, 1);
   }
 });
-test('TOP 2 형식: 순위·종목·방향·점수·상태 / 현재가·진입 기준·손절·목표 / 확인 조건·주의 / 판단', () => {
+test('TOP 2 형식: 관찰 후보는 현재 진입 보류와 다음 확인 조건만 알리고 가상 손익가격을 숨긴다', () => {
   const c = compactReport([btc, A, B], [], now, {});
   const t = c.plain;
-  assert.match(t, /^📡 RICH FUTURES RADAR\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2\n\n🥇 1순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성\n\n현재가 108\.00\n진입 기준 [\d.]+\n손절 [\d.]+\n목표 [\d.]+ \/ [\d.]+\n\n✅ [\d.]+ 돌파 확정\n✅ 거래대금 2배 · OI \+1%\n⚠️/);
-  assert.match(t, /\n\n🥈 2순위 ETHUSDT · 숏 관찰\n점수 76 · 조건 미완성\n\n현재가 2520\.0\n진입 기준 [\d.]+\n손절 [\d.]+\n목표 [\d.]+ \/ [\d.]+\n\n✅ /);
-  assert.match(t, /⏳ 현재 확정 진입 신호 없음/); assert.deepEqual(c.tops, ['SOLUSDT', 'ETHUSDT']);
-  for (const block of t.split('\n\n🥈')[0].split('\n\n')) assert.ok((block.match(/^✅/gm) ?? []).length <= 2 && (block.match(/^⚠️/gm) ?? []).length <= 2);
-  assert.match(c.text, /^<b>📡 RICH FUTURES RADAR<\/b>/); assert.ok(c.text.includes('🥇 1순위 <b>SOLUSDT</b> · 롱 관찰')); assert.ok(c.text.includes('🥈 2순위 <b>ETHUSDT</b> · 숏 관찰'));
-  assert.match(t, /추천 관찰 후보/); assert.doesNotMatch(t, /즉시 진입|확정 매수|매수하세요/);
+  assert.match(t, /^📡 RICH FUTURES RADAR\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2/);
+  assert.match(t, /🥇 1순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성/);
+  assert.match(t, /🥈 2순위 ETHUSDT · 숏 관찰\n점수 76 · 조건 미완성/);
+  assert.match(t, /분석가 108\.00\n⛔ 지금: 대기 · 추세 역행 · 진입 보류\n👀 다음: 5분봉/);
+  assert.match(t, /진입·손절·익절 미산정 \(확정 신호 후\)/);
+  assert.match(t, /✅ [\d.]+ 돌파 확정/);
+  assert.match(t, /⏳ 현재 확정 진입 신호 없음/);
+  assert.deepEqual(c.tops, ['SOLUSDT', 'ETHUSDT']);
+  assert.doesNotMatch(t, /\n손절 [\d.]+|\n목표 [\d.]+|\n진입 기준 [\d.]+/);
+  assert.match(c.text, /^<b>📡 RICH FUTURES RADAR<\/b>/);
+  assert.ok(c.text.includes('🥇 1순위 <b>SOLUSDT</b> · 롱 관찰'));
+  assert.ok(c.text.includes('🥈 2순위 <b>ETHUSDT</b> · 숏 관찰'));
+  assert.doesNotMatch(t, /즉시 진입|확정 매수|매수하세요/);
 });
 test('strong + near 혼합: strong이 1순위, 판단 줄에 강한 신호 건수. strong×2도 가능', () => {
   const sx = mk2('XRPUSDT', 'SHORT', true, 0.52, 88, []);
@@ -68,12 +75,12 @@ test('유효 후보가 1개면 1개만, 0개면 후보 없음. 점수 낮음·�
 });
 test('후보 없음: 임의의 진입 가격을 만들지 않고 BTC 요약과 대기만 표시', () => {
   const t = compactReport([btc], [], now, {}).plain;
-  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|목표/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
+  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입 기준 [\\d.]+|손절 [\\d.]+|목표 [\\d.]+/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
   assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*추천 표시 기준\(55점\)을 충족한 후보 없음[\s\S]*수집 실패 1종목/);
 });
 test('시나리오를 계산할 수 없으면 계산 불가로 표시', () => {
   const r = { ...A, candidate: { ...A.candidate, plan: null } };
-  assert.match(compactReport([btc, r], [], now, {}).plain, /현재가 108\.00\n진입·손절·목표 계산 불가/);
+  assert.match(compactReport([btc, r], [], now, {}).plain, /분석가 108\.00[\s\S]*진입·손절·익절 미산정/);
 });
 test('순위 규칙: 순위값 = 점수 − 2×위험점수, 표시 점수는 조건 충족 점수 그대로', () => {
   const x = mk2('AAAUSDT', 'LONG', false, 10, 70, ['x']), y = mk2('BBBUSDT', 'LONG', false, 10, 66, ['x']);
