@@ -43,7 +43,7 @@ test('TOP 2 형식: 관찰 후보는 현재 진입 보류와 다음 확인 조�
   assert.match(t, /^📡 RICH FUTURES RADAR\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2/);
   assert.match(t, /🥇 1순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성/);
   assert.match(t, /🥈 2순위 ETHUSDT · 숏 관찰\n점수 76 · 조건 미완성/);
-  assert.match(t, /분석가 108\.00\n⛔ 지금: 관망 · 추세 역행 · 진입 보류\n👀 다음: 5분봉/);
+  assert.match(t, /분석가 108\.00\n⛔ 지금: 대기 · 추세 역행 · 진입 보류\n👀 다음: 5분봉/);
   assert.match(t, /진입·손절·익절 미산정 \(확정 신호 후\)/);
   assert.match(t, /✅ [\d.]+ 돌파 확정/);
   assert.match(t, /⏳ 현재 확정 진입 신호 없음/);
