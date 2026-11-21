@@ -3,6 +3,7 @@ import { relevantNews } from './news.mjs';
 import { marketState } from './enrich.mjs';
 import { checkPhrases, pickNear } from './scoring.mjs';
 import { compactReport } from './compact.mjs';
+import { watchDecision } from './watch-decision.mjs';
 
 export const LIMIT = 3800; // Telegram 4096자 한도보다 여유
 const f = n => Number(Number(n).toPrecision(7)).toString();
@@ -20,17 +21,9 @@ export const mtfLine = row => {
 };
 
 function planLines(plan) {
-  if (!plan) return ['진입·손절·목표: 계산 불가 (검증 가능한 기준선/ATR/스윙 데이터 부족)'];
-  const l = [
-    '※ 진입·손절·목표는 조건부 참고값이며 매매 지시가 아닙니다',
-    `현재 마크가격 ${f(plan.mark)} · ${plan.entryNote} ${f(plan.entry)}`,
-    `손절(무효화) 참고선 ${f(plan.stop)} (진입 대비 ${plan.stopPct.toFixed(2)}%)`,
-    `TP1 ${f(plan.tp1)} (+${plan.tp1Pct.toFixed(2)}%, 1R) · TP2 ${f(plan.tp2)} (+${plan.tp2Pct.toFixed(2)}%, 2R)`,
-    `손익비 1:${plan.rr1} / 1:${plan.rr2} · 수수료·슬리피지·펀딩비 미반영`,
-    `목표는 1R/2R 기준 참고값이며 저항·지지 확정가가 아님${plan.structureAhead ? ` · 가까운 1H 구조 ${f(plan.structureAhead)}${plan.tp1BeyondStructure ? ' (TP1보다 가까움)' : ''}` : ''}`,
-    '강제청산가: 확인 불가 (포지션·증거금 데이터 없음)',
-  ];
-  return l;
+  // A 1R/2R model from plan.mjs is not an executable trade while this is WATCH.
+  return ['관찰 신호 · 진입·손절·익절 미산정 (확정 신호 후 재계산)',
+    '관찰 참고값은 실제 체결·손익비·청산가가 아님'];
 }
 
 // 강한 신규 신호용 간결 메시지 (기존 형식 + 점수·시나리오·위험). compact=true는 정기 보고 내 요약용(시나리오·위험은 상세 분석에 표시)
@@ -45,7 +38,7 @@ export function signalText(row, { compact = false } = {}) {
   if (row.level === null) lines.push('돌파 조건 미충족');
   else {
     lines.push(`핵심 가격대(돌파 기준선) ${f(row.level)} · 5분봉 재지지/재저항 확인 필요`);
-    if (!(c?.plan && !compact)) lines.push(`무효화 참고선 ${f(row.stop)}${c?.plan ? '' : ' (기준선 ± 14봉 ATR)'}`);
+    if (!compact) lines.push('관찰 신호 · 확정 진입 전 손절·익절 미산정');
   }
   if (c) {
     lines.push(`${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`, `조건 충족 점수 ${c.score}/100 (수익 확률 아님) · 위험 수준 ${c.risk.level}(상대 평가, 선물거래 자체의 저위험을 뜻하지 않음)`);
@@ -83,7 +76,9 @@ function detailBlock(row) {
     // 2) 다중 시간대
     `다중 시간대: ${mtfLine(row)}${c.mtfConflict ? ' · 상위 시간대 역행 주의' : ''}`,
     ...higher.map(t => `  ${t.tf === '1H' ? '1시간' : '4시간'} ${t.arrow} ${t.label} · ${t.basis}`),
-    // 3) 진입·손절·TP
+    // 3) Watch action, not a simulated execution plan
+    `지금: ${watchDecision(row).action} · 진입 보류`,
+    `다음: ${watchDecision(row).trigger}`,
     ...planLines(c.plan),
     // 4) 위험
     `위험 수준: ${c.risk.level} (상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음)`, ...warn.map(x => `- ${x}`),
@@ -132,16 +127,16 @@ export function summaryText(rows, failures, now) {
   const lines = ['📡 RICH FUTURES RADAR', `데이터: ${source} (Binance 아님)`, `분석시각: ${kstMin(now)} · 시장 상태: ${marketState(btc?.mtf)}`, '', '[핵심 요약]'];
   if (top) {
     // 점수·시나리오가 없는 행(구버전 호환)도 깨지지 않게 기본값을 둔다.
-    const c = top.candidate ?? { dir: top.direction, score: '-', plan: null, risk: { level: '확인 불가' }, mtfConflict: false, unmet: [] }, p = c.plan, sg = c.dir === 'LONG' ? ['-', '+'] : ['+', '-'];
+    const c = top.candidate ?? { dir: top.direction, score: '-', plan: null, risk: { level: '확인 불가' }, mtfConflict: false, unmet: [] };
+    const d = watchDecision(top);
     lines.push(`- 1순위 후보: ${top.symbol} ${dirKo(c.dir)} 관찰 (${top.strong ? '강한 관찰 조건 포착' : '조건 미완성'} · 점수 ${c.score})`);
-    if (p) lines.push(`- 핵심 가격: ${f(p.entry)} (${p.conditional ? '조건부 진입 참고' : '진입 참고·현재가 기준'})`, `- 손절 참고: ${f(p.stop)} (${sg[0]}${p.stopPct.toFixed(2)}%)`, `- 목표: ${f(p.tp1)} / ${f(p.tp2)}`);
-    else lines.push('- 진입·손절·목표: 계산 불가');
+    lines.push(`- 지금: ${d.action} · 진입 보류`, `- 다음: ${d.trigger}`, '- 진입·손절·익절: 확정 신호 후 재계산');
     lines.push(`- 체크 포인트: ${checkPhrases(top, c.dir).join(' · ') || '없음'}`, `- 위험: ${c.risk.level}${c.mtfConflict ? ' · 상위 시간대 역행' : ''}`);
   } else lines.push('- 1순위 후보: 없음 (대기)');
   lines.push('', '[시장]', btc ? `- BTC ${f(btc.price)} · 5분 ${btc.trend} · ${mtfLine(btc)}` : '- BTC 데이터 미확인 · 강한 조건 판단 대기',
     `- 강한 조건 ${strong.length} · 근접 후보 ${near.length} · 롱 ${count('LONG')} / 숏 ${count('SHORT')} (${rows.length}종목${failures.length ? ` · 수집 실패 ${failures.length}` : ''})`,
     '', `[요약 판단] ${strong.length ? '강한 관찰 조건 포착' : near.length ? '조건부 관찰' : '대기'}`,
-    '※ 진입·손절·목표는 조건부 참고값 · 매매 지시 아님');
+    '※ 관찰 신호는 진입 신호 아님 · 매매 지시 아님');
   return lines.join('\n');
 }
 
