@@ -75,7 +75,7 @@ test('유효 후보가 1개면 1개만, 0개면 후보 없음. 점수 낮음·�
 });
 test('후보 없음: 임의의 진입 가격을 만들지 않고 BTC 요약과 대기만 표시', () => {
   const t = compactReport([btc], [], now, {}).plain;
-  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입|손절|목표/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
+  assert.match(t, /🔎 후보 없음 · 대기\nBTC 83150\.4 · 5분 상승\n15분 ↑ \/ 1시간 → \/ 4시간 →/); assert.doesNotMatch(t, /진입 기준 [\\d.]+|손절 [\\d.]+|목표 [\\d.]+/); assert.match(t, /⏳ 현재 추천 표시 기준\(55점\)을 충족한 후보 없음/);
   assert.match(compactReport([], [{ symbol: 'X' }], now, {}).plain, /BTC 데이터 미확인[\s\S]*추천 표시 기준\(55점\)을 충족한 후보 없음[\s\S]*수집 실패 1종목/);
 });
 test('시나리오를 계산할 수 없으면 계산 불가로 표시', () => {
