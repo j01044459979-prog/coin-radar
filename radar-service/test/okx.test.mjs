@@ -14,10 +14,10 @@ test('OKX collector maps confirmed candles, excludes inverse contracts and label
   assert.ok(btc.oi15 > 2 && btc.oi15 < 4, `oi15=${btc.oi15}`);
   assert.ok(!calls.some(u => /binance/i.test(u)));
 });
-test('OKX report states the exchange, is not Binance, and contains numbers for invalidation', async () => {
+test('OKX report states the exchange, is not Binance, and does not invent stop prices in observation reports', async () => {
   const { rows } = await createOkxCollector(fakeOkx(), { gapMs: 0 })(now);
   const text = reportText(rows, [], now);
-  assert.match(text, /OKX/); assert.match(text, /Binance 아님/); assert.match(text, /무효화 참고선/); assert.match(text, /핵심 가격대/);
+  assert.match(text, /OKX/); assert.match(text, /Binance 아님/); assert.match(text, /진입·손절·익절/); assert.match(text, /핵심 가격대/);
   assert.doesNotMatch(text, /(승률|확률|수익률)\s*\d/);
 });
 test('OKX failure code or HTTP block raises an error instead of inventing data', async () => {
@@ -46,5 +46,5 @@ test('safe vs aggressive grade follows BTC alignment, funding, OI and distance',
 test('internal symbol mapping', () => assert.equal(internalSymbol('SOL-USDT-SWAP'), 'SOLUSDT'));
 test('signal text carries price, time, levels and source', () => {
   const t = signalText({ symbol: 'BTCUSDT', direction: 'SHORT', grade: '공격형', price: 99, priceAt: now, trend: '하락', change15: -1, oi15: 2, volume: 3, funding: 0.01, atrPct: .3, level: 100, stop: 101, source: 'OKX', sourceUrl: 'u' });
-  assert.match(t, /숏 관찰 · 공격형 후보/); assert.match(t, /KST/); assert.match(t, /무효화 참고선 101/);
+  assert.match(t, /숏 관찰 · 공격형 후보/); assert.match(t, /KST/); assert.match(t, /관찰 신호 · 확정 진입 전 손절·익절 미산정/); assert.doesNotMatch(t, /무효화 참고선 101/);
 });
