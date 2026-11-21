@@ -215,6 +215,8 @@ export function buildSvg(spec) {
     add(`<text x="${X1 - 12}" y="${Y0 + 54}" text-anchor="end" font-size="16" fill="${C.muted}">${esc('조건 확정 전 진입 금지')}</text>`);
   }
 
+  // Keep the volume-profile caveat visible without sacrificing the next action.
+  add(`<text x="${X0}" y="${H - 133}" font-size="13" fill="${C.muted}">${esc(showVol && prof ? PROFILE_NOTE : '거래량 데이터 부족 · 매물대 미표시')}</text>`);
   // 푸터
   add(`<rect x="0" y="${H - 128}" width="${W}" height="128" fill="#0a111a"/>`);
   if (market) {
