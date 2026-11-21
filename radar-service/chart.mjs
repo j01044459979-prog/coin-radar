@@ -60,7 +60,7 @@ export function chartCaption(spec) {
   if (spec.kind === 'market') return head + '\n시장 참고 차트 · 매매 지시 아님';
   const d = spec.decision;
   return [head,
-    '⛔ 지금: ' + (d?.action ?? '관망') + ' · 진입 보류',
+    '⛔ 지금: ' + (d?.action ?? '대기') + ' · 진입 보류',
     '👀 다음: ' + (d?.trigger ?? '기준선 확인 대기'),
     '⚠️ 부족: ' + (d?.wait?.slice(0, 2).join(' · ') || '조건 확인 대기'),
     '진입·손절·익절 미산정 · 확정 신호 후 재계산',
@@ -95,7 +95,7 @@ export function buildSvg(spec) {
   const hi = hi0 + pad, lo = lo0 - pad;
   const y = v => Y1 - ((v - lo) / (hi - lo)) * (Y1 - Y0);
   const GUTTER = 72;                                          // 왼쪽 가격 눈금 여백(캔들과 겹침 방지)
-  const candleW = (X1 - X0 - GUTTER) * 0.74 / n;              // 오른쪽 26%는 관망 안내 공간
+  const candleW = (X1 - X0 - GUTTER) * 0.74 / n;              // 오른쪽 26%는 관찰 안내 공간
   const xi = i => X0 + GUTTER + candleW * (i + 0.5);          // 가격 패널과 거래량 패널이 같은 x 좌표를 쓴다(시간축 정렬)
   const bw = Math.max(3, candleW * 0.62);
   const body = [];
@@ -221,7 +221,7 @@ export function buildSvg(spec) {
     add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">시장 참고 차트 · 매매 지시 아님</text>`);
     add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.muted}">진입·손절·목표 미산정</text>`);
   } else {
-    add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">${esc('지금: ' + (decision?.action ?? '관망') + ' · 진입 보류')}</text>`);
+    add(`<text x="${X0}" y="${H - 98}" font-size="20" font-weight="700" fill="${C.entry}">${esc('지금: ' + (decision?.action ?? '대기') + ' · 진입 보류')}</text>`);
     add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.text}">${esc('다음: ' + (decision?.trigger ?? '돌파 기준선 확인 대기'))}</text>`);
   }
   add(`<text x="${X0}" y="${H - 44}" font-size="17" fill="${C.muted}">${esc(market ? (showVol && prof ? PROFILE_NOTE : '거래량 데이터 부족 · 매물대 미표시') :
