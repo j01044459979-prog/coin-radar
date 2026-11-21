@@ -107,15 +107,15 @@ test('수집 실패·누락 캔들도 점수 0, 5분 점수 계산은 영향 없
 test('강한 조건 문구: 즉시 진입이 아니라 강한 관찰 조건 포착, 시나리오는 조건부 참고값', async () => {
   const { rows, failures } = await collect({});
   const text = reportMessages(rows, failures, now).join('\n');
-  assert.doesNotMatch(text, /즉시 진입/); assert.match(text, /강한 관찰 조건 포착/); assert.match(text, /조건부 참고값/);
+  assert.doesNotMatch(text, /즉시 진입/); assert.match(text, /강한 관찰 조건 포착/); assert.match(text, /관찰 신호/);
   assert.match(text, /위험 수준: 낮음 \(상대 평가이며 선물거래 자체의 저위험을 뜻하지 않음\)/);
   assert.match(text, /선물거래 자체의 저위험을 뜻하지 않음/);
   const alert = signalText(rows.find(r => r.strong));
-  assert.match(alert, /조건부 참고값/); assert.match(alert, /선물거래 자체의 저위험을 뜻하지 않음/); assert.doesNotMatch(alert, /즉시 진입/);
+  assert.match(alert, /관찰 신호/); assert.match(alert, /선물거래 자체의 저위험을 뜻하지 않음/); assert.doesNotMatch(alert, /즉시 진입/);
 });
 test('근접 후보 보고에도 조건부 문구가 있고 강한 신호 표현이 없다', async () => {
   const { rows, failures } = await collect({ universe: 'full', breakout: false });
   const text = reportMessages(rows, failures, now).join('\n');
-  assert.doesNotMatch(text, /즉시 진입|강한 관찰 조건 포착/); assert.match(text, /조건부 관찰/); assert.match(text, /조건부 참고값/);
+  assert.doesNotMatch(text, /즉시 진입|강한 관찰 조건 포착/); assert.match(text, /조건부 관찰/); assert.match(text, /관찰 신호/);
   assert.ok(reportMessages(rows, failures, now).every(m => m.length <= 4000));
 });
