@@ -53,7 +53,7 @@ export function makeSpec(row, tf, candles, kind, reason, fallback = false) {
   };
 }
 
-// 캡션은 1~2줄. 시나리오 숫자는 이미지와 본문에 이미 있으므로 반복하지 않는다.
+// Photo captions carry the decision and unfinished checks, not hypothetical fill prices.
 export function chartCaption(spec) {
   const medal = spec.rank === 1 ? '🥇 1순위 ' : spec.rank === 2 ? '🥈 2순위 ' : '';
   const head = spec.kind === 'market' ? `${spec.symbol} · 시장 기준 · ${spec.tf}봉` : `${medal}${spec.symbol} · ${dirKo(spec.dir)} 관찰 · ${spec.tf}봉`;
@@ -62,7 +62,8 @@ export function chartCaption(spec) {
   return [head,
     '⛔ 지금: ' + (d?.action ?? '관망') + ' · 진입 보류',
     '👀 다음: ' + (d?.trigger ?? '기준선 확인 대기'),
-    '⚠️ 진입·손절·익절 미산정 · 확정 신호 후 재계산',
+    '⚠️ 부족: ' + (d?.wait?.slice(0, 2).join(' · ') || '조건 확인 대기'),
+    '진입·손절·익절 미산정 · 확정 신호 후 재계산',
   ].join('\n');
 }
 
@@ -94,9 +95,8 @@ export function buildSvg(spec) {
   const hi = hi0 + pad, lo = lo0 - pad;
   const y = v => Y1 - ((v - lo) / (hi - lo)) * (Y1 - Y0);
   const GUTTER = 72;                                          // 왼쪽 가격 눈금 여백(캔들과 겹침 방지)
-  const candleW = (X1 - X0 - GUTTER) * 0.74 / n;              // 오른쪽 26%는 시나리오 화살표 공간
+  const candleW = (X1 - X0 - GUTTER) * 0.74 / n;              // 오른쪽 26%는 관망 안내 공간
   const xi = i => X0 + GUTTER + candleW * (i + 0.5);          // 가격 패널과 거래량 패널이 같은 x 좌표를 쓴다(시간축 정렬)
-  const xLast = xi(n - 1);
   const bw = Math.max(3, candleW * 0.62);
   const body = [];
   const add = s => body.push(s);
@@ -188,7 +188,7 @@ export function buildSvg(spec) {
     add(`<text x="${X0 + 12}" y="${(VY0 + VY1) / 2 + 6}" font-size="18" fill="${C.muted}">거래량 데이터 부족 (유효 ${vol ? vol.ok : 0}/${n}봉) · 거래량·매물대 미표시</text>`);
   }
 
-  // 수평선: 진입·손절·TP·현재가 (플롯 + 매물대 열을 가로지르는 얇은 연장선) → 가격 태그 열
+  // 관찰 가격: 돌파/이탈 확인선과 분석 당시 가격만 표시. 가상 손절/TP 없음.
   const hline = (v, color, dash, width, label, id) => {
     add(`<line x1="${X0}" x2="${X1}" y1="${y(v)}" y2="${y(v)}" stroke="${color}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`);
     add(`<line x1="${X1}" x2="${XT}" y1="${y(v)}" y2="${y(v)}" stroke="${color}" stroke-width="1" stroke-opacity="0.45"/>`);
@@ -199,7 +199,7 @@ export function buildSvg(spec) {
       `${spec.dir === 'SHORT' ? '이탈' : '돌파'} 확인선 ${fmt(spec.level)}`);
   }
   add(`<line x1="${X0}" x2="${X1}" y1="${y(spec.price)}" y2="${y(spec.price)}" stroke="${C.now}" stroke-width="1.4" stroke-dasharray="2 4"/>`);
-  tags.push({ y: y(spec.price), color: C.now, label: `현재 ${fmt(spec.price)}`, id: 'now' });
+  tags.push({ y: y(spec.price), color: C.now, label: `분석 ${fmt(spec.price)}`, id: 'now' });
   const colW = W - XT - 12;
   for (const t of spreadTags(tags)) {
     const em = textW(t.label, 1), size = Math.max(13, Math.min(17, Math.floor((colW - 20) / em))), w = Math.min(textW(t.label, size) + 18, colW);
@@ -225,7 +225,7 @@ export function buildSvg(spec) {
     add(`<text x="${X0}" y="${H - 71}" font-size="17" fill="${C.text}">${esc('다음: ' + (decision?.trigger ?? '돌파 기준선 확인 대기'))}</text>`);
   }
   add(`<text x="${X0}" y="${H - 44}" font-size="17" fill="${C.muted}">${esc(market ? (showVol && prof ? PROFILE_NOTE : '거래량 데이터 부족 · 매물대 미표시') :
-    '확정 신호 전 진입·손절·익절 미산정 · 거래량 및 상위 추세 확인')}</text>`);
+    '확정 신호 전 진입·손절·익절 미산정 · ' + (decision?.wait?.slice(0, 2).join(' · ') || '조건 확인 대기'))}</text>`);
   add(`<text x="${X0}" y="${H - 16}" font-size="16" fill="${C.muted}">${esc(spec.source)} (Binance 아님) · 마지막 확정봉 ${esc(kstFull(candles[n - 1].t))} KST · 분석 ${esc(kstFull(spec.collectedAt ?? spec.priceAt))} KST</text>`);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}">${body.join('')}</svg>`;
 }
