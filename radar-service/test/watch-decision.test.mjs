@@ -28,7 +28,7 @@ const candles = Array.from({length: 48}, (_,i) => {
 });
 test('WAL 76.2점 롱 관찰: 1시간 역행이면 돌파 대기와 부족 조건만 보여준다', () => {
   const d = watchDecision(wal);
-  assert.equal(d.action,'관망 · 추세 역행');
+  assert.equal(d.action,'대기 · 추세 역행');
   assert.match(d.trigger,/5분봉 0\.02210 돌파 확정 확인/);
   assert.match(d.wait.join(' '),/1H 추세 역행 주의/);
   const spec = makeSpec(wal,'1H',candles,'candidate','근접 후보');
@@ -36,15 +36,15 @@ test('WAL 76.2점 롱 관찰: 1시간 역행이면 돌파 대기와 부족 조�
   const svg = buildSvg(spec);
   assert.match(svg,/돌파 확인선 0\.02210/);
   assert.match(svg,/1시간 구조 0\.02251/);
-  assert.match(svg,/지금: 관망 · 추세 역행 · 진입 보류/);
+  assert.match(svg,/지금: 대기 · 추세 역행 · 진입 보류/);
   assert.match(svg,/진입·손절·익절 미산정/);
   assert.doesNotMatch(svg,/TP1|TP2|손절 0\.02140|진입 0\.02210|여기 돌파|<polygon /);
   const caption=chartCaption(spec);
-  assert.match(caption,/지금: 관망 · 추세 역행/);
+  assert.match(caption,/지금: 대기 · 추세 역행/);
   assert.match(caption,/5분봉 0\.02210 돌파/);
   assert.doesNotMatch(caption,/0\.02140|0\.02280|0\.02350/);
   const report=compactReport([wal],[],NOW).plain;
-  assert.match(report,/⛔ 지금: 관망 · 추세 역행 · 진입 보류/);
+  assert.match(report,/⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
   assert.match(report,/거래대금 2배/);
   assert.doesNotMatch(report,/손절 0\.02140|목표 0\.02280|진입 기준 0\.02210/);
 });
