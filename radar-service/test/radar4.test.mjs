@@ -90,8 +90,8 @@ test('롱 관찰 차트: 돌파 기준선과 대기 조건만 보이며 미확�
   const spec = makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', '근접 후보 1위');
   const svg = buildSvg(spec);
   for (const w of ['DOGEUSDT', '롱 관찰', '1시간봉', '조건 미완성',
-    '돌파 확인선 101', '분석 100.8', '지금: 관망 · 추세 역행',
-    '5분봉 101 돌파 확정 확인', '1H 추세 역행 주의',
+    '돌파 확인선 101', '분석 100.8', '지금: 대기 · 추세 역행',
+    '5분봉 101.00 돌파 확정 확인', '1H 추세 역행 주의',
     '진입·손절·익절 미산정', '상위 시간대 역행 주의', '(Binance 아님)'])
     assert.ok(svg.includes(w), w);
   assert.doesNotMatch(svg, /TP1 |TP2 |손절 [\d.]|진입 [\d.]|핵심 구간|<polygon /);
@@ -124,8 +124,8 @@ test('BTC 시장 차트는 진입·손절 없이 추세와 구조선만 표시',
 function candidatesBtc() { return candles(83000, 8, 60, 120).map(c => ({ ...c })); }
 test('실제 텔레그램 사진 캡션은 지금 행동·돌파 조건·부족 사유를 설명하고 가상 손익가격은 노출하지 않는다', () => {
   const cap = chartCaption(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.match(cap, /^DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 관망 · 추세 역행 · 진입 보류/);
-  assert.match(cap, /👀 다음: 5분봉 101 돌파 확정 확인/);
+  assert.match(cap, /^DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
+  assert.match(cap, /👀 다음: 5분봉 101.00 돌파 확정 확인/);
   assert.match(cap, /⚠️ 부족: 1H 추세 역행 주의/);
   assert.match(cap, /진입·손절·익절 미산정/);
   assert.doesNotMatch(cap, /TP1|TP2|손절 \d/);
