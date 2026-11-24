@@ -11,6 +11,7 @@ import { H1 } from '../opportunity/indicators.mjs';
 import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
+import { evaluateStructurePreview } from './structure-preview.mjs';
 import { btcContext } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { accumulationAutoInterests } from './auto-interest.mjs';
@@ -263,6 +264,14 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       ? evaluatePullback({ a: r.a, c1h: r.c1h, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin })
       : null;
     const ev = pullback ?? baseSignal;
+    // Preview-only: never pass experimental patterns to transition, paper, feed or Telegram.
+    if (mode === 'preview') {
+      const patterns = evaluateStructurePreview({ a: r.a, c15: c.c15, now }, { minRR: cfg.minRR, validMin: cfg.validMin });
+      for (const p of patterns) {
+        base.structurePreviewCandidates = (base.structurePreviewCandidates ?? 0) + 1;
+        lines.push('STRUCTURE PREVIEW ' + p.strategy + ' ' + summaryLine(r.symbol, p));
+      }
+    }
     lines.push(summaryLine(r.symbol, ev));
     evaluations.push({ symbol: r.symbol, ev, a: r.a, c15: c.c15 }); barsMap[r.symbol] = c.c15;
     if (ev.status === 'OBSERVE') base.observing++;
