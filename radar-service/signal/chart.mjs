@@ -3,7 +3,7 @@
 // 가격·거래량은 입력(확정 15분봉과 evaluateSignal 결과)만 쓴다. 값이 없으면 그리지 않으며 임의 값을 만들지 않는다. 렌더링 실패는 호출자가 텍스트 알림으로 대체한다.
 import { C, esc, renderPng, textW } from '../chart.mjs';
 import { fmtPrice, priceDecimals } from '../format.mjs';
-import { baseName, signalDeadline } from './message.mjs';
+import { baseName, signalDeadline, strategyLabel } from './message.mjs';
 import { btcContextLines } from './btc-context.mjs';
 
 export const SIGNAL_CHART = Object.freeze({ W: 1080, H: 1560, BARS: 56 });
@@ -45,7 +45,7 @@ export function reasonRows(ev) {
   return [
     { k: '4H 추세', v: `${L ? '상승' : '하락'} 추세 유지` },
     { k: '1H 눌림목', v: `${L ? '지지' : '저항'} ${f(ev.zone.lo)}~${f(ev.zone.hi)} 구간 눌림` },
-    { k: '15분 진입', v: `확정 종가 ${f(ev.level)} ${L ? '돌파' : '이탈'} · 거래량 ×${ev.volRel.toFixed(1)}` },
+    { k: '15분 진입', v: ev.strategy === 'ema-pullback' || ev.strategy === 'pullback' ? `확정 ${L ? '반등' : '반락'} · 거래량 ×${ev.volRel.toFixed(1)}` : `확정 종가 ${f(ev.level)} ${L ? '돌파' : '이탈'} · 거래량 ×${ev.volRel.toFixed(1)}` },
   ];
 }
 
@@ -57,6 +57,7 @@ export function signalCaption(symbol, ev, opts = {}) {
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
     `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
+    '📌 전략: ' + strategyLabel(ev),
     '🧭 지금: 조건 확정 · 호가 확인',
     ...(ev.fib?.ok && ev.fib.fib ? [
       `📐 FIB 0.5~0.618 · ${f(ev.fib.fib.lo)}~${f(ev.fib.fib.hi)}`,
