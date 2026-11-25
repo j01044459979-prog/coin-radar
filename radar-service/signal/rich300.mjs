@@ -25,7 +25,7 @@ export const r9Keyboard = sid => ({ inline_keyboard: [[{ text: '진입했어', c
 export function r9Tail(symbol, ev, opts) {
   const line = r9Line(symbol, ev, opts); if (!line) return null;
   const sid = line.split(' ')[2];
-  return { sid, line, html: `\n\n🆔 ${escHtml(sid)}\n<code>${escHtml(line)}</code>`, plain: `\n\n🆔 ${sid}\n${line}`, markup: r9Keyboard(sid) };
+  return { sid, line, html: `\n\n실제 진입했어? (기록용)\n🆔 ${escHtml(sid)}\n<code>${escHtml(line)}</code>`, plain: `\n\n실제 진입했어? (기록용)\n🆔 ${sid}\n${line}`, markup: r9Keyboard(sid) };
 }
 
 // 후보 메시지(part)에 버튼·ID 부착. 원본을 바꾸지 않고 새 part 를 돌려준다.
