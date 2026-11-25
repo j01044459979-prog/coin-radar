@@ -12,6 +12,7 @@ import { signalSettings, fibMode } from './config.mjs';
 import { collect15 } from './collect.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext } from './btc-context.mjs';
+import { earlyLongAlertsOn, btcAllowsLong, candidateLongBucket, prioritizeCandidates, longBudget, countLongAlert } from './early-long-policy.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { accumulationAutoInterests } from './auto-interest.mjs';
 import { ACCUMULATION, ACC_RETEST, accumulationMode, accumulationWatch, accumulationMessage,
@@ -172,7 +173,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
 export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env), emaEnabled = String(env.RADAR_EMA_PULLBACK ?? '').toLowerCase() === 'on';
   // Independent opt-in for *new live* EMA alerts. Paper tracking and prior alert invalidations stay active.
-  const emaLive = String(env.RADAR_EMA_LIVE ?? 'off').toLowerCase() === 'on';
+  const emaLive = String(env.RADAR_EMA_LIVE ?? 'off').toLowerCase() === 'on', earlyLongOn = earlyLongAlertsOn(env);
   if (mode === 'off') return { mode, skipped: 'off' };
   const expired = name => { if (checkpoint) checkpoint(name); return clock() > deadline; };
   const hour = Math.floor(now / H1), slot = Math.floor(now / M15) * M15;
@@ -206,6 +207,9 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const hourData = await collectHour({ fetcher, now, ids: watch ? watch.map(instOf) : null, topN, budgetMs, gapMs, shouldStop: () => clock() > deadline });
   if (expired('afterCollect')) return { mode, timedOut: true };
   base.calls += hourData.calls ?? 0;
+  const freshBtcHour = hourData.btc1h ?? (hourData.coins?.['BTC-USDT-SWAP']?.status === 'fresh' ? hourData.coins['BTC-USDT-SWAP'].c1h : null);
+  const longMarketOK = btcAllowsLong(freshBtcHour, now);
+  base.earlyLong = { mode: earlyLongOn ? 'on' : 'off', btcOK: longMarketOK };
   if (hourData.fatal) {
     attach(); sg.failures += 1; sg.lastError = hourData.fatal.message; sg.retryAt = now + (hourData.fatal.status ? waitMs(hourData.fatal.status, hourData.fatal.retryAfter) : Math.min(300000 * sg.failures, 1800000));
     if (live) await safeSave();
@@ -276,9 +280,10 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       if (evEma.status === 'CANDIDATE') base.emaCandidates++;
       lines.push('EMA ' + summaryLine(r.symbol, evEma));
       const et = signalTransition(emaPrev, evEma, { symbol: r.symbol, a: emaContext, c15: c.c15, now, cooldownMs: SIG.cooldownMs });
-      if (et.event && (et.event.type !== 'candidate' || emaLive)) items.push({ symbol: r.symbol, channel: 'ema', event: et.event, committed: et.committed, score: evEma.score ?? 0, rr: evEma.t1?.net ?? 0 });
+      const emaEntryAllowed = emaLive || (earlyLongOn && longMarketOK && evEma.dir === 'LONG' && Boolean(evEma.earlyLongPattern));
+      if (et.event && (et.event.type !== 'candidate' || emaEntryAllowed)) items.push({ symbol: r.symbol, channel: 'ema', event: et.event, committed: et.committed, score: evEma.score ?? 0, rr: evEma.t1?.net ?? 0 });
       else if (JSON.stringify(et.next) !== JSON.stringify(emaPrev)) emaCommitNow[r.symbol] = et.next;
-      if (et.event?.type === 'candidate' && !emaLive) base.emaPreviewCandidates = (base.emaPreviewCandidates ?? 0) + 1;
+      if (et.event?.type === 'candidate' && !emaEntryAllowed) base.emaPreviewCandidates = (base.emaPreviewCandidates ?? 0) + 1;
     }
   }
   if (expired('afterAnalysis')) return { ...base, timedOut: true };
@@ -288,8 +293,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const accSent = sg.accumulation?.sent && typeof sg.accumulation.sent === 'object' && !Array.isArray(sg.accumulation.sent)
     ? Object.fromEntries(Object.entries(sg.accumulation.sent).filter(([k, t]) =>
       /^[A-Z0-9]+USDT:(WATCH|BREAKOUT|RETEST)$/.test(k) && Number.isFinite(t) && now - t >= 0 && now - t <= 14 * 86400000)) : {};
-  const btcRow = hourData.coins?.['BTC-USDT-SWAP'];
-  const btcHourly = btcRow?.status === 'fresh' ? btcRow.c1h : null;
+  const btcHourly = freshBtcHour;
   const accAll = accMode === 'off' ? [] : rows.flatMap(r => {
     if (!r.c1h) return [];
     try {
@@ -363,15 +367,22 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     (a.entry.stage === 'BREAKOUT' ? DONCHIAN.breakoutCooldownMs : DONCHIAN.watchCooldownMs));
   const dcToday = Object.values(dcSent).filter(t => dayKey(t) === dayKey(now)).length;
   const dcLimit = Math.min(DONCHIAN.maxPerRun, Math.max(0, DONCHIAN.maxPerDay - dcToday));
-  const dcAlerts = dcEligible.slice(0, dcLimit);
   base.donchian = { mode: dcMode, observed: dcAll.length, eligible: dcEligible.length, selected: 0 };
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
-  const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
-  const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
+  const inv = items.filter(i => i.event.type === 'invalidated');
+  const rawCand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
+  const cand = earlyLongOn ? prioritizeCandidates(rawCand.filter(i=>i.event.ev.dir!=='LONG'||longMarketOK)) : rawCand;
+  const room = Math.max(0, cfg.maxPerDay - dy.candidates), budget = longBudget(dy), selected=[];
+  for (const i of cand) {
+    if (selected.length>=Math.min(room,Math.max(0,MAX_MESSAGES_PER_RUN-inv.length))) break;
+    const bucket=earlyLongOn?candidateLongBucket(i.event.ev):null;
+    if (!budget(bucket)) continue;
+    selected.push(bucket?{...i,longBucket:bucket}:i);
+  }
+  const toSend = [...inv,...selected].slice(0,MAX_MESSAGES_PER_RUN);
   base.invalidated = inv.length; base.candidates = cand.length; base.held = items.length - toSend.length;
   // BTC comparisons are text-only context, not a signal filter. The same snapshot drives caption and fallback text.
-  const btcHour = hourData.coins?.['BTC-USDT-SWAP'];
-  const btc1h = btcHour?.status === 'fresh' ? btcHour.c1h : null;
+  const btc1h = freshBtcHour;
   const btcFor = i => btcContext({
     btc4h: hourData.btc4h, btc1h, coin1h: rows.find(r => r.symbol === i.symbol)?.c1h,
     dir: i.event.ev.dir, at: i.event.ev.triggerCloseT,
@@ -383,17 +394,21 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   });
   // Stage 3 has priority over new watch alerts, but never displaces legacy entry/invalidation.
   for (const a of accRetestAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    if (earlyLongOn && (!longMarketOK || !budget('accumulation'))) continue;
     msgs.push({
-      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry,
+      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry, ...(earlyLongOn?{longBucket:'accumulation'}:{}),
         event: { type: 'watch', id: 'ACC:RETEST:' + a.symbol + ':' + a.entry.breakoutAt + ':' + a.entry.asOf },
         committed: null },
       m: watchDecorate(accumulationRetestMessage(a.symbol, a.entry, a.context),
         { symbol: a.symbol, source: 'C', dir: 'WATCH', at: a.entry.asOf }, env),
     });
   }
-  for (const a of dcAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+  for (const a of dcEligible) {
+    if (msgs.length>=MAX_MESSAGES_PER_RUN || msgs.filter(x=>x.i.channel==='donchian').length>=dcLimit) break;
+    const bucket=earlyLongOn&&a.entry.dir==='LONG'&&a.entry.stage==='BREAKOUT'?'breakout':null;
+    if (bucket&&(!longMarketOK||!budget(bucket))) continue;
     msgs.push({
-      i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key, dcSignal: a.entry,
+      i: { symbol: a.symbol, channel: 'donchian', dcKey: a.key, dcSignal: a.entry, ...(bucket?{longBucket:bucket}:{}),
         event: { type: 'watch', id: 'DC:' + a.key + ':' + a.entry.asOf },
         committed: null },
       m: donchianMessage(a.symbol, a.entry),
@@ -401,8 +416,9 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
   base.donchian.selected = msgs.filter(x => x.i.channel === 'donchian').length;
   for (const a of accWatch.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    if (earlyLongOn && !budget('accumulation')) continue;
     msgs.push({
-      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry,
+      i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry, ...(earlyLongOn?{longBucket:'accumulation'}:{}),
         event: { type: 'watch', id: 'ACC:' + a.key + ':' + a.entry.asOf },
         committed: null },
       m: watchDecorate(accumulationMessage(a.symbol, a.entry, a.context),
@@ -522,6 +538,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   for (const { i, m } of msgs) {
     const key = `${i.event.id}:${i.event.type}`;
     const out = await deliver(m, key, assumed => {
+      if (earlyLongOn) countLongAlert(dy,i.longBucket);
       if (i.channel === 'accumulation') {
         if (i.accSignal?.stage === 'RETEST') delete accBreakouts[i.symbol];
         sg.accumulation = { ...(sg.accumulation ?? {}),
