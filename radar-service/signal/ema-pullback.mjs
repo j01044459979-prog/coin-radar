@@ -102,7 +102,7 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
   const volRel = meanVol > 0 && Number.isFinite(last.q) ? last.q / meanVol : null;
   const early = dir === 'LONG' ? earlyLongContext(c15, a1, e20) : null;
   if (early && !early.ok) block(early.why);
-  if (volRel === null || (volRel < EMA_RULES.volume && !early?.pattern)) block('거래량 미확인/평균 미달 또는 조정 거래량 감소·저점 회복 미충족');
+  if (volRel === null || (volRel < EMA_RULES.volume && !early?.pattern)) block(dir === 'LONG' ? '거래량 미확인/평균 미달 또는 조정 거래량 감소·저점 회복 미충족' : '거래량 미확인/평균 미달');
   // Targets must be price levels actually seen on already confirmed hourly candles.
   const l = dir === 'LONG', candidates = [
     { price: l ? Math.max(...setup.c1h.slice(-73, -1).map(b => b.h)) : Math.min(...setup.c1h.slice(-73, -1).map(b => b.l)), source: '최근 1H 고저점' },
