@@ -22,12 +22,21 @@ export function signalDeadline(ev, now) {
   };
 }
 
+// Shared text and chart label; only candidate alerts use the entry-recording workflow.
+export function strategyLabel(ev) {
+  if (ev.strategy === 'ema-pullback') return ev.earlyLongPattern === 'sweep' ? 'EMA 저점 회복' :
+    ev.earlyLongPattern === 'cooling' ? 'EMA 조정 후 반등' : 'EMA20/50 눌림목';
+  if (ev.strategy === 'pullback') return '지지·저항 눌림목';
+  return '15분 거래량 돌파';
+}
+
 // 진입 후보 메시지. 레버리지는 권하지 않고, 손절폭 대비 증거금 손실만 사실로 보여 준다.
 export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const L = ev.dir === 'LONG', lines = [];
   const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
   lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
+  lines.push('📌 전략: ' + strategyLabel(ev));
   lines.push('🧭 지금: 실시간 호가 확인', '   유효시간 내만 검토 · 추격 금지');
   lines.push(`⏱ 생성 ${kst(ev.triggerCloseT)} KST (15분봉 확정)`, `   유효 ${kst(ev.triggerCloseT)}~${kst(ev.validUntil)} KST`);
   const timing = signalDeadline(ev, now);
