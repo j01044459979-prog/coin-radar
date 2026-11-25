@@ -54,7 +54,7 @@ export function freshness(c1h, c4h, now, graceMs = LIMITS.graceMs) {
 // 수집. ids가 있으면 그 종목만(확정 대기 재시도), 없으면 시세 상위 topN. 반환:
 //  { universe, coins: { [instId]: { symbol, status: 'fresh'|'pending'|'stale'|'error', c1h, c4h, reason, notes } }, btc4h, stopped, calls, fatal }
 export async function collectOpportunity({ fetcher = fetch, now, ids = null, topN = LIMITS.defaultTop, budgetMs = 60000, gapMs = 260, shouldStop = () => false } = {}) {
-  const started = Date.now(), out = { universe: ids, coins: {}, btc4h: null, stopped: null, calls: 0, fatal: null };
+  const started = Date.now(), out = { universe: ids, coins: {}, btc4h: null, btc1h: null, stopped: null, calls: 0, fatal: null };
   const get = async path => { out.calls++; const body = await jsonRequest(BASE + path, {}, fetcher); if (gapMs) await pause(gapMs); return body; };
   try {
     if (!ids) {
@@ -74,7 +74,7 @@ export async function collectOpportunity({ fetcher = fetch, now, ids = null, top
       const r4 = data(await get(`/market/candles?instId=${id}&bar=4H&limit=${LIMITS.c4h}`), '4H 캔들');
       const a = parseCandles(r1, H1), b = parseCandles(r4, H4);
       const fr = freshness(a.candles, b.candles, now);
-      if (id === 'BTC-USDT-SWAP' && fr.status === 'fresh') out.btc4h = b.candles;
+      if (id === 'BTC-USDT-SWAP' && fr.status === 'fresh') { out.btc4h = b.candles; out.btc1h = a.candles; }
       if (out.universe.includes(id)) out.coins[id] = { symbol, status: fr.status, reason: fr.reason ?? null, c1h: a.candles, c4h: b.candles, notes: [...a.notes, ...b.notes] };
     } catch (error) {
       if (RESTRICTED.includes(error.status)) { out.stopped = { status: error.status, retryAfter: error.retryAfter || 0, at: id }; break; }     // 제한 응답이면 즉시 중단(남은 종목은 다음에)
