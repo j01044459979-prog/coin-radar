@@ -107,3 +107,19 @@ test('telegramPhotoSender 재사용: 캡션 1024자 초과·이미지 없음은 
   const send = telegramPhotoSender('t', '123', async () => new Response('{}', { status: 200 }));
   await assert.rejects(send(Buffer.from([1]), 'x'.repeat(1025)), /캡션/); await assert.rejects(send(Buffer.alloc(0), ''), /이미지 없음/);
 });
+
+
+test('strategy names distinguish entry alerts in photo captions and text', async () => {
+  const { candidateMessage } = await import('../signal/message.mjs');
+  const { r9Decorate } = await import('../signal/rich300.mjs');
+  for (const [patch, label] of [[{}, '15분 거래량 돌파'], [{strategy:'pullback'}, '지지·저항 눌림목'], [{strategy:'ema-pullback'}, 'EMA20/50 눌림목'], [{strategy:'ema-pullback',earlyLongPattern:'sweep'}, 'EMA 저점 회복'], [{strategy:'ema-pullback',earlyLongPattern:'cooling'}, 'EMA 조정 후 반등']]) {
+    const ev = {...evalL(), ...patch};
+    const msg = candidateMessage('ETHUSDT', ev, {now: NOW});
+    assert.ok(msg.plain.includes('전략: '+label));
+    assert.ok(signalCaption('ETHUSDT', ev, {now: NOW}).includes('전략: '+label));
+    const decorated = r9Decorate(msg,'ETHUSDT',ev,{RADAR_RICH300_BUTTONS:'on'});
+    assert.ok(decorated.plain.includes('실제 진입했어? (기록용)'));
+    assert.ok(decorated.r9.plain.includes('R9 v1 '));
+    assert.ok(!msg.plain.includes('실제 진입했어?'));
+  }
+});
