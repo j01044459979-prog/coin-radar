@@ -137,3 +137,37 @@ test('EMA diagnostics use stored closed records without changing them', () => {
   assert.equal(d.byScore.find(x => x.key === '70-79').n, 2);
   assert.equal(JSON.stringify(paper), before, 'read-only');
 });
+
+test('early long permits quiet pullback then modest confirmed bounce without volume spike', () => {
+  const { c1h, c4h, c15 } = fixture();
+  const setup = emaSetup(c1h, c4h, NOW);
+  for (const b of c15.slice(-5, -1)) { b.o = 102.92; b.c = 102.85; b.q = 500; }
+  c15.at(-1).q = 700;
+  const ev = evaluateEmaPullback({ setup, c15, now: NOW });
+  assert.equal(ev.status, 'CANDIDATE');
+  assert.equal(ev.earlyLongPattern, 'cooling');
+  assert.ok(ev.volRel < 1 && ev.t1.net >= 1.5);
+  assert.match(ev.evidence.join(' '), /조정 음봉 거래대금/);
+  c15.at(-1).q = 100;
+  assert.equal(evaluateEmaPullback({ setup, c15, now: NOW }).status, 'OBSERVE');
+});
+test('early long accepts confirmed local-low sweep and reclaim but rejects a large prior rally candle', () => {
+  const { c1h, c4h, c15 } = fixture();
+  const setup = emaSetup(c1h, c4h, NOW);
+  Object.assign(c15.at(-1), { l: 102.44, h: 103.16, q: 800 });
+  const ev = evaluateEmaPullback({ setup, c15, now: NOW });
+  assert.equal(ev.status, 'CANDIDATE');
+  assert.equal(ev.earlyLongPattern, 'sweep');
+  c15.at(-2).h += setup.atr1 * 2;
+  assert.equal(evaluateEmaPullback({ setup, c15, now: NOW }).status, 'OBSERVE');
+});
+test('early long gates are not applied to short (mirror baseline fixture)', () => {
+  const { c1h, c4h, c15 } = fixture();
+  const mirror = b => ({ ...b, o: 205 - b.o, c: 205 - b.c, h: 205 - b.l, l: 205 - b.h });
+  const setup = emaSetup(c1h.map(mirror), c4h.map(mirror), NOW);
+  assert.equal(setup.dir, 'SHORT');
+  const shortBars = c15.map(mirror);
+  assert.equal(evaluateEmaPullback({ setup, c15: shortBars, now: NOW }).status, 'CANDIDATE');
+  shortBars.at(-1).q = 700;
+  assert.equal(evaluateEmaPullback({ setup, c15: shortBars, now: NOW }).status, 'OBSERVE');
+});

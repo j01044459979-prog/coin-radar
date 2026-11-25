@@ -5,6 +5,32 @@ import { M15, SIG } from './evaluate.mjs';
 
 export const EMA_PRIORITY = Object.freeze(['SOLUSDT', 'ETHUSDT', 'XRPUSDT', 'DOGEUSDT', 'ZECUSDT']);
 export const EMA_RULES = Object.freeze({ proximityAtr: 1.6, touchAtr: 0.5, chaseAtr: 1.0, minRiskAtr: 0.65, maxRiskAtr: 3, volume: 1.0 });
+// Long-only experimental thresholds; no profitability claim. Short rules remain unchanged.
+export const EARLY_LONG = Object.freeze({ maxChaseAtr: 0.8, maxBarAtr: 0.85, maxThreeBarRiseAtr: 0.85,
+  minVolRel: 0.5, maxPullbackVolRel: 0.8, sweepBufferAtr: 0.05 });
+const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
+export function earlyLongContext(c15, a1, e20) {
+  const P = EARLY_LONG, last = c15.at(-1);
+  const recent = c15.slice(-7, -1), baseline = c15.slice(-21, -7);
+  const valid = b => [b.o,b.h,b.l,b.c,b.q].every(Number.isFinite) && b.q >= 0 &&
+    b.l > 0 && b.l <= Math.min(b.o,b.c) && b.h >= Math.max(b.o,b.c);
+  if (!(a1 > 0) || baseline.length !== 14 || recent.length !== 6 ||
+      ![...baseline,...recent,last].every(valid)) return { ok: false, why: '롱 거래량/가격 데이터 부족' };
+  const base = mean(baseline.map(b => b.q));
+  const down = recent.filter(b => b.c < b.o);
+  const downMean = down.length >= 2 ? mean(down.map(b => b.q)) : null;
+  const cool = base > 0 && downMean !== null && downMean <= P.maxPullbackVolRel * base &&
+    last.q >= Math.max(P.minVolRel * base, downMean);
+  // Sweep of an already-closed local low, then reclaim on the same closed candle.
+  const priorLow = Math.min(...c15.slice(-9, -1).map(b => b.l));
+  const sweep = last.l < priorLow - P.sweepBufferAtr * a1 && last.c > priorLow &&
+    last.c > last.o && last.c >= e20 && base > 0 && last.q >= P.minVolRel * base;
+  const chasing = last.c - e20 > P.maxChaseAtr * a1 ||
+    c15.slice(-3).some(b => b.h - b.l > P.maxBarAtr * a1) ||
+    last.c - c15.at(-4).c > P.maxThreeBarRiseAtr * a1;
+  return { ok: !chasing && base > 0, why: chasing ? '롱 급등/EMA 이격 추격 금지' : '롱 거래대금 기준 부족',
+    pattern: sweep ? 'sweep' : cool ? 'cooling' : null, pullbackVolRel: downMean === null || !base ? null : downMean / base };
+}
 const ok = x => Number.isFinite(x) && x > 0;
 const pricePct = (v, from) => (v - from) / from * 100;
 
@@ -51,7 +77,7 @@ export function emaSetup(c1h, c4h, now = Date.now()) {
   return { dir: long ? 'LONG' : 'SHORT', s, ema20: e20, ema50: e50, atr1: a1, asOf, c1h, c4h: done4, price: last1.c };
 }
 
-export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin = 45 } = {}) {
+export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin = 45, earlyLong = true } = {}) {
   if (!setup) return { status: 'WAIT', why: 'EMA 4H·1H 추세/EMA20 접근 대기' };
   const { dir, s, ema20: e20, ema50: e50, atr1: a1 } = setup;
   if (!Array.isArray(c15) || c15.length < SIG.minBars15) return { status: 'WAIT', why: 'EMA 15분봉 부족' };
@@ -74,7 +100,9 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
   const meanVol = amounts.length === 20 && amounts.every(q => Number.isFinite(q) && q >= 0)
     ? amounts.reduce((a, b) => a + b, 0) / amounts.length : null;
   const volRel = meanVol > 0 && Number.isFinite(last.q) ? last.q / meanVol : null;
-  if (volRel === null || volRel < EMA_RULES.volume) block('거래량 미확인/평균 미달');
+  const early = dir === 'LONG' && earlyLong ? earlyLongContext(c15, a1, e20) : null;
+  if (early && !early.ok) block(early.why);
+  if (volRel === null || (volRel < EMA_RULES.volume && !early?.pattern)) block(dir === 'LONG' ? '거래량 미확인/평균 미달 또는 조정 거래량 감소·저점 회복 미충족' : '거래량 미확인/평균 미달');
   // Targets must be price levels actually seen on already confirmed hourly candles.
   const l = dir === 'LONG', candidates = [
     { price: l ? Math.max(...setup.c1h.slice(-73, -1).map(b => b.h)) : Math.min(...setup.c1h.slice(-73, -1).map(b => b.l)), source: '최근 1H 고저점' },
@@ -92,9 +120,12 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
   return {
     status: 'CANDIDATE', strategy: 'ema-pullback', dir, entry, stop, riskAbs: risk,
     riskPct: risk / entry * 100, riskAtr, costR, costPct: SIG.costPct, t1: target(first), t2: target(next),
-    volRel, zone: { lo: e20 - EMA_RULES.touchAtr * a1, hi: e20 + EMA_RULES.touchAtr * a1, level: e20, type: '1H EMA20' },
+    volRel, ...(early?.pattern ? { earlyLongPattern: early.pattern, pullbackVolRel: early.pullbackVolRel } : {}), zone: { lo: e20 - EMA_RULES.touchAtr * a1, hi: e20 + EMA_RULES.touchAtr * a1, level: e20, type: '1H EMA20' },
     level: e20, triggerT: last.t, triggerCloseT: closeT, validUntil: closeT + validMin * 60000,
     zoneKey: 'EMA20:' + dir, score, stageLabel: 'EMA 추세 눌림목', blockers: [], tags: [],
-    evidence: ['4H·1H EMA20/50 같은 방향', '1H EMA20 터치 후 15분 확정 반등/반락', '15분 거래대금 평균 x' + volRel.toFixed(2)],
+    evidence: ['4H·1H EMA20/50 같은 방향', '1H EMA20 터치 후 15분 확정 반등/반락',
+      early?.pattern === 'cooling' ? '조정 음봉 거래대금 ×' + early.pullbackVolRel.toFixed(2) + ' · 소폭 반등'
+        : early?.pattern === 'sweep' ? '직전 8봉 저점 이탈 후 확정 종가 회복'
+        : '15분 거래대금 평균 x' + volRel.toFixed(2)],
   };
 }
