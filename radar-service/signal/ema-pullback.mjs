@@ -77,7 +77,7 @@ export function emaSetup(c1h, c4h, now = Date.now()) {
   return { dir: long ? 'LONG' : 'SHORT', s, ema20: e20, ema50: e50, atr1: a1, asOf, c1h, c4h: done4, price: last1.c };
 }
 
-export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin = 45 } = {}) {
+export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin = 45, earlyLong = true } = {}) {
   if (!setup) return { status: 'WAIT', why: 'EMA 4H·1H 추세/EMA20 접근 대기' };
   const { dir, s, ema20: e20, ema50: e50, atr1: a1 } = setup;
   if (!Array.isArray(c15) || c15.length < SIG.minBars15) return { status: 'WAIT', why: 'EMA 15분봉 부족' };
@@ -100,7 +100,7 @@ export function evaluateEmaPullback({ setup, c15, now }, { minRR = 1.5, validMin
   const meanVol = amounts.length === 20 && amounts.every(q => Number.isFinite(q) && q >= 0)
     ? amounts.reduce((a, b) => a + b, 0) / amounts.length : null;
   const volRel = meanVol > 0 && Number.isFinite(last.q) ? last.q / meanVol : null;
-  const early = dir === 'LONG' ? earlyLongContext(c15, a1, e20) : null;
+  const early = dir === 'LONG' && earlyLong ? earlyLongContext(c15, a1, e20) : null;
   if (early && !early.ok) block(early.why);
   if (volRel === null || (volRel < EMA_RULES.volume && !early?.pattern)) block(dir === 'LONG' ? '거래량 미확인/평균 미달 또는 조정 거래량 감소·저점 회복 미충족' : '거래량 미확인/평균 미달');
   // Targets must be price levels actually seen on already confirmed hourly candles.
