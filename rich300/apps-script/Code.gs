@@ -3031,7 +3031,55 @@ function followDetailedPlan({ signal, market, now }) {
   ];
 }
 
-function followReport({ signal, market, now, enteredAt, urgent = false }) {
+// Numeric, confirmed-candle evidence for regular reports only; never changes orders.
+function followDecisionEvidence({ signal, market, btcMarket, now, assessment }) {
+  const a = assessment || followAssess({ signal, market, now });
+  const long = signal.dir === 'LONG', sign = long ? 1 : -1;
+  const fmt = n => followLevelFmt(n, a.price);
+  const lines = ['⑥ 유지·정리 판단 근거 (확정봉)'];
+  const validBars = (m, key, step) => m && followLevelBars(m[key], 55, step, now);
+  for (const [name, key, step] of [['1H','bars1h',FOLLOW_HOUR_MS],['4H','bars4h',4*FOLLOW_HOUR_MS]]) {
+    const bars = validBars(market,key,step);
+    const t = bars ? watchTrend(market[key]) : null;
+    if (!t || ![t.fast,t.slow,t.last].every(followLevelNumber)) { lines.push(name + ': 확정 EMA 근거 확인 불가'); continue; }
+    const relation = (t.last-t.slow)*sign > 0 && (t.fast-t.slow)*sign > 0 ? '추천 방향 정렬' : '추천 방향 정렬 미충족';
+    lines.push(name + ' 종가 ' + fmt(t.last) + ' · EMA20 ' + fmt(t.fast) + ' · EMA50 ' + fmt(t.slow) + ' (' + relation + ')');
+  }
+  const bars15 = market && followLevelBars(market.bars15m, 8, 900000, now);
+  if (bars15) {
+    const older = bars15.slice(0,4), newer = bars15.slice(4);
+    const extrema = b => long ? Math.min(...b.map(x=>x.l)) : Math.max(...b.map(x=>x.h));
+    const prior = extrema(older), latest = extrema(newer);
+    lines.push('15분 4봉씩 비교: ' + (long ? '저점 ' : '고점 ') + fmt(prior) + ' → ' + fmt(latest) + ' (' + ((latest-prior)*sign>0?'유리한 구조':(latest-prior)*sign<0?'불리한 구조':'동일') + ')');
+  } else lines.push('15분 구조: 확인 불가');
+  const levels = followLevels({market,now});
+  const anchor = levels.ok ? (long ? levels.support[0] : levels.resistance[0]) : null;
+  if (anchor) lines.push('방어 기준 ' + fmt(anchor.price) + ' (' + anchor.source + ', 현재가와 ' + followPct(a.price-anchor.price,a.price) + ' 거리) · 1H 종가 ' + (long?'하향':'상향') + ' 이탈 시 유지 근거 재평가');
+  else lines.push('방어 구간: 확인 불가 · 최초 손절 기준 우선');
+  const btcOk = btcMarket && btcMarket.ok && watchAssessMarket(btcMarket,now).ok &&
+    validBars(btcMarket,'bars1h',FOLLOW_HOUR_MS) && validBars(btcMarket,'bars4h',4*FOLLOW_HOUR_MS);
+  let btcAgainst = false, btcKnown = false;
+  if (btcOk) {
+    const b1 = watchTrend(btcMarket.bars1h), b4 = watchTrend(btcMarket.bars4h);
+    btcKnown = [b1,b4].every(t=>[t.fast,t.slow,t.last].every(followLevelNumber));
+    btcAgainst = btcKnown && (wAgainst(b1,signal.dir)||wAgainst(b4,signal.dir));
+    if (btcKnown) lines.push('BTC (' + btcMarket.source + ') 1H ' + followTrendLabel(b1.state) + ' · 4H ' + followTrendLabel(b4.state) + ' · ' + (btcAgainst?'일부 역행, 유지 근거 약화':wAligned(b1,signal.dir)&&wAligned(b4,signal.dir)?'양쪽 방향 일치':'방향 혼조') );
+  }
+  if (!btcKnown) lines.push('BTC: 확정 데이터 확인 불가 (일치로 간주하지 않음)');
+  let conclusion;
+  if (a.urgent === 'stop') conclusion = '손절 기준 이탈 · 체결/잔량 확인';
+  else if (a.urgent === 'tp2') conclusion = '전량 익절 계획·잔량 확인';
+  else if (a.urgent === 'tp1') conclusion = '부분 익절 계획·체결 확인';
+  else if (a.urgent || a.status === '추세 약화') conclusion = '위험 축소·정리 조건 검토';
+  else if (a.status === '추세 유지' && !btcAgainst && btcKnown && anchor && bars15 &&
+           validBars(market,'bars1h',FOLLOW_HOUR_MS) && validBars(market,'bars4h',4*FOLLOW_HOUR_MS))
+    conclusion = '조건부 유지 · 방어 기준 및 최초 손절 유효성 확인';
+  else conclusion = '판단 보류 · 추가 진입 없이 근거 재확인';
+  lines.push('종합 판단: ' + conclusion);
+  return lines;
+}
+
+function followReport({ signal, market, btcMarket = null, now, enteredAt, urgent = false }) {
   const a = followAssess({ signal, market, now });
   const time = new Date(now + 9 * FOLLOW_HOUR_MS).toISOString().slice(5, 16).replace('T', ' ');
   const age = Math.round((now - market.priceAt) / 60000);
@@ -3040,10 +3088,11 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
       ? '4H 추세·1H 눌림 구간·15분 확정 트리거·거래량·비용 반영 손익비가 추천 당시 조건이었습니다.'
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
+  const evidence = urgent ? [] : followDecisionEvidence({ signal, market, btcMarket, now, assessment: a });
   return [
     urgent ? '🚨 포지션 관리 · 전략 변경 경고' : '🚨 포지션 관리 · 2시간 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
-    '🔎 판단: [' + a.status + '] ' + a.verdict,
+    '🔎 판단: [' + a.status + '] ' + (urgent ? a.verdict : evidence[evidence.length - 1].replace('종합 판단: ', '')),
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
     '',
     '① 현재 위치 (공개 시세 · 실제 손익 아님)',
@@ -3058,9 +3107,10 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
     a.trendText,
     a.m15Text,
     ...(urgent ? [''] : followDetailedPlan({ signal, market, now }).concat([''])),
-    urgent ? '③ 지금 판단과 대응' : '⑥ 지금 판단과 대응',
+    ...(urgent ? [] : evidence.concat([''])),
+    urgent ? '③ 지금 판단과 대응' : '⑦ 지금 판단과 대응',
     '근거: ' + a.why,
-    '대응: ' + a.next,
+    '대응: ' + (!urgent && a.status === '추세 유지' && !evidence[evidence.length - 1].includes('조건부 유지') ? '방어 구간·BTC 및 확정봉을 재확인하고 최초 손절 기준을 넓히지 마세요.' : a.next),
     '다음 점검: ' + a.trigger,
     '',
     '최초 추천 기준: ' + original,
@@ -3081,6 +3131,7 @@ function followTick(env) {
   const out = { status: 'ok', mode, entered: responses.length, active: 0, due: 0, scanned: 0,
     alerts: 0, sent: 0, failed: 0, stale: 0, closed: 0, missing: 0, capped: 0 };
   const h = Math.floor(now / FOLLOW_HOUR_MS), slot = Math.floor(now / FOLLOW_MONITOR_MS);
+  let btcMarket = null, btcFetched = false;
   for (const r of responses) {
     // Only entered responses with an explicit opt-in may be assessed. Never forge fills.
     const st = followRead(env.kv, r.sid);
@@ -3111,7 +3162,11 @@ function followTick(env) {
       // Mark attempt BEFORE send so concurrent triggers cannot duplicate messages.
       const pending = { ...observed, pendingHour: h, retryAt: null };
       env.kv.put(followKey(r.sid), JSON.stringify(pending));
-      const message = followReport({ signal: sig, market, now, enteredAt: r.at });
+      if (!btcFetched) {
+        btcFetched = true;
+        try { btcMarket = sig.symbolId === 'BTCUSDT' ? market : env.market('BTCUSDT'); } catch (e_) { btcMarket = null; }
+      }
+      const message = followReport({ signal: sig, market, btcMarket: sig.symbolId === 'BTCUSDT' ? market : btcMarket, now, enteredAt: r.at });
       let sent; try { sent = env.send(message, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
       if (sent && sent.ok) {
         env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, pendingHour: null, lastSentAt: now,
@@ -4495,7 +4550,7 @@ function liveRunSection(name, env) { const f = LIVE_SECTIONS.find(([n]) => n ===
 function liveAutoAll(env) { return LIVE_SECTIONS.flatMap(([, f]) => f(env)); }
 
 // ── exports ──
-var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgAutoRegisterWatchInterests, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, FOLLOW_LEVEL_BUFFER, followLevels, followDetailedPlan, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, feedParseWatchInterest, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
+var RICH300_ENGINE = { nullishOr, DEC_DIGITS, decRoundDiv, dec, decAdd, decSub, decNeg, decAbs, decMul, decDiv, decCmp, decSign, decIsZero, decToMicro, microToDec, decFormat, microFormat, microToNumber, microFromNumber, isDayString, dayToIndex, indexToDay, kstDayOf, dayStartMs, dayEndMs, addDays, daysBetween, dayRange, rateFraction, compoundNextTarget, compoundRateOn, compoundIdealSeries, dedupeCanonical, dedupeSame, dedupeAppend, dedupePossibleFills, dedupeRevise, dedupeVoid, dedupeLatest, PNL_ENTRY_KINDS, PNL_EXIT_KINDS, pnlNormalizeFill, pnlComputeTrade, pnlComputeAll, pnlDailyFlows, pnlMicroToString, riskTrade, riskMicroLabel, SPLAN_NOTE, SPLAN, splanSign, splanDecimals, splanFloor, splanFloorTol, splanRound, splanMean, SPLAN_SPECS, splanSpec, splanWeights, splanStagePrices, splanExec, splanStopExec, splanWorstLoss, splanBuild, splanTry, splanTpLegs, splanStatus, splanCheckAdd, SPLAN_REASON_TEXT, splanReasonText, splanFmtNum, splanQty, splanLines, splanStatusLines, LEDGER_REVIEW_ABS_MICRO, LEDGER_REVIEW_PPM, ledgerBuildDaily, ledgerSummarize, ledgerMicroLabel, dashUsd, dashPct, DASH_DAILY_LIMIT, dashBuildModel, dashBuildFromStore, dashSampleInputs, dashSampleModel, dashEsc, DASH_PAGES, DASH_CSS, dashHead, dashNav, dashFooter, dashRenderError, dashRenderHtml, shellErrorCode, shellRenderError, shellRenderDenied, shellRenderHealth, shellRenderWatch, shellActLine, shellRenderTgDiag, SCHEMA_VERSION, StoreError, PLAN_CHOICES, MIND_CHOICES, RESPONSE_CHOICES, SETTING_DEFAULTS, schemaDecString, ENTITIES, ENTITY_NAMES, AUDIT_SHEET, VIEW_HEADERS, AUDIT_HEADERS, META_HEADERS, storeInit, storeReadAudit, storeReadAuditTail, storeReadView, storeGet, storeList, storeHistory, storeWithLock, storeCreate, storeRevise, storeVoid, storeClaimUpdate, storeSaveReview, storeSetupChallenge, storeGetSettings, storeIntegrityCheck, storeRepair, storeLoadLedgerInputs, storeBuildLedger, BACKUP_RE, BACKUP_MIN_KEEP, backupName, backupRestoredName, backupKeepFrom, backupRetention, backupFingerprint, backupRun, backupRestore, backupSwitchChecks, DEPLOY_ENVS, deployGate, deployMarkEnv, deployReadEnv, deployCheckEnv, deploySelfTest, AUTH_VERSION, AUTH_WINDOW_MS, AUTH_NONCE_TTL_SEC, AUTH_MAX_BYTES, AUTH_MIN_KEY_LEN, authTimingSafeEqual, authCanonicalBody, authSignedString, authBuildRequest, authVerify, INGEST_UNAUTHORIZED, ingestHandle, R9_LINE_RE, r9ParseSignal, r9StripLine, r9ReasonSummary, W1_LINE_RE, w1ParseWatch, w1StripLine, TG_MAX_ATTEMPTS, TG_MAX_WAIT_MS, TG_DRAFT_TTL_SEC, TG_PAIR_TTL_SEC, TG_PAIR_MAX_FAILS, TG_DUP_WINDOW_MS, TG_POISON_AFTER, TG_SID_RE, tgClassify, TG_BENIGN, tgCall, tgSendMessage, tgSendFollow, tgSendNotice, tgParseUpdate, tgParseCommand, TG_FUTURE_SLACK_MS, tgParseAt, tgAmount, tgPairCreate, tgPairedUser, tgPairPoll, tgResponseKeyboard, tgSignalText, tgFillLink, tgSendSignalPrompt, tgReviewKeyboard, tgReviewText, tgEquityNow, tgPlanOf, tgBuildEntry, tgBuildExit, tgSubmitFillForm, tgConfirmDraft, tgWatchChoices, tgAutoRegisterWatchInterests, tgHandleUpdate, tgPoll, tgGc, MANUAL, manualSymbol, manualRegister, manualOpenList, manualUpdate, MANUAL_QUICK, manualRenderHtml, OPS_PHRASE, OPS_STRAT_PHRASE, OPS_PRECHECK_TTL_MS, opsEvaluate, opsEvaluateStrategy, opsRenderHtml, WATCH, watchEma, watchTrend, watchVolRatio, wAligned, wAgainst, watchOpenPositions, watchOkxInst, watchParseOkxBars, watchParseOkxTicker, watchParseBybitBars, watchParseBybitTicker, WATCH_BAR_MS, watchMarketUrls, watchParseSource, watchAssessMarket, wFmt, wHhmm, watchEvaluate, watchMessage, wLoadState, wSaveState, wCapCheck, wDeliver, watchTick, watchSymbolVerdict, FOLLOW_HOUR_MS, FOLLOW_REPORT_INTERVAL_MS, FOLLOW_MAX_POSITIONS, FOLLOW_RETRY_MS, FOLLOW_MAX_STALE_MS, followKey, followRead, followStart, followChoice, followKeyboard, followAssess, FOLLOW_LEVEL_BUFFER, followLevels, followDetailedPlan, followDecisionEvidence, followReport, FOLLOW_MONITOR_MS, FOLLOW_ALERT_COOLDOWN_MS, followTick, FEED_VERSION, FEED_MAX_AGE_MS, FEED_MAX_ENTRIES, FEED_MAX_BYTES, FEED_META_EVENTS, feedVerify, feedParseEntry, feedParseWatchInterest, STG, stgAtr, stgPivots, stgPlan, STRAT, STRAT_ACTIVE, STRAT_ENDED, STRAT_LABEL, sgyIsActive, sgyRiskPct, sgyBuild, sgyScenarios, sgyRunBars, sgyBarsFor, sgyNotes, sgyTimingLines, sgyStageLines, sgyNewMessage, sgyCancelMessage, sgyResultLines, sgyEventMessage, sgySummary, sgyList, strategyTick, stratRenderHtml, CLOSE_MAX_CATCHUP, CLOSE_MAX_ATTEMPTS, CLOSE_PENDING_STALE_MS, CLOSE_WARNING_TEXT, closeUsd, closeDiagnose, closeMessage, closeRetryNotices, closePlan, closeCommit, closeRun, closeTick, closeCheckEquityDay, closeSubmitEquity, closeStatus, AN_MIN_SAMPLE, AN_INSIGHT_MIN, anUsd, anRatio, anPct, anStats, AN_STRATEGY_NAME, anTradesFrom, anReviews, anBuild, JOURNAL_FILL_EDITABLE, JOURNAL_LIMIT, journalDiff, journalHistory, JOURNAL_SEARCH_LIMIT, journalBuild, journalSaveReview, journalReviseFill, journalVoidFill, journalAddCashflow, journalVoidCashflow, jvEsc, journalRenderError, JV_TABS, journalRenderHtml, SIGLOG_LIMIT, SIGLOG_FILTERS, siglogBuild, siglogRenderHtml, siglogRenderError, CHECK_STATUS_LABEL, checkSummary, checkFromSelfTest, checkPollItems, checkReportText, checkRenderHtml, checkRenderError, checkBotItems, LIVE_DEC_VECTORS, LIVE_IDEAL_VECTORS, LIVE_PNL_VECTORS, LIVE_HMAC_VECTORS, LIVE_THRESH, LIVE_SHA_VECTORS, liveSha256, liveMemStore, liveDataset, liveCompat, liveEngine, liveSheetsIo, liveSheetsRead, liveSheets, liveBackup, LIVE_SECTIONS, LIVE_FAST_SECTIONS, LIVE_SLOW_SECTIONS, liveRunSection, liveAutoAll };
 
 // ── gas/Adapters.gs ──
 /**
@@ -4589,7 +4644,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'a7c409b34214';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'b5ff374db7bf';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {

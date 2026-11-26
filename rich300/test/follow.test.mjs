@@ -199,3 +199,33 @@ test('작은 가격대 BONK 수준의 지지·저항 값도 충분한 소수점�
   assert.match(mtxt,/0\.0000[0-9]{6}/);
   assert.match(mtxt,/TP1 최초 0\.0000090000/);
 });
+
+test('정기 점검은 EMA 수치·15분 구조·방어 가격·BTC 비교를 표시하며 BTC 누락/역행은 유지 판단을 보류한다',()=>{
+  const m=market(NOW);
+  const report=btcMarket=>followReport({signal:SIG,market:m,btcMarket,now:NOW,enteredAt:AT});
+  const good=report(m);
+  for(const re of [/1H 종가 .*EMA20 .*EMA50/,/4H 종가 .*EMA20 .*EMA50/,/15분 4봉씩 비교: 고점/,/방어 기준 .*1H 종가 상향 이탈/,/BTC \(OKX\) 1H 하락 · 4H 하락/,/종합 판단: 조건부 유지/]) assert.match(good,re);
+  const missing=report(null);
+  assert.match(missing,/BTC: 확정 데이터 확인 불가/);
+  assert.match(missing,/종합 판단: 판단 보류/);
+  const rising=bars=>bars.map((b,i)=>({...b,o:.85+.003*i,c:.85+.003*i,h:(.85+.003*i)*1.002,l:(.85+.003*i)*.998}));
+  const against={...m,bars1h:rising(m.bars1h),bars4h:rising(m.bars4h)};
+  assert.match(report(against),/일부 역행, 유지 근거 약화/);
+  assert.match(report(against),/종합 판단: 판단 보류/);
+  assert.match(report({...m,priceAt:NOW-3600000}),/BTC: 확정 데이터 확인 불가/);
+  const urgent=followReport({signal:SIG,market:market(NOW,1.13),btcMarket:m,now:NOW,enteredAt:AT,urgent:true});
+  assert.doesNotMatch(urgent,/유지·정리 판단 근거|BTC \(/);
+});
+test('BTC 조회 실패도 정기 보고를 막지 않으며 긴급 점검에는 BTC를 조회하지 않는다',()=>{
+  const x=setup(), seen=[];
+  x.env.market=symbol=>{seen.push(symbol);if(symbol==='BTCUSDT')throw Error('unavailable');return market(NOW);};
+  followStart(x.kv,SIG.sid,AT);
+  assert.equal(followTick(x.env).sent,1);
+  assert.deepEqual(seen,[SIG.symbolId,'BTCUSDT']);
+  assert.match(x.calls[0].msg,/BTC: 확정 데이터 확인 불가/);
+  seen.length=0;
+  x.setNow(NOW+15*60000);
+  x.env.market=symbol=>{seen.push(symbol);return market(NOW+15*60000,1.09);};
+  assert.equal(followTick(x.env).alerts,1);
+  assert.deepEqual(seen,[SIG.symbolId]);
+});
