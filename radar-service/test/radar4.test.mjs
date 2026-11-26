@@ -124,14 +124,14 @@ test('BTC 시장 차트는 진입·손절 없이 추세와 구조선만 표시',
 function candidatesBtc() { return candles(83000, 8, 60, 120).map(c => ({ ...c })); }
 test('실제 텔레그램 사진 캡션은 지금 행동·돌파 조건·부족 사유를 설명하고 가상 손익가격은 노출하지 않는다', () => {
   const cap = chartCaption(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.match(cap, /^DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
+  assert.match(cap, /^🟡 RICH · 관찰 \| DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
   assert.match(cap, /👀 다음: 5분봉 101.00 돌파 확정 확인/);
   assert.match(cap, /⚠️ 부족: 1H 추세 역행 주의/);
   assert.match(cap, /진입·손절·익절 미산정/);
   assert.doesNotMatch(cap, /TP1|TP2|손절 \d/);
   assert.equal(chartCaption(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x')),
-    'BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
-  assert.match(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), /^🥈 2순위 DOGEUSDT/);
+    '🟡 RICH · 관찰 | BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
+  assert.match(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), /^🟡 RICH · 관찰 \| 🥈 2순위 DOGEUSDT/);
 });
 // ── PNG 렌더링 ──
 png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, 용량 합리적', async () => {
