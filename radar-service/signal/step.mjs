@@ -14,6 +14,8 @@ import { evaluateMomentum5m, momentumMessage, momentumMode, allocateLongSlots, M
 import { ema as emaSeries } from '../opportunity/indicators.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext, btcContextLines } from './btc-context.mjs';
+import { btcGate, btcGateMode, btcGateLines } from './btc-gate.mjs';
+import { escHtml } from '../format.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { accumulationAutoInterests } from './auto-interest.mjs';
 import { ACCUMULATION, ACC_RETEST, accumulationMode, accumulationWatch, accumulationMessage,
@@ -392,19 +394,38 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   }
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
-  const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
+  const gateMode = btcGateMode(env), btcHour = hourData.coins?.['BTC-USDT-SWAP'];
+  const btc1h = hourData.btc1h ?? (btcHour?.status === 'fresh' ? btcHour.c1h : null);
+  const btcFor = i => btcContext({btc4h:hourData.btc4h,btc1h,coin1h:rows.find(r=>r.symbol===i.symbol)?.c1h,dir:i.event.ev.dir,at:i.event.ev.triggerCloseT});
+  const gates = new Map();
+  if(gateMode !== 'off' && cand.length){
+    let b15=m15.coins?.['BTC-USDT-SWAP']?.status==='fresh'?m15.coins['BTC-USDT-SWAP'].c15:null,b5=null;
+    try {
+      if(!b15&&!m15.stopped&&!hourData.stopped&&!expired('beforeBtc15')){
+        const x=await collectM15({fetcher,now,ids:['BTC-USDT-SWAP'],gapMs,budgetMs:5000,shouldStop:()=>clock()>deadline});
+        base.calls+=x.calls??0;if(x.coins?.['BTC-USDT-SWAP']?.status==='fresh')b15=x.coins['BTC-USDT-SWAP'].c15;
+        if(x.stopped)b15=null;
+      }
+      if(b15&&!m15.stopped&&!hourData.stopped&&!expired('beforeBtc5')){
+        const x=await collectM5({fetcher,now,ids:['BTC-USDT-SWAP'],gapMs,budgetMs:5000,shouldStop:()=>clock()>deadline});
+        base.calls+=x.calls??0;if(!x.stopped)b5=x.coins?.['BTC-USDT-SWAP']?.c5;
+      }
+    }catch{/* incomplete context never treated as a pass */}
+    for(const i of cand)gates.set(i,btcGate({btc1h,btc4h:hourData.btc4h,btc15m:b15,btc5m:b5,coin1h:rows.find(r=>r.symbol===i.symbol)?.c1h,dir:i.event.ev.dir,at:i.event.ev.triggerCloseT}));
+  }
+  const eligible=gateMode==='on'?cand.filter(i=>gates.get(i)?.allow).sort((a,b)=>gates.get(b).score-gates.get(a).score||b.score-a.score||b.rr-a.rr):cand;
+  const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...eligible.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
   base.invalidated = inv.length; base.candidates = cand.length; base.held = items.length - toSend.length;
-  // BTC comparisons are text-only context, not a signal filter. The same snapshot drives caption and fallback text.
-  const btcHour = hourData.coins?.['BTC-USDT-SWAP'];
-  const btc1h = btcHour?.status === 'fresh' ? btcHour.c1h : null;
-  const btcFor = i => btcContext({
-    btc4h: hourData.btc4h, btc1h, coin1h: rows.find(r => r.symbol === i.symbol)?.c1h,
-    dir: i.event.ev.dir, at: i.event.ev.triggerCloseT,
-  });
+  base.btcGate={mode:gateMode,assessed:gates.size,wouldBlock:[...gates.values()].filter(g=>!g.allow).length,preview:cand.slice(0,10).filter(i=>gates.has(i)).map(i=>({symbol:i.symbol,...gates.get(i)}))};
   const msgs = toSend.map(i => {
     if (i.event.type !== 'candidate') return { i, m: invalidatedMessage(i.symbol, i.event, { now }) };
-    const btc = btcFor(i);
-    return { i, btc, m: r9Decorate(scaleDecorate(candidateMessage(i.symbol, i.event.ev, { now, btc }), i.symbol, i.event.ev, env), i.symbol, i.event.ev, env) };
+    const btc=btcFor(i),g=gates.get(i);
+    let part=candidateMessage(i.symbol,i.event.ev,{now,btc});
+    if(g){
+      const ls=[gateMode==='preview'?'BTC 필터 실험 · 추천 제한 미적용':'BTC 필터 통과',...btcGateLines(g)];
+      part={...part,text:part.text+'\n\n'+ls.map(escHtml).join('\n'),plain:part.plain+'\n\n'+ls.join('\n')};
+    }
+    return { i, btc, gate:g, m: r9Decorate(scaleDecorate(part,i.symbol,i.event.ev,env),i.symbol,i.event.ev,env) };
   });
   // Stage 3 has priority over new watch alerts, but never displaces legacy entry/invalidation.
   for (const a of accRetestAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
@@ -506,8 +527,10 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
       let timer;
       try {
         const png = await Promise.race([renderChart(x.i.symbol, x.i.event.ev, barsMap[x.i.symbol], x.m.scale ? { plan: x.m.scale.plan } : {}), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('chart timeout')), CHART_TIMEOUT_MS); })]);
-        const caption = scaleCaption(signalCaption(x.i.symbol, x.i.event.ev, { now, btc: x.btc }), x.m, x.m.r9 ? x.m.r9.plain.length : 0);
-        const mergedCaption = r9Caption(caption, x.m);
+        const baseCaption = signalCaption(x.i.symbol, x.i.event.ev, { now, btc: x.btc });
+        const gateCaption = x.gate ? baseCaption+'\n'+(gateMode==='preview'?'BTC 필터 실험 · 추천 제한 미적용':'BTC 필터 통과')+'\n'+btcGateLines(x.gate).join('\n') : baseCaption;
+        const caption = scaleCaption(gateCaption, x.m, x.m.r9 ? x.m.r9.plain.length : 0);
+        const mergedCaption = caption===null || [...caption].length>1000 ? null : r9Caption(caption, x.m);
         if (mergedCaption === null) { x.m.chartError = 'RICH300 button caption too long; text fallback'; x.m.photo = undefined; }
         else x.m.photo = { png, caption: mergedCaption };
       }
