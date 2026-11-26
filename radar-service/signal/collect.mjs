@@ -34,3 +34,23 @@ export async function collect15({ fetcher = fetch, now, ids, gapMs = 260, budget
   }
   return out;
 }
+
+// 5분봉 수집(상승 가속 모멘텀 전용): 종목당 1회, 최근 100개. 확정(confirm=1) 봉만 쓴다. 제한 응답·시간 예산을 지키며 실패는 종목별로 격리한다.
+export const M5MS = 5 * 60000, LIMIT5 = 100;
+export async function collect5({ fetcher = fetch, now, ids, gapMs = 200, budgetMs = 8000, shouldStop = () => false } = {}) {
+  const started = Date.now(), out = { coins: {}, stopped: null, calls: 0 };
+  for (const id of ids) {
+    if (shouldStop() || Date.now() - started > budgetMs || out.stopped) { out.coins[id] = { status: 'pending', reason: out.stopped ? '제한 응답으로 중단' : '수집 시간 예산 초과' }; continue; }
+    try {
+      out.calls++;
+      const body = await jsonRequest(`${BASE}/market/candles?instId=${id}&bar=5m&limit=${LIMIT5}`, {}, fetcher);
+      if (gapMs) await pause(gapMs);
+      if (body?.code !== '0' || !Array.isArray(body.data)) throw new Error(`5분봉 응답 오류(code ${body?.code})`);
+      out.coins[id] = { status: 'ok', c5: parseCandles(body.data, M5MS).candles };
+    } catch (error) {
+      if (RESTRICTED.includes(error.status)) { out.stopped = { status: error.status, retryAfter: error.retryAfter || 0, at: id }; out.coins[id] = { status: 'pending', reason: '제한 응답' }; }
+      else out.coins[id] = { status: 'error', reason: String(error.message).slice(0, 80) };
+    }
+  }
+  return out;
+}

@@ -74,7 +74,7 @@ export function donchianMessage(symbol, signal) {
   const confirm = '4H 종가 ' + fmtPrice(boundary) + (L ? ' 초과 · 양봉 · EMA200 위' : ' 미만 · 음봉 · EMA200 아래');
   const title = breakout ? '4H 확정 돌파 · 진입 관심 후보' : '1H 돌파 접근 · 사전 관찰';
   const lines = [
-    '🟡 ' + bold('RICH · 관찰') + ' | ' + bold(symbol.replace(/USDT$/, '')) + ' ' + bold(s.dir),
+    '🟡 ' + bold('관심종목 관찰') + ' | ' + bold(symbol.replace(/USDT$/, '')) + ' ' + bold(s.dir),
     '📌 전략: 돈치안 추세 전략',
     bold(title) + ' · 진입 기록 미연동',
     '🕓 확정봉 ' + timeKst(s.asOf) + ' KST',

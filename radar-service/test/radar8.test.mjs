@@ -269,6 +269,6 @@ test('제한으로 일부만 수집해도 상태 캐시·정기 보고 중복 �
   hookOn = false;
   state.retryAt = 0; // 대기 시간이 지난 것으로 간주(모의 거래소 시각 고정)
   await cycle({ ...deps, now }); // 재개: 같은 시간대 정기 보고 중복 없음
-  assert.equal(sent.filter(t => /RICH · 관찰 \| 정기 요약/.test(t)).length, 1); // 정기 보고는 1회뿐(5분 긴급 알림은 별개)
+  assert.equal(sent.filter(t => /관심종목 관찰 \| 정기 요약/.test(t)).length, 1); // 정기 보고는 1회뿐(5분 긴급 알림은 별개)
   assert.equal(state.lastLimit, null);
 });

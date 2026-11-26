@@ -57,9 +57,9 @@ export function makeSpec(row, tf, candles, kind, reason, fallback = false) {
 export function chartCaption(spec) {
   const medal = spec.rank === 1 ? '🥇 1순위 ' : spec.rank === 2 ? '🥈 2순위 ' : '';
   const head = spec.kind === 'market' ? `${spec.symbol} · 시장 기준 · ${spec.tf}봉` : `${medal}${spec.symbol} · ${dirKo(spec.dir)} 관찰 · ${spec.tf}봉`;
-  if (spec.kind === 'market') return '🟡 RICH · 관찰 | ' + head + '\n시장 참고 차트 · 매매 지시 아님';
+  if (spec.kind === 'market') return '🟡 관심종목 관찰 | ' + head + '\n시장 참고 차트 · 매매 지시 아님';
   const d = spec.decision;
-  return ['🟡 RICH · 관찰 | ' + head,
+  return ['🟡 관심종목 관찰 | ' + head,
     '⛔ 지금: ' + (d?.action ?? '대기') + ' · 진입 보류',
     '👀 다음: ' + (d?.trigger ?? '기준선 확인 대기'),
     '⚠️ 부족: ' + (d?.wait?.slice(0, 2).join(' · ') || '조건 확인 대기'),

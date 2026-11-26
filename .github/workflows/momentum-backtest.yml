@@ -1,0 +1,30 @@
+name: momentum-backtest
+# 5분봉 상승 가속 모멘텀 검증(읽기 전용): 공개 OKX 시세로 30~80종목·120일 이상을 사전 지정 합격 기준에 대해 평가하고 출력만 한다.
+# Telegram 비밀값·쓰기 권한·상태 캐시·주문이 없고 운영 radar 워크플로, 스케줄과 무관하다. 수동 실행(workflow_dispatch) 전용.
+on:
+  workflow_dispatch:
+    inputs:
+      top: { description: 'symbols (30-80)', default: '40' }
+      days: { description: 'days (>=120)', default: '120' }
+permissions:
+  contents: read
+concurrency:
+  group: momentum-backtest
+  cancel-in-progress: true
+jobs:
+  backtest:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: node --test radar-service/test/momentum5m.test.mjs radar-service/test/momentum-backtest.test.mjs radar-service/test/scale-sim.test.mjs
+      - name: Backtest (public OKX data, no Telegram)
+        run: node radar-service/signal/momentum-backtest-cli.mjs --top "${{ inputs.top }}" --days "${{ inputs.days }}" --json "$RUNNER_TEMP/momentum.json" | tee "$RUNNER_TEMP/momentum-backtest.txt"
+      - name: Summary
+        run: |
+          { echo '### 5m momentum validation (read-only)'; grep -v '^JSON ' "$RUNNER_TEMP/momentum-backtest.txt"; } >> "$GITHUB_STEP_SUMMARY"

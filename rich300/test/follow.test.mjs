@@ -35,7 +35,7 @@ test('최초 진입 확인부터 2시간 뒤 첫 보고, 5분 재실행은 중�
   assert.equal(followTick(x.env).sent,0); // first regular report must not arrive early
   x.setNow(NOW);
   let out=followTick(x.env);assert.equal(out.sent,1);assert.equal(x.calls.length,1);
-  assert.match(x.calls[0].msg,/2시간 포지션 점검/);
+  assert.match(x.calls[0].msg,/포지션 관리 · 2시간 점검/);
   assert.match(x.calls[0].msg,/4H 추세·1H 눌림/);assert.match(x.calls[0].msg,/실제 체결 미확인/);
   assert.match(x.calls[0].msg,/손절/);assert.match(x.calls[0].msg,/TP1/);
   assert.equal(storeList(x.m.env,'fill').length,0); // fake Telegram entry != exchange execution
@@ -121,7 +121,7 @@ test('15분 단위 긴급 변경만 추가 전송하고 정상 2시간 보고 �
   let r=followTick(x.env);assert.equal(r.sent,1);assert.equal(r.alerts,0);
   x.setNow(NOW+20*60000);x.env.market=()=>market(NOW+20*60000,1.09);
   r=followTick(x.env);assert.equal(r.alerts,1);assert.equal(r.sent,1);
-  assert.match(x.calls[1].msg,/포지션 전략 변경 경고/);assert.match(x.calls[1].msg,/손절선 근접/);
+  assert.match(x.calls[1].msg,/포지션 관리 · 전략 변경 경고/);assert.match(x.calls[1].msg,/손절선 근접/);
   x.setNow(NOW+25*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
   x.setNow(NOW+40*60000);r=followTick(x.env);assert.equal(r.sent,0);assert.equal(x.calls.length,2);
   x.setNow(NOW+FOLLOW_HOUR_MS+5000);x.env.market=()=>market(NOW+FOLLOW_HOUR_MS+5000,1.09);r=followTick(x.env);
@@ -164,7 +164,7 @@ test('2시간 리포트: 확정봉 지지·저항, 최초 TP1/TP2와 보수적 �
   assert.ok(levels.resistance.length>=2 && levels.resistance[0].price>100);
   const long={...SIG,dir:'LONG',entry:'94',stop:'90',tp1:'115',tp2:'122'};
   const msg=followReport({signal:long,market:m,now,enteredAt:AT});
-  for(const re of [/2시간 포지션 점검/,/③ 확정봉 지지·저항/,/지지: [0-9.]+/,/저항: [0-9.]+/,
+  for(const re of [/포지션 관리 · 2시간 점검/,/③ 확정봉 지지·저항/,/지지: [0-9.]+/,/저항: [0-9.]+/,
     /TP1 최초 115/,/TP2 최초 122/,/조정 검토/,/손절 최초 90/,/당기기 검토/,/유지 조건:/,/위험 조건:/,/자동 수정 아님/,/실제 Binance 체결 아님/])
     assert.match(msg,re,String(re));
   assert.ok(msg.length<=3600);
@@ -186,7 +186,7 @@ test('지지·저항이 확인되지 않으면 새 TP를 지어내지 않고 변
 });
 test('긴급 알림은 기존의 짧은 위험 경고 형식 그대로 유지한다',()=>{
   const s=followReport({signal:SIG,market:market(NOW,1.09),now:NOW,enteredAt:AT,urgent:true});
-  assert.match(s,/포지션 전략 변경 경고/);
+  assert.match(s,/포지션 관리 · 전략 변경 경고/);
   assert.doesNotMatch(s,/④ 최초 TP/);
   assert.match(s,/③ 지금 판단과 대응/);
 });

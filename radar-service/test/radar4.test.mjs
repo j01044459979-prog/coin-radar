@@ -124,14 +124,14 @@ test('BTC 시장 차트는 진입·손절 없이 추세와 구조선만 표시',
 function candidatesBtc() { return candles(83000, 8, 60, 120).map(c => ({ ...c })); }
 test('실제 텔레그램 사진 캡션은 지금 행동·돌파 조건·부족 사유를 설명하고 가상 손익가격은 노출하지 않는다', () => {
   const cap = chartCaption(makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'));
-  assert.match(cap, /^🟡 RICH · 관찰 \| DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
+  assert.match(cap, /^🟡 관심종목 관찰 \| DOGEUSDT · 롱 관찰 · 1H봉\n⛔ 지금: 대기 · 추세 역행 · 진입 보류/);
   assert.match(cap, /👀 다음: 5분봉 101.00 돌파 확정 확인/);
   assert.match(cap, /⚠️ 부족: 1H 추세 역행 주의/);
   assert.match(cap, /진입·손절·익절 미산정/);
   assert.doesNotMatch(cap, /TP1|TP2|손절 \d/);
   assert.equal(chartCaption(makeSpec(btcRow, '4H', candidatesBtc(), 'market', 'x')),
-    '🟡 RICH · 관찰 | BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
-  assert.match(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), /^🟡 RICH · 관찰 \| 🥈 2순위 DOGEUSDT/);
+    '🟡 관심종목 관찰 | BTCUSDT · 시장 기준 · 4H봉\n시장 참고 차트 · 매매 지시 아님');
+  assert.match(chartCaption({ ...makeSpec(longRow, '1H', data.DOGEUSDT['1H'], 'candidate', 'x'), rank: 2 }), /^🟡 관심종목 관찰 \| 🥈 2순위 DOGEUSDT/);
 });
 // ── PNG 렌더링 ──
 png(true, '실제 PNG 렌더링: 롱·숏 모두 PNG 시그니처와 1200 폭, 용량 합리적', async () => {
@@ -176,7 +176,7 @@ async function runHourly({ render, sendPhoto, rows = [btcRow, longRow], chartDat
 const fakeRender = async spec => Buffer.from(`png:${spec.symbol}`);
 test('정기 보고 전송: 압축 본문 → 사진 1장(2개 메시지)', async () => {
   const { log, state } = await runHourly({ render: fakeRender, sendPhoto: async () => {} });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 RICH · 관찰 \| 정기 요약<\/b>/); assert.match(log[1][1], /^🟡 RICH · 관찰 \| 🥇 1순위 DOGEUSDT · 롱 관찰 · 1H봉/);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 관심종목 관찰 \| 정기 요약<\/b>/); assert.match(log[1][1], /^🟡 관심종목 관찰 \| 🥇 1순위 DOGEUSDT · 롱 관찰 · 1H봉/);
   assert.equal(state.chart.items.length, 1); assert.equal(state.chart.items[0].ok, true);   // 55점 미만 BTC 후보는 추천·차트에서 제외 assert.equal(state.reportHour, Math.floor(now / 3600000));
 });
 test('차트 렌더링 실패 시에도 텍스트 보고는 정상 전송된다', async () => {
@@ -226,7 +226,7 @@ test('강한 신규 신호: 짧은 HTML 알림 뒤 해당 종목 차트 1장, �
   const state = { reportHour: Math.floor(now / 3600000) }, log = [];
   const o = { state, collect: async () => ({ rows: [btcRow, shortRow], failures: [], charts: data }), save: async () => {}, render: fakeRender, send: async t => log.push(['text', t]), sendPhoto: async (p, c) => log.push(['photo', c]) };
   await cycle({ ...o, now });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 RICH · 관찰 \| 신규 조건 포착<\/b>/); assert.match(log[1][1], /^🟡 RICH · 관찰 \| SOLUSDT · 숏 관찰 · 1H봉/);   // 긴급 알림 차트는 순위 없이 해당 종목만 assert.ok(log[0][1].length < 500);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 관심종목 관찰 \| 신규 조건 포착<\/b>/); assert.match(log[1][1], /^🟡 관심종목 관찰 \| SOLUSDT · 숏 관찰 · 1H봉/);   // 긴급 알림 차트는 순위 없이 해당 종목만 assert.ok(log[0][1].length < 500);
   await cycle({ ...o, now: now + 300000 });
   assert.equal(log.length, 2);
   const failing = { ...o, state: { reportHour: Math.floor(now / 3600000) }, render: async () => { throw new Error('boom'); } }; const log2 = []; failing.send = async t => log2.push(t);

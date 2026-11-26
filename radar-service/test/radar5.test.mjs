@@ -40,7 +40,7 @@ test('기본 보고는 near×2 / strong+near / strong×2 / near×1 / 후보 없�
 test('TOP 2 형식: 관찰 후보는 현재 진입 보류와 다음 확인 조건만 알리고 가상 손익가격을 숨긴다', () => {
   const c = compactReport([btc, A, B], [], now, {});
   const t = c.plain;
-  assert.match(t, /^🟡 RICH · 관찰 \| 정기 요약\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2/);
+  assert.match(t, /^🟡 관심종목 관찰 \| 정기 요약\n\d+월 \d+일 \d\d:\d\d · 시장 혼조\nOKX USDT 선물 · 추천 관찰 후보 TOP 2/);
   assert.match(t, /🥇 1순위 SOLUSDT · 롱 관찰\n점수 82 · 조건 미완성/);
   assert.match(t, /🥈 2순위 ETHUSDT · 숏 관찰\n점수 76 · 조건 미완성/);
   assert.match(t, /분석가 108\.00\n⛔ 지금: 대기 · 추세 역행 · 진입 보류\n👀 다음: 5분봉/);
@@ -49,7 +49,7 @@ test('TOP 2 형식: 관찰 후보는 현재 진입 보류와 다음 확인 조�
   assert.match(t, /⏳ 현재 확정 진입 신호 없음/);
   assert.deepEqual(c.tops, ['SOLUSDT', 'ETHUSDT']);
   assert.doesNotMatch(t, /\n손절 [\d.]+|\n목표 [\d.]+|\n진입 기준 [\d.]+/);
-  assert.match(c.text, /^<b>🟡 RICH · 관찰 \| 정기 요약<\/b>/);
+  assert.match(c.text, /^<b>🟡 관심종목 관찰 \| 정기 요약<\/b>/);
   assert.ok(c.text.includes('🥇 1순위 <b>SOLUSDT</b> · 롱 관찰'));
   assert.ok(c.text.includes('🥈 2순위 <b>ETHUSDT</b> · 숏 관찰'));
   assert.doesNotMatch(t, /즉시 진입|확정 매수|매수하세요/);
@@ -176,7 +176,7 @@ async function runCycle(state, { send, render, sendPhoto, rows = [btc, near], ne
 test('정기 보고가 HTML 거부로 400이 나도 일반 텍스트로 전달되고 보고는 완료로 기록된다', async () => {
   const state = {}, sent = [];
   await runCycle(state, { send: async (t, o) => { if (o?.html) throw new ApiError('api.telegram.org', 400); sent.push(t); } });
-  assert.equal(sent.length, 1); assert.match(sent[0], /^🟡 RICH · 관찰 \| 정기 요약\n/); assert.doesNotMatch(sent[0], /<b>/); assert.equal(state.reportHour, Math.floor(hourNow / 3600000));
+  assert.equal(sent.length, 1); assert.match(sent[0], /^🟡 관심종목 관찰 \| 정기 요약\n/); assert.doesNotMatch(sent[0], /<b>/); assert.equal(state.reportHour, Math.floor(hourNow / 3600000));
 });
 // ── 이전 버전 상태 호환 ──
 test('업그레이드: 이전 버전이 이미 보낸 같은 시간대 보고는 새 형식으로 다시 보내지 않는다', async () => {
