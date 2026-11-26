@@ -60,7 +60,7 @@ export function formatAlerts(items, { now, health = null } = {}) {
   if (!items.length) return [];
   const sorted = sortAlerts(items);                                // 조건 충족 → 무효화 해제 → 방향 전환 → 눌림 → 일반 해제 → 접근 순(호출자가 상한 적용 전에 같은 순서로 정렬)
   const blocks = sorted.map(it => ({ it, html: it.event.type === 'cleared' || it.event.type === 'invalidated' ? clearBlock(it.symbol, it.event, it.price) : watchBlock(it.symbol, it.analysis, it.event) }));
-  const header = `🟡 ${bold('RICH · 관찰')} | 기회 포착 레이더 (${kst(now)})`;
+  const header = `🟡 ${bold('RICH · 관찰')} | 기회 포착 레이더\n${kst(now)}`;
   const extra = health?.excluded?.length ? `\n데이터 점검: ${health.excluded.length}종목 제외(데이터 부족·지연: ${escHtml(health.excluded.slice(0, 5).map(baseName).join(', '))}${health.excluded.length > 5 ? ' 외' : ''})` : '';
   const st = health?.states;
   const stateLine = st ? `\n현재 상태(이번 점검 ${st.analyzed}종목): LONG 관찰 ${st.long.length ? escHtml(st.long.slice(0, 8).map(baseName).join(', ') + (st.long.length > 8 ? ' 외' : '')) : '없음'} · SHORT 관찰 ${st.short.length ? escHtml(st.short.slice(0, 8).map(baseName).join(', ') + (st.short.length > 8 ? ' 외' : '')) : '없음'} · 대기 ${st.wait}종목` : '';
@@ -86,7 +86,7 @@ export function summaryLines(rows) {
 export function formatBaseline(states, { now, analyzed, wait, excluded = 0 }) {
   const list = dir => states.filter(s => s.dir === dir).sort((a, b) => b.stage - a.stage || (a.symbol < b.symbol ? -1 : 1)).slice(0, 12).map(s => `${baseName(s.symbol)}(${s.stageLabel})`).join(', ');
   const count = dir => states.filter(s => s.dir === dir).length;
-  const text = [`🟡 ${bold('RICH · 관찰')} | 기회 포착 레이더 · 활성화 기준선 (${kst(now)})`,
+  const text = [`🟡 ${bold('RICH · 관찰')} | 기회 포착 레이더\n활성화 기준선 (${kst(now)})`,
     '기능이 켜졌습니다. 현재 관찰 중인 상태는 알림 없이 기준선으로 기록했고, 이후 새 관찰·단계 상승·해제부터 알립니다.',
     `LONG 관찰 ${count('LONG')}종목${count('LONG') ? `: ${escHtml(list('LONG'))}` : ''}`,
     `SHORT 관찰 ${count('SHORT')}종목${count('SHORT') ? `: ${escHtml(list('SHORT'))}` : ''}`,
