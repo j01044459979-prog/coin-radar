@@ -64,6 +64,8 @@ jobs:
       RADAR_WATCH_BUTTONS: ${{ vars.RADAR_WATCH_BUTTONS || 'off' }}   # 관심 등록/패스: GAS W1 수신기 배포·검증 후에만 on. 미배포에서 버튼 노출 금지
       RADAR_RICH300_BUTTONS: ${{ vars.RADAR_RICH300_BUTTONS || 'off' }}  # 앱용 [진입했어][관망했어][놓쳤어] 버튼. 기본 off; 자동 주문 없음
       RADAR_RICH300_FEED: ${{ vars.RADAR_RICH300_FEED || 'off' }}   # RICH 300 추천 전달: on이면 전달 확인된 진입 후보를 상태(state.signal.feed)에 남긴다(기본 off = 기존 동작과 동일). 게시는 별도 워크플로(rich300-feed.yml)가 한다. 주문 기능 없음
+      RADAR_BTC_GATE: ${{ vars.RADAR_BTC_GATE || 'preview' }} # experimental; on only after validation
+      RADAR_PRICE_ONLY: ${{ vars.RADAR_PRICE_ONLY || 'on' }} # no equity/margin estimates in candidate alerts
       RADAR_SCALE_PLAN: ${{ vars.RADAR_SCALE_PLAN || 'off' }}   # 분할 진입·익절 계획(계산 참고용): on이면 진입 후보 메시지에 계획 블록을 붙인다(기본 off = 기존 메시지 그대로, 주문 기능 없음)
       RADAR_PLAN_EQUITY: ${{ vars.RADAR_PLAN_EQUITY || '300' }}   # 계획 계산에 쓰는 가정 평가액(USDT)
     steps:
