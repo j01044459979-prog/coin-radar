@@ -195,7 +195,7 @@ test('뉴스 수집 실패·시간 초과가 정기 보고를 막지 않는다',
   const state = {}, sent = [];
   const row = await strongRow();
   await cycle({ now, state, collect: async () => ({ rows: [row], failures: [] }), send: async t => sent.push(t), save: async () => {}, news: async () => { throw new Error('boom'); } });
-  assert.ok(sent.length >= 1); assert.match(sent[0], /RICH FUTURES RADAR/); assert.equal(state.newsError, 'boom');
+  assert.ok(sent.length >= 1); assert.match(sent[0], /RICH · 관찰/); assert.equal(state.newsError, 'boom');
 });
 test('캐시 복원: 같은 시간대 재실행은 재전송 없음, 캐시 유실 시 보고 1회만(긴급 중복 없음)', async () => {
   const row = await strongRow(); const sent = []; let saved;
@@ -210,11 +210,11 @@ test('캐시 복원: 같은 시간대 재실행은 재전송 없음, 캐시 유�
 test('강한 신규 신호 알림은 짧은 HTML 요약이며 점수·시나리오·주의를 포함', async () => {
   const row = await strongRow();
   const t = alertReport(row, now).plain;
-  assert.match(t, /^🚨 신규 조건 포착\nBTCUSDT · 롱 관찰 \(\d+점\)/); assert.match(t, /⛔ 지금:/); assert.match(t, /👀 다음:/); assert.match(t, /진입·손절·익절 미산정/); assert.match(t, /관찰은 진입 신호 아님/); assert.doesNotMatch(t, /TP1 |TP2 |손절 [\\d.]+/);
+  assert.match(t, /^🟡 RICH · 관찰 \| 신규 조건 포착\nBTCUSDT · 롱 관찰 \(\d+점\)/); assert.match(t, /⛔ 지금:/); assert.match(t, /👀 다음:/); assert.match(t, /진입·손절·익절 미산정/); assert.match(t, /관찰은 진입 신호 아님/); assert.doesNotMatch(t, /TP1 |TP2 |손절 [\\d.]+/);
   assert.ok(t.length < 400, `길이 ${t.length}`);
   const state = { reportHour: Math.floor(now / 3600000) }, sent = [];
   await cycle({ now, state, collect: async () => ({ rows: [row], failures: [] }), send: async m => sent.push(m), save: async () => {} });
-  assert.equal(sent.length, 1); assert.match(sent[0], /^<b>🚨 신규 조건 포착<\/b>/);
+  assert.equal(sent.length, 1); assert.match(sent[0], /^<b>🟡 RICH · 관찰 \| 신규 조건 포착<\/b>/);
   await cycle({ now: now + 300000, state, collect: async () => ({ rows: [row], failures: [] }), send: async m => sent.push(m), save: async () => {} });
   assert.equal(sent.length, 1);
 });
