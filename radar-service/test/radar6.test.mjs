@@ -179,12 +179,12 @@ async function run(state, { render = async s => Buffer.from(`png:${s.symbol}`), 
 test('정기 보고: 텍스트 1개 → 1순위 사진 → 2순위 사진 순서, 캡션에 순위·종목', async () => {
   const st = {}; const log = await run(st);
   assert.deepEqual(log.map(x => x[0]), ['text', 'photo', 'photo']); assert.match(log[0][1], /1순위 <b>AAAUSDT<\/b>[\s\S]*2순위 <b>BBBUSDT<\/b>/);
-  assert.match(log[1][1], /^🥇 1순위 AAAUSDT · 롱 관찰 · 1H봉\n/); assert.match(log[2][1], /^🥈 2순위 BBBUSDT · 숏 관찰 · 1H봉\n/);
+  assert.match(log[1][1], /^🟡 RICH · 관찰 \| 🥇 1순위 AAAUSDT · 롱 관찰 · 1H봉\n/); assert.match(log[2][1], /^🟡 RICH · 관찰 \| 🥈 2순위 BBBUSDT · 숏 관찰 · 1H봉\n/);
   assert.deepEqual(st.chart.items.map(i => [i.symbol, i.ok]), [['AAAUSDT', true], ['BBBUSDT', true]]); assert.equal(st.reportHour, hour); assert.equal(st.partial, undefined);
 });
 test('후보 1개면 사진 1장, 후보 0개면 BTC 시장 차트 1장, 차트 데이터가 없으면 텍스트만', async () => {
   assert.deepEqual((await run({}, { rows: [btc, A] })).map(x => x[0]), ['text', 'photo']);
-  const none = await run({}, { rows: [btc] }); assert.deepEqual(none.map(x => x[0]), ['text', 'photo']); assert.match(none[1][1], /^BTCUSDT · 시장 기준 · 4H봉/); assert.doesNotMatch(none[0][1], /진입 기준|손절/);
+  const none = await run({}, { rows: [btc] }); assert.deepEqual(none.map(x => x[0]), ['text', 'photo']); assert.match(none[1][1], /^🟡 RICH · 관찰 \| BTCUSDT · 시장 기준 · 4H봉/); assert.doesNotMatch(none[0][1], /진입 기준|손절/);
   assert.deepEqual((await run({}, { data: {} })).map(x => x[0]), ['text']);
 });
 test('한 이미지가 실패해도 다른 이미지는 정상 전송되고 텍스트는 다시 보내지 않는다', async () => {
@@ -223,7 +223,7 @@ test('긴급 강한 신호는 기존처럼 해당 종목만 간결하게(텍스�
   const S = { ...ROW('SSSUSDT', 'SHORT', 90), strong: true, direction: 'SHORT' };
   const st = { reportHour: hour }, log = [];
   await cycle({ now, state: st, collect: async () => ({ rows: [btc, A, B, S], failures: [], charts: { ...chartData, SSSUSDT: { '1H': series(60, 4) } } }), save: async () => {}, render: async () => Buffer.from('x'), send: async t => log.push(['text', t]), sendPhoto: async (p, c) => log.push(['photo', c]) });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🚨 신규 조건 포착<\/b>\n<b>SSSUSDT<\/b>/); assert.doesNotMatch(log[0][1], /AAAUSDT|BBBUSDT/); assert.match(log[1][1], /^SSSUSDT · 숏 관찰/);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 RICH · 관찰 \| 신규 조건 포착<\/b>\n<b>SSSUSDT<\/b>/); assert.doesNotMatch(log[0][1], /AAAUSDT|BBBUSDT/); assert.match(log[1][1], /^🟡 RICH · 관찰 \| SSSUSDT · 숏 관찰/);
 });
 // ── 통합 / 성능 ──
 test('실제 수집 결과(모의 OKX) → TOP 2 기본 보고(≤800자)와 차트 사양 생성, 매물대 계산은 밀리초 단위', async () => {

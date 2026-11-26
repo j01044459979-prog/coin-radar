@@ -73,7 +73,7 @@ function render(m) {
   const html = [], plain = [];
   const put = (h, p = htmlToPlain(h)) => { html.push(h); plain.push(p); };
   const gap = () => put('', '');
-  put(bold('📡 RICH FUTURES RADAR'), '📡 RICH FUTURES RADAR');
+  put(bold('🟡 RICH · 관찰 | 정기 요약'), '🟡 RICH · 관찰 | 정기 요약');
   put(escHtml(`${m.time} · ${m.state}`));
   put(escHtml(m.tops.length ? `OKX USDT 선물 · 추천 관찰 후보 TOP ${m.tops.length}` : 'OKX USDT 선물'));
   for (const l of m.scanLines) put(escHtml(l));
@@ -164,7 +164,7 @@ export function alertReport(row, now) {
   const c = row.candidate, dir = c?.dir ?? row.direction, d = watchDecision(row);
   const html = [], plain = [];
   const put = (h, pl = htmlToPlain(h)) => { html.push(h); plain.push(pl); };
-  put(bold('🚨 신규 조건 포착'), '🚨 신규 조건 포착');
+  put(bold('🟡 RICH · 관찰 | 신규 조건 포착'), '🟡 RICH · 관찰 | 신규 조건 포착');
   put(`${bold(row.symbol)} · ${escHtml(`${dirKo(dir)} 관찰${c ? ` (${Math.round(c.score)}점)` : ''}`)}`, `${row.symbol} · ${dirKo(dir)} 관찰${c ? ` (${Math.round(c.score)}점)` : ''}`);
   put('', '');
   put(escHtml(`분석가 ${fmtPrice(row.price)}`));

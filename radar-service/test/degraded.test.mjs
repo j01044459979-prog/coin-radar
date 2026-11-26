@@ -30,7 +30,7 @@ function simulate({ times, scheduler, api = () => 'ok', failOpen = true, staleAt
           state.lastSlot = Math.max(Number(state.lastSlot) || 0, d.slot);
           const sent = [];
           await cycle({ now: t, state, collect: async () => baseResult, send: async x => { sent.push(x); }, sendPhoto: async () => true, save: async () => {}, news: async () => {} });
-          reports = sent.filter(x => /RICH FUTURES RADAR/.test(x)).length; alerts = sent.filter(x => /신규 조건/.test(x)).length;
+          reports = sent.filter(x => /RICH · 관찰 \| 정기 요약/.test(x)).length; alerts = sent.filter(x => /신규 조건/.test(x)).length;
           snaps.push(state);
         }
         sentReports += reports;

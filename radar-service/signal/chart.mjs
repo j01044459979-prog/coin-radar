@@ -56,7 +56,7 @@ export function signalCaption(symbol, ev, opts = {}) {
   const score = Number.isFinite(ev.score) ? ` · 점수 ${Math.round(ev.score)}` : '';
   return [
     ...(opts.test ? [`[${TEST_BANNER}]`] : []),
-    `${ev.dir === 'LONG' ? '🟢' : '🔴'} ${baseName(symbol)} ${ev.dir} · A급 진입 후보`,
+    `${ev.dir === 'LONG' ? '🟢' : '🔴'} RICH · 진입 검토 | ${baseName(symbol)} ${ev.dir}`,
     '📌 전략: ' + strategyLabel(ev),
     '🧭 지금: 조건 확정 · 호가 확인',
     ...(ev.fib?.ok && ev.fib.fib ? [

@@ -33,8 +33,7 @@ export function strategyLabel(ev) {
 // 진입 후보 메시지. 레버리지는 권하지 않고, 손절폭 대비 증거금 손실만 사실로 보여 준다.
 export function candidateMessage(symbol, ev, { now, btc } = {}) {
   const L = ev.dir === 'LONG', lines = [];
-  const label = ev.strategy === 'ema-pullback' ? 'EMA 눌림목 후보' : ev.strategy === 'pullback' ? '눌림목 반등 후보' : '진입 후보';
-  lines.push(`${icon(ev.dir)} ${bold(baseName(symbol))} · ${bold(ev.dir)} · ${bold(label)}`);
+  lines.push(`${icon(ev.dir)} ${bold('RICH · 진입 검토')} | ${bold(baseName(symbol))} ${bold(ev.dir)}`);
   lines.push(`상태 관찰 ▶ ${bold('진입 후보')} ▶ 무효화`);
   lines.push('📌 전략: ' + strategyLabel(ev));
   lines.push('🧭 지금: 실시간 호가 확인', '   유효시간 내만 검토 · 추격 금지');
@@ -66,7 +65,7 @@ export function candidateMessage(symbol, ev, { now, btc } = {}) {
 
 export function invalidatedMessage(symbol, event, { now } = {}) {
   const L = event.dir === 'LONG';
-  const lines = [`🚫 ${bold(baseName(symbol))} · ${bold(event.dir)} · ${bold('무효화')}`, `상태 관찰 ▶ 진입 후보 ▶ ${bold('무효화')}`,
+  const lines = [`🚫 ${bold('RICH · 포지션 관리')} | ${bold(baseName(symbol))} ${bold(event.dir)} · ${bold('무효화')}`, `상태 관찰 ▶ 진입 후보 ▶ ${bold('무효화')}`,
     '사유', escHtml(event.reason), `현재 ${fmtPrice(event.price)} · 손절 ${fmtPrice(event.stop)}`, `신호 생성 ${kst(event.triggerT + 15 * 60000)} KST`,
     '', '앞서 알린 진입 후보는', '더 이상 유효하지 않습니다.', '', escHtml('※ 판단 보조용 · 주문 권고 아님'), escHtml('※ 미검증 규칙')];
   const text = lines.join('\n');

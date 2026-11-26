@@ -116,7 +116,8 @@ export const accumulationMode = env => {
 export function accumulationMessage(symbol, candidate, btc) {
   const x = candidate, stage = x.stage === 'BREAKOUT' ? '거래량 동반 돌파 관찰' : '박스권 상단 접근 관찰';
   const lines = [
-    '🧭 [실험] ' + bold(String(symbol).replace(/USDT$/, '')) + ' · 매집 의심/변동성 압축',
+    '🟡 ' + bold('RICH · 관찰') + ' | ' + bold(String(symbol).replace(/USDT$/, '')) + ' LONG',
+    '📌 전략: 매집 의심/변동성 압축 [실험]',
     bold(stage) + ' · 조건점수 ' + x.score + '/100 (승률 아님)',
     '⏱ 1H 확정봉 ' + new Date(x.asOf + 9 * H1).toISOString().slice(11,16) + ' KST',
     '📦 박스 하단 ' + fmtPrice(x.lower) + ' · 상단 ' + fmtPrice(x.upper),
@@ -179,7 +180,8 @@ export function accumulationRetest(c1h, anchor, now, P = ACC_RETEST) {
 export function accumulationRetestMessage(symbol, x, btc) {
   const f = fmtPrice, time = t => new Date(t + 9 * H1).toISOString().slice(5, 16).replace('T', ' ') + ' KST';
   const lines = [
-    '🎯 [실험] ' + bold(symbol.replace(/USDT$/, '')) + ' · ' + bold('매집 3단계 진입 관심 후보'),
+    '🟡 ' + bold('RICH · 관찰') + ' | ' + bold(symbol.replace(/USDT$/, '')) + ' LONG',
+    '📌 전략: ' + bold('매집 3단계 진입 관심 후보') + ' [실험] · 진입 기록 미연동',
     '✅ 1H 돌파 → 재접촉 → 종가 상단 지지 확인',
     '⏱ 재지지 확정 ' + time(x.asOf),
     '📦 종전 박스 상단 ' + f(x.upper) + ' · 하단 ' + f(x.lower),
