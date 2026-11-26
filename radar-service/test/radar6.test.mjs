@@ -223,7 +223,7 @@ test('긴급 강한 신호는 기존처럼 해당 종목만 간결하게(텍스�
   const S = { ...ROW('SSSUSDT', 'SHORT', 90), strong: true, direction: 'SHORT' };
   const st = { reportHour: hour }, log = [];
   await cycle({ now, state: st, collect: async () => ({ rows: [btc, A, B, S], failures: [], charts: { ...chartData, SSSUSDT: { '1H': series(60, 4) } } }), save: async () => {}, render: async () => Buffer.from('x'), send: async t => log.push(['text', t]), sendPhoto: async (p, c) => log.push(['photo', c]) });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🚨 신규 조건 포착<\/b>\n<b>SSSUSDT<\/b>/); assert.doesNotMatch(log[0][1], /AAAUSDT|BBBUSDT/); assert.match(log[1][1], /^SSSUSDT · 숏 관찰/);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 RICH · 관찰 \| 신규 조건 포착<\/b>\n<b>SSSUSDT<\/b>/); assert.doesNotMatch(log[0][1], /AAAUSDT|BBBUSDT/); assert.match(log[1][1], /^🟡 RICH · 관찰 \| SSSUSDT · 숏 관찰/);
 });
 // ── 통합 / 성능 ──
 test('실제 수집 결과(모의 OKX) → TOP 2 기본 보고(≤800자)와 차트 사양 생성, 매물대 계산은 밀리초 단위', async () => {
