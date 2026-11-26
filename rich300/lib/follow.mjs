@@ -267,7 +267,55 @@ export function followDetailedPlan({ signal, market, now }) {
   ];
 }
 
-export function followReport({ signal, market, now, enteredAt, urgent = false }) {
+// Numeric, confirmed-candle evidence for regular reports only; never changes orders.
+export function followDecisionEvidence({ signal, market, btcMarket, now, assessment }) {
+  const a = assessment || followAssess({ signal, market, now });
+  const long = signal.dir === 'LONG', sign = long ? 1 : -1;
+  const fmt = n => followLevelFmt(n, a.price);
+  const lines = ['⑥ 유지·정리 판단 근거 (확정봉)'];
+  const validBars = (m, key, step) => m && followLevelBars(m[key], 55, step, now);
+  for (const [name, key, step] of [['1H','bars1h',FOLLOW_HOUR_MS],['4H','bars4h',4*FOLLOW_HOUR_MS]]) {
+    const bars = validBars(market,key,step);
+    const t = bars ? watchTrend(bars) : null;
+    if (!t || ![t.fast,t.slow,t.last].every(followLevelNumber)) { lines.push(name + ': 확정 EMA 근거 확인 불가'); continue; }
+    const relation = (t.last-t.slow)*sign > 0 && (t.fast-t.slow)*sign > 0 ? '추천 방향 정렬' : '추천 방향 정렬 미충족';
+    lines.push(name + ' 종가 ' + fmt(t.last) + ' · EMA20 ' + fmt(t.fast) + ' · EMA50 ' + fmt(t.slow) + ' (' + relation + ')');
+  }
+  const bars15 = market && followLevelBars(market.bars15m, 8, 900000, now);
+  if (bars15) {
+    const older = bars15.slice(0,4), newer = bars15.slice(4);
+    const extrema = b => long ? Math.min(...b.map(x=>x.l)) : Math.max(...b.map(x=>x.h));
+    const prior = extrema(older), latest = extrema(newer);
+    lines.push('15분 4봉씩 비교: ' + (long ? '저점 ' : '고점 ') + fmt(prior) + ' → ' + fmt(latest) + ' (' + ((latest-prior)*sign>0?'유리한 구조':(latest-prior)*sign<0?'불리한 구조':'동일') + ')');
+  } else lines.push('15분 구조: 확인 불가');
+  const levels = followLevels({market,now});
+  const anchor = levels.ok ? (long ? levels.support[0] : levels.resistance[0]) : null;
+  if (anchor) lines.push('방어 기준 ' + fmt(anchor.price) + ' (' + anchor.source + ', 현재가와 ' + followPct(a.price-anchor.price,a.price) + ' 거리) · 1H 종가 ' + (long?'하향':'상향') + ' 이탈 시 유지 근거 재평가');
+  else lines.push('방어 구간: 확인 불가 · 최초 손절 기준 우선');
+  const btcOk = btcMarket && btcMarket.ok && watchAssessMarket(btcMarket,now).ok &&
+    validBars(btcMarket,'bars1h',FOLLOW_HOUR_MS) && validBars(btcMarket,'bars4h',4*FOLLOW_HOUR_MS);
+  let btcAgainst = false, btcKnown = false;
+  if (btcOk) {
+    const b1 = watchTrend(btcMarket.bars1h), b4 = watchTrend(btcMarket.bars4h);
+    btcKnown = [b1,b4].every(t=>[t.fast,t.slow,t.last].every(followLevelNumber));
+    btcAgainst = btcKnown && (wAgainst(b1,signal.dir)||wAgainst(b4,signal.dir));
+    if (btcKnown) lines.push('BTC (' + btcMarket.source + ') 1H ' + followTrendLabel(b1.state) + ' · 4H ' + followTrendLabel(b4.state) + ' · ' + (btcAgainst?'일부 역행, 유지 근거 약화':wAligned(b1,signal.dir)&&wAligned(b4,signal.dir)?'양쪽 방향 일치':'방향 혼조') );
+  }
+  if (!btcKnown) lines.push('BTC: 확정 데이터 확인 불가 (일치로 간주하지 않음)');
+  let conclusion;
+  if (a.urgent === 'stop') conclusion = '손절 기준 이탈 · 체결/잔량 확인';
+  else if (a.urgent === 'tp2') conclusion = '전량 익절 계획·잔량 확인';
+  else if (a.urgent === 'tp1') conclusion = '부분 익절 계획·체결 확인';
+  else if (a.urgent || a.status === '추세 약화') conclusion = '위험 축소·정리 조건 검토';
+  else if (a.status === '추세 유지' && !btcAgainst && btcKnown && anchor && bars15 &&
+           validBars(market,'bars1h',FOLLOW_HOUR_MS) && validBars(market,'bars4h',4*FOLLOW_HOUR_MS))
+    conclusion = '조건부 유지 · 방어 기준 및 최초 손절 유효성 확인';
+  else conclusion = '판단 보류 · 추가 진입 없이 근거 재확인';
+  lines.push('종합 판단: ' + conclusion);
+  return lines;
+}
+
+export function followReport({ signal, market, btcMarket = null, now, enteredAt, urgent = false }) {
   const a = followAssess({ signal, market, now });
   const time = new Date(now + 9 * FOLLOW_HOUR_MS).toISOString().slice(5, 16).replace('T', ' ');
   const age = Math.round((now - market.priceAt) / 60000);
@@ -279,7 +327,7 @@ export function followReport({ signal, market, now, enteredAt, urgent = false })
   return [
     urgent ? '🚨 포지션 관리 · 전략 변경 경고' : '🚨 포지션 관리 · 2시간 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
-    '🔎 판단: [' + a.status + '] ' + a.verdict,
+    '🔎 판단: [' + a.status + '] ' + (urgent ? a.verdict : '종합 판단은 유지·정리 근거 참조'),
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
     '',
     '① 현재 위치 (공개 시세 · 실제 손익 아님)',
@@ -294,7 +342,8 @@ export function followReport({ signal, market, now, enteredAt, urgent = false })
     a.trendText,
     a.m15Text,
     ...(urgent ? [''] : followDetailedPlan({ signal, market, now }).concat([''])),
-    urgent ? '③ 지금 판단과 대응' : '⑥ 지금 판단과 대응',
+    ...(urgent ? [] : followDecisionEvidence({ signal, market, btcMarket, now, assessment: a }).concat([''])),
+    urgent ? '③ 지금 판단과 대응' : '⑦ 지금 판단과 대응',
     '근거: ' + a.why,
     '대응: ' + a.next,
     '다음 점검: ' + a.trigger,
@@ -317,6 +366,7 @@ export function followTick(env) {
   const out = { status: 'ok', mode, entered: responses.length, active: 0, due: 0, scanned: 0,
     alerts: 0, sent: 0, failed: 0, stale: 0, closed: 0, missing: 0, capped: 0 };
   const h = Math.floor(now / FOLLOW_HOUR_MS), slot = Math.floor(now / FOLLOW_MONITOR_MS);
+  let btcMarket = null, btcFetched = false;
   for (const r of responses) {
     // Only entered responses with an explicit opt-in may be assessed. Never forge fills.
     const st = followRead(env.kv, r.sid);
@@ -347,7 +397,11 @@ export function followTick(env) {
       // Mark attempt BEFORE send so concurrent triggers cannot duplicate messages.
       const pending = { ...observed, pendingHour: h, retryAt: null };
       env.kv.put(followKey(r.sid), JSON.stringify(pending));
-      const message = followReport({ signal: sig, market, now, enteredAt: r.at });
+      if (!btcFetched) {
+        btcFetched = true;
+        try { btcMarket = sig.symbolId === 'BTCUSDT' ? market : env.market('BTCUSDT'); } catch (e_) { btcMarket = null; }
+      }
+      const message = followReport({ signal: sig, market, btcMarket: sig.symbolId === 'BTCUSDT' ? market : btcMarket, now, enteredAt: r.at });
       let sent; try { sent = env.send(message, r.sid); } catch (e_) { sent = { ok: false, code: 'exception' }; }
       if (sent && sent.ok) {
         env.kv.put(followKey(r.sid), JSON.stringify({ ...pending, pendingHour: null, lastSentAt: now,
