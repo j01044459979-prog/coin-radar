@@ -2031,14 +2031,14 @@ function tgOnResponse(env, ev, sid, choice, cb, answer) {
   if (r.status === 'conflict') { const cur = storeGet(se, 'response', sid); answer(`이미 '${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}'로 기록됨(수정은 앱에서)`); tgEdit(env, cb, shown + `\n→ ${cur.data.choice === 'watched' ? '안 했어' : RESPONSE_CHOICES[cur.data.choice]}`); return { status: 'handled', action: 'response-conflict' }; }
   // 진입 응답은 실제 체결이 아니다. 매매일지의 '진입 확인·체결 미입력'으로만 표시하며,
   // /fill 안내 메시지와 추가 알림은 보내지 않는다. 안 했어 응답은 여기서 종료한다.
-  // An entered response opts in to 3-hour reassessment. No Fill is created.
+  // An entered response opts in to 2-hour reassessment. No Fill is created.
   // If an opt-in state update fails after the response is stored, the response still remains recorded.
   if (choice === 'entered') followStart(env.kv, sid, env.now());
-  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 3시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
+  const outcome = choice === 'entered' ? '진입 확인 · 웹앱 매매일지 기록 · 2시간 분석 등록 (실제 체결 미확인)' : choiceLabel;
   const a = answer(`기록: ${choiceLabel}`), e = tgEdit(env, cb, `${shown}\n→ ${outcome}`);
   return { status: 'handled', action: r.status === 'added' ? 'response-saved' : 'response-duplicate', replyFailed: !tgOkOrBenign(a) || !tgOkOrBenign(e) };
 }
-/** User can keep 3-hour analysis coming, or stop it without pretending the position was actually closed at the exchange. */
+/** User can keep 2-hour analysis coming, or stop it without pretending the position was actually closed at the exchange. */
 function tgOnFollow(env, ev, sid, action, cb, answer) {
   if (!TG_SID_RE.test(sid)) { const a = answer('유효하지 않은 신호입니다'); return { status: 'handled', action: 'follow-invalid', replyFailed: !tgOkOrBenign(a) }; }
   const se = env.storeEnv(), response = storeGet(se, 'response', sid);
@@ -2049,7 +2049,7 @@ function tgOnFollow(env, ev, sid, action, cb, answer) {
   const choice = followChoice(env.kv, sid, action === 'k' ? 'keep' : 'close', env.now());
   if (choice.status === 'not-tracked') { const a = answer('추적 정보가 없습니다'); return { status: 'handled', action: 'follow-not-tracked', replyFailed: !tgOkOrBenign(a) }; }
   const closed = choice.status === 'closed' || choice.status === 'already-closed';
-  const label = closed ? '정리됨 · 3시간 분석 중단' : '유지 중 · 3시간 분석 계속';
+  const label = closed ? '정리됨 · 2시간 분석 중단' : '유지 중 · 2시간 분석 계속';
   const a = answer(label);
   const base = (ev.msgText || ('RICH300 · ' + sid)).replace(/\n→ 상태: .+$/, '');
   const e = tgEdit(env, cb, base.slice(0, 3400) + '\n→ 상태: ' + label, closed ? { inline_keyboard: [] } : followKeyboard(sid));
@@ -4644,7 +4644,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = 'b5ff374db7bf';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = '02451a10f098';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {
