@@ -9,6 +9,7 @@ import { refreshNews } from './news.mjs';
 import { modeOf } from './opportunity/config.mjs';           // opportunity radar (feature flag RADAR_OPPORTUNITY, default off)
 import { runAfterCycle } from './opportunity/integrate.mjs';
 import { runSignalAfterCycle } from './signal/integrate.mjs';   // 실시간 신호(feature flag RADAR_SIGNAL, default off)
+import { createDigest } from './signal/digest.mjs';               // 관찰 알림 1시간 통합(RADAR_WATCH_DIGEST, 기본 on)
 import { quietMode, mutedSender } from './quiet.mjs';          // P1: RADAR_TELEGRAM_QUIET(기본 off)
 
 // 모드: --preview(수집·출력만) | --once(1회 실행, GitHub Actions용) | --telegram-test(연결 확인 메시지 1건) | 기본(상시 루프)
@@ -110,17 +111,21 @@ if (args.has('--gate')) {
   await send(`리치 선물 레이더 · 연결 확인\n${new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' })} KST\n이 메시지가 보이면 Telegram 전송이 정상입니다.`);
   console.log('Telegram 연결 확인 메시지 전송 확인(message_id 수신)');
 } else {
-  const send = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
-  const sendPhoto = telegramPhotoSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
+  const sendRaw = telegramSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
+  const sendPhotoRaw = telegramPhotoSender(process.env.TELEGRAM_BOT_TOKEN, process.env.TELEGRAM_CHAT_ID);
+  // 🟡 관심종목 관찰 알림만 모아 매 시 1회 통합 전송한다(RADAR_WATCH_DIGEST, 기본 on). 🟢/🔴 진입 검토·🚨 포지션 관리·정기 보고(cycle)는 즉시 그대로 간다.
+  const digest = createDigest(state, process.env), send = digest.wrapSend(sendRaw), sendPhoto = digest.wrapPhoto(sendPhotoRaw);
   const render = renderChart;
   if (args.has('--once')) {
     // 슬롯 멱등성: 이 슬롯을 처리했다고 먼저 기록한다(같은 슬롯의 중복 실행·늦게 도착한 이전 슬롯 실행은 게이트가 건너뜀).
     const slot = Number(process.env.RADAR_SLOT);
     state.lastSlot = Math.max(Number(state.lastSlot) || 0, Number.isFinite(slot) && process.env.RADAR_SLOT ? slot : slotOfTime(Date.now()));
     await save(state);
-    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render: quiet ? null : render, sendPhoto, quietReports: quiet })));
+    console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send: sendRaw, save, news, render: quiet ? null : render, sendPhoto: sendPhotoRaw, quietReports: quiet })));
     await opportunity({ send });
     await signal({ send, sendPhoto });                                      // A급 신호·무효화는 항상 그대로 전송
+    { const d = await digest.flush(sendRaw, Date.now()); console.log('DIGEST ' + JSON.stringify({ on: digest.on, ...d, pending: Object.keys(digest.state.items).length })); }
+    if (digest.dirty) { await save(state); digest.clean(); }
     if (quiet) console.log('QUIET ' + JSON.stringify({ mode: 'on', mutedOpportunityMessages: muted.stat.count, reportMuted: state.reportMuted ?? null }));
   } else {
     let stopped = false;
@@ -128,7 +133,7 @@ if (args.has('--gate')) {
     let wake;
     for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { stopped = true; clearTimeout(timer); wake?.(); });
     while (!stopped) {
-      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send, save, news, render, sendPhoto }))); await opportunity({ send }); await signal({ send, sendPhoto }); }
+      try { console.log(JSON.stringify(await cycle({ now: Date.now(), state, collect, send: sendRaw, save, news, render, sendPhoto: sendPhotoRaw }))); await opportunity({ send }); await signal({ send, sendPhoto }); await digest.flush(sendRaw, Date.now()); if (digest.dirty) { await save(state); digest.clean(); } }
       catch { console.error('분석/알림 처리 실패: 다음 주기에 재확인'); }
       // Start shortly after each 5-minute boundary, never overlap cycles.
       if (!stopped) await new Promise(resolve => { wake = resolve; timer = setTimeout(resolve, 300000 - Date.now() % 300000 + 5000); });

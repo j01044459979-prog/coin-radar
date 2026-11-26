@@ -9,9 +9,11 @@ import { analyzeCoin } from '../opportunity/analysis.mjs';
 import { collectOpportunity } from '../opportunity/collect.mjs';
 import { H1 } from '../opportunity/indicators.mjs';
 import { signalSettings, fibMode } from './config.mjs';
-import { collect15 } from './collect.mjs';
+import { collect15, collect5 } from './collect.mjs';
+import { evaluateMomentum5m, momentumMessage, momentumMode, allocateLongSlots, MOM5 } from './momentum5m.mjs';
+import { ema as emaSeries } from '../opportunity/indicators.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
-import { btcContext } from './btc-context.mjs';
+import { btcContext, btcContextLines } from './btc-context.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { accumulationAutoInterests } from './auto-interest.mjs';
 import { ACCUMULATION, ACC_RETEST, accumulationMode, accumulationWatch, accumulationMessage,
@@ -169,7 +171,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
   return watch;
 }
 
-export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
+export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, collectM5 = collect5, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env), emaEnabled = String(env.RADAR_EMA_PULLBACK ?? '').toLowerCase() === 'on';
   // Independent opt-in for *new live* EMA alerts. Paper tracking and prior alert invalidations stay active.
   const emaLive = String(env.RADAR_EMA_LIVE ?? 'off').toLowerCase() === 'on';
@@ -365,6 +367,29 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const dcLimit = Math.min(DONCHIAN.maxPerRun, Math.max(0, DONCHIAN.maxPerDay - dcToday));
   const dcAlerts = dcEligible.slice(0, dcLimit);
   base.donchian = { mode: dcMode, observed: dcAll.length, eligible: dcEligible.length, selected: 0 };
+  // 5분봉 상승 가속 모멘텀(LONG): 검증 전 '실험 관찰' 전용 채널. 1H 상승 추세 종목만 5분봉을 받아(최대 MOM_SCAN 종목) 평가한다. 진입 기록·장부·피드·주문 없음.
+  const momMode = momentumMode(env), MOM_SCAN = 10, momSlots = allocateLongSlots(MAX_MESSAGES_PER_RUN).momentum, momDaySlots = allocateLongSlots(20).momentum;
+  const momSent = sg.momentum?.sent && typeof sg.momentum.sent === 'object' && !Array.isArray(sg.momentum.sent)
+    ? Object.fromEntries(Object.entries(sg.momentum.sent).filter(([k, t]) => validWatchSymbol(k) && Number.isFinite(t) && now >= t && now - t <= 14 * 86400000)) : {};
+  let momAlerts = [];
+  base.momentum = { mode: momMode, scanned: 0, signals: 0, selected: 0, promotion: 'blocked-until-validated' };
+  if (momMode !== 'off' && !expired('beforeMomentum')) {
+    try {
+      const up = rows.filter(r => r.c1h?.length >= 55 && r.c1h.at(-1).c > emaSeries(r.c1h.map(b => b.c), 50).at(-1) && now - (momSent[r.symbol] ?? -Infinity) >= MOM5.cooldownMs).slice(0, MOM_SCAN);
+      if (up.length) {
+        const got = await collectM5({ fetcher, now, ids: up.map(r => instOf(r.symbol)), shouldStop: () => clock() > deadline });
+        base.momentum.scanned = got.calls;
+        for (const r of up) {
+          const c5 = got.coins[instOf(r.symbol)]?.c5; if (!c5) continue;
+          const e = evaluateMomentum5m(c5, r.c1h, now);
+          if (e.status === 'SIGNAL') momAlerts.push({ symbol: r.symbol, entry: e, key: r.symbol, btc: btcContext({ btc4h: hourData.btc4h, btc1h: hourData.coins?.['BTC-USDT-SWAP']?.status === 'fresh' ? hourData.coins['BTC-USDT-SWAP'].c1h : null, coin1h: r.c1h, dir: 'LONG', at: e.asOf }) });
+        }
+      }
+    } catch { momAlerts = []; }
+    base.momentum.signals = momAlerts.length;
+    const momToday = Object.values(momSent).filter(t => dayKey(t) === dayKey(now)).length;
+    momAlerts = momAlerts.sort((a, b) => b.entry.net1 - a.entry.net1 || a.symbol.localeCompare(b.symbol)).slice(0, Math.max(0, Math.min(momSlots, momDaySlots - momToday)));
+  }
   // 무효화 먼저, 그다음 진입 후보(점수·손익비 높은 순). 일일 상한은 진입 후보에만 적용하고 초과분은 보류(기록 없음 → 유효시간 안이면 다음 실행에서 다시 평가).
   const inv = items.filter(i => i.event.type === 'invalidated'), cand = items.filter(i => i.event.type === 'candidate').sort((x, y) => y.score - x.score || y.rr - x.rr || (x.symbol < y.symbol ? -1 : 1));
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...cand.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
@@ -400,6 +425,10 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
     });
   }
   base.donchian.selected = msgs.filter(x => x.i.channel === 'donchian').length;
+  for (const a of momAlerts.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
+    msgs.push({ i: { symbol: a.symbol, channel: 'momentum', momKey: a.key, event: { type: 'watch', id: 'MOM5:' + a.symbol + ':' + a.entry.asOf }, committed: null }, m: momentumMessage(a.symbol, a.entry, { btcLines: btcContextLines(a.btc, a.symbol, 'LONG') }) });
+  }
+  base.momentum.selected = msgs.filter(x => x.i.channel === 'momentum').length;
   for (const a of accWatch.slice(0, Math.max(0, MAX_MESSAGES_PER_RUN - msgs.length))) {
     msgs.push({
       i: { symbol: a.symbol, channel: 'accumulation', accKey: a.key, accSignal: a.entry,
@@ -529,6 +558,11 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
           breakouts: accBreakouts };
         base.accumulation.sent = (base.accumulation.sent ?? 0) + 1;
         return; // independent observation/entry-interest only: no auto order, RICH300 feed or trade journal
+      }
+      if (i.channel === 'momentum') {
+        sg.momentum = { sent: { ...(sg.momentum?.sent ?? momSent), [i.momKey]: now } };
+        base.momentum.sent = (base.momentum.sent ?? 0) + 1;
+        return; // 실험 관찰만: 진입 기록·RICH300 장부·피드·EMA 상태·자동 주문 없음
       }
       if (i.channel === 'donchian') {
         sg.donchian = { sent: { ...(sg.donchian?.sent ?? dcSent), [i.dcKey]: now } };

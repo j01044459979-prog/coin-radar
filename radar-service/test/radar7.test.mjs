@@ -101,7 +101,7 @@ test('55점 미만이어도 기존 강한 신호 5분 긴급 알림은 변경 �
   const weak = mk('WEAKUSDT', 'SHORT', 50, { strong: true }), st = { reportHour: hour }, log = [];
   const o = { state: st, collect: async () => ({ rows: [btc, weak], failures: [], charts: dataFor([weak]) }), save: async () => {}, render: async () => Buffer.from('x'), send: async t => log.push(['text', t]), sendPhoto: async (p, c) => log.push(['photo', c]) };
   await cycle({ ...o, now });
-  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 RICH · 관찰 \| 신규 조건 포착<\/b>\n<b>WEAKUSDT<\/b>/); assert.match(log[0][1], /점수\)?/.source ? /\(50점\)/ : /x/);
+  assert.deepEqual(log.map(x => x[0]), ['text', 'photo']); assert.match(log[0][1], /^<b>🟡 관심종목 관찰 \| 신규 조건 포착<\/b>\n<b>WEAKUSDT<\/b>/); assert.match(log[0][1], /점수\)?/.source ? /\(50점\)/ : /x/);
   await cycle({ ...o, now: now + 300000 }); assert.equal(log.length, 2);                                // 쿨다운 중복 억제 그대로
   assert.deepEqual(pickTop2([btc, weak]), []);                                                           // 같은 종목이 정기 추천에는 오르지 않음
 });

@@ -128,14 +128,14 @@ const hourOf = ms => Math.floor(ms / 3600000);
 test('[3] 정상 상태: 같은 시간대 정기 보고는 한 번만, 긴급 알림은 쿨다운으로 한 번만', async () => {
   const state = {};
   const a = await runCycle(state); const b = await runCycle(state);
-  assert.ok(a.sent.length >= 1); assert.equal(b.sent.filter(t => /RICH · 관찰 \| 정기 요약/.test(t)).length, 0);
+  assert.ok(a.sent.length >= 1); assert.equal(b.sent.filter(t => /관심종목 관찰 \| 정기 요약/.test(t)).length, 0);
   const alertsA = a.sent.filter(t => /신규 조건/.test(t)).length, alertsB = b.sent.filter(t => /신규 조건/.test(t)).length; assert.equal(alertsA + alertsB <= 2, true);
 });
 test('[3] 오래된 상태(직전 시간대 상태)가 복원되면 같은 시간대 보고가 다시 나갈 수 있다 (재현) — 억제 없을 때', async () => {
   const fresh = {}; const first = await runCycle(fresh);
   const stale = { reportHour: hourOf(T0) - 1, sent: {}, lastAttempt: T0 - 3600000 };       // 직전 시간대 캐시가 복원된 상황
   const again = await runCycle(stale);
-  assert.ok(first.sent.length >= 1 && again.sent.some(t => /RICH · 관찰 \| 정기 요약/.test(t)), '정기 보고 중복 전송 가능');
+  assert.ok(first.sent.length >= 1 && again.sent.some(t => /관심종목 관찰 \| 정기 요약/.test(t)), '정기 보고 중복 전송 가능');
 });
 test('[3][5] 억제 시간대(quiet): 오래된·손상 복구 상태에서는 아무것도 보내지 않고 상태만 복구하며, 다음 시간대에 1회 재개', async () => {
   const stale = { reportHour: hourOf(T0) - 1, sent: {}, quiet: { reason: 'cache-stale', hour: hourOf(T0), at: T0 } };
@@ -146,7 +146,7 @@ test('[3][5] 억제 시간대(quiet): 오래된·손상 복구 상태에서는 �
   // 다음 시간대(모의 거래소 시각이 고정이므로 억제 시간대를 이전 시간대로 바꿔 '지난 것'을 표현): 억제 해제 후 정기 보고 재개, 중복 없음
   stale.quiet.hour = hourOf(T0) - 1; stale.reportHour = hourOf(T0) - 1;
   const next = await runCycle(stale);
-  assert.equal(next.sent.filter(t => /RICH · 관찰 \| 정기 요약/.test(t)).length, 1); assert.equal(stale.quiet, undefined);
+  assert.equal(next.sent.filter(t => /관심종목 관찰 \| 정기 요약/.test(t)).length, 1); assert.equal(stale.quiet, undefined);
 });
 test('[3][5] 수집 장애 알림 경로는 억제 대상이 아니다(장애를 숨기지 않음)', async () => {
   const sent = []; const state = { quiet: { reason: 'cache-stale', hour: hourOf(T0), at: T0 } };
@@ -275,7 +275,7 @@ test('[A][B] 최신 캐시 재복원 성공(ok) 또는 unverified지만 직전 �
   for (const cacheStatus of ['ok', 'unverified']) {
     const state = viaGate({ cacheStatus, slot: slotNow, preset: { reportHour: hr, sent: {}, lastSlot: slotNow - 1, lastAttempt: Date.now() - 300000 } });
     assert.equal(state.quiet, undefined, cacheStatus);
-    const r = await runCycle(state); assert.equal(r.sent.filter(t => /RICH · 관찰 \| 정기 요약/.test(t)).length, 0, cacheStatus);      // 이미 이 시간대 보고 완료
+    const r = await runCycle(state); assert.equal(r.sent.filter(t => /관심종목 관찰 \| 정기 요약/.test(t)).length, 0, cacheStatus);      // 이미 이 시간대 보고 완료
   }
 });
 

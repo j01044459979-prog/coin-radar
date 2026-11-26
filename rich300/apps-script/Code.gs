@@ -3041,7 +3041,7 @@ function followReport({ signal, market, now, enteredAt, urgent = false }) {
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
   return [
-    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 2시간 포지션 점검',
+    urgent ? '🚨 포지션 관리 · 전략 변경 경고' : '🚨 포지션 관리 · 2시간 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
     '🔎 판단: [' + a.status + '] ' + a.verdict,
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
@@ -4589,7 +4589,7 @@ function rich300GasEnv_(spreadsheetId, opts) {
  *  ?p=fill (R4 모바일 입력 화면), ?p=dash (R6 대시보드)는 해당 PR이 페이지 함수를 정의했을 때만 동작하고, *소유자 이메일 확인이 통과해야* 한다.
  *  소유자 확인은 fail-closed: RICH300_OWNER_EMAIL 미설정이거나 방문자 이메일을 알 수 없으면(익명·"나로 실행" 배포의 타인) 거부한다.
  */
-var RICH300_BUILD = '1428df76bd0b';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
+var RICH300_BUILD = 'a7c409b34214';                 // 번들 생성 때 내용 해시로 바뀐다(?p=health 에 표시 — 배포된 버전이 올린 버전인지 확인)
 var RICH300_PAGES_ = { fill: 'rich300PageFill_', dash: 'rich300PageQuick_', journal: 'rich300PageQuick_', 'classic-dash': 'rich300PageDash_', 'classic-journal': 'rich300PageJournalTab_', stats: 'rich300PageStats_', assets: 'rich300PageAssets_', signals: 'rich300PageSignals_', check: 'rich300PageCheck_', health: 'rich300PageHealth_', watch: 'rich300PageWatch_', tg: 'rich300PageTg_', pos: 'rich300PagePos_', ops: 'rich300PageOps_', strat: 'rich300PageStrat_' };
 function rich300UiWho_() {                              // 'owner' | 'other'(이메일은 보이나 소유자 아님) | 'anon'(이메일 불명)
   try {

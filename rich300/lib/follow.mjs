@@ -277,7 +277,7 @@ export function followReport({ signal, market, now, enteredAt, urgent = false })
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
   return [
-    urgent ? '🚨 RICH300 · 포지션 전략 변경 경고' : '📊 RICH300 · 2시간 포지션 점검',
+    urgent ? '🚨 포지션 관리 · 전략 변경 경고' : '🚨 포지션 관리 · 2시간 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
     '🔎 판단: [' + a.status + '] ' + a.verdict,
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',

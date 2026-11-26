@@ -59,6 +59,8 @@ jobs:
       RADAR_DONCHIAN: ${{ vars.RADAR_DONCHIAN || 'on' }} # 독립 돈치안 4H 확정 돌파·1H 사전 관찰 실전 Telegram 알림, 자동주문/피드 기록 없음
       RADAR_ACCUMULATION_WATCH: ${{ vars.RADAR_ACCUMULATION_WATCH || 'on' }} # 독립 매집/압축 감시: off|preview|on. on도 진입신호·RICH300 이관 없음, 1일 최대 4건
       RADAR_TELEGRAM_QUIET: ${{ vars.RADAR_TELEGRAM_QUIET || 'off' }}  # on이면 일반 후보(OPPORTUNITY)·정기 보고·사이클 긴급 알림의 Telegram 전송만 끈다(분석·상태·A급 신호·장애 알림은 유지). 기본 off = 기존 동작
+      RADAR_MOMENTUM_5M: ${{ vars.RADAR_MOMENTUM_5M || 'experimental' }}   # 5분봉 상승 가속 모멘텀(LONG): off|experimental|on. 검증 통과 전에는 on이어도 🟡 실험 관찰로만 나가며(진입 검토 승격 없음), 진입 기록·주문 없음
+      RADAR_WATCH_DIGEST: ${{ vars.RADAR_WATCH_DIGEST || 'on' }}   # 🟡 관심종목 관찰 알림을 매 시 1회 통합 발송(off면 즉시 개별 발송). 🟢/🔴 진입 검토·🚨 포지션 관리는 항상 즉시
       RADAR_WATCH_BUTTONS: ${{ vars.RADAR_WATCH_BUTTONS || 'off' }}   # 관심 등록/패스: GAS W1 수신기 배포·검증 후에만 on. 미배포에서 버튼 노출 금지
       RADAR_RICH300_BUTTONS: ${{ vars.RADAR_RICH300_BUTTONS || 'off' }}  # 앱용 [진입했어][관망했어][놓쳤어] 버튼. 기본 off; 자동 주문 없음
       RADAR_RICH300_FEED: ${{ vars.RADAR_RICH300_FEED || 'off' }}   # RICH 300 추천 전달: on이면 전달 확인된 진입 후보를 상태(state.signal.feed)에 남긴다(기본 off = 기존 동작과 동일). 게시는 별도 워크플로(rich300-feed.yml)가 한다. 주문 기능 없음

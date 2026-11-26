@@ -73,6 +73,15 @@ export const SCALE_VARIANTS = Object.freeze([
   { id: 'no-be', label: '기본 + TP1 후 본전 이동 없음', params: { beAfterTp1: false } },
 ]);
 
+// 익절 비율 비교(모두 단일 진입, 같은 0.5% 위험 한도): 기본 50/30/20 대 30/30/40(잔여 40% 추적 손절). 트레일링은 TP2 체결 뒤 최고가−1R(본전 아래로는 내리지 않음).
+const ONE = { weights: [1], maxStages: 1, addR: [] };
+export const TP_VARIANTS = Object.freeze([
+  { id: 'tp-50-30-20', label: '익절 50/30/20 (1.5R·2R, 잔여 20% 추적)', params: { ...ONE } },
+  { id: 'tp-30-30-40', label: '익절 30/30/40 (1.5R·2.5R, 잔여 40% 추적)', params: { ...ONE, tp: [{ r: 1.5, w: 0.3 }, { r: 2.5, w: 0.3 }] } },
+  { id: 'tp-30-30-40-2r', label: '익절 30/30/40 (1.5R·2R, 잔여 40% 추적)', params: { ...ONE, tp: [{ r: 1.5, w: 0.3 }, { r: 2, w: 0.3 }] } },
+  { id: 'tp-30-30-40-nobe', label: '익절 30/30/40 · TP1 후 본전 이동 없음', params: { ...ONE, tp: [{ r: 1.5, w: 0.3 }, { r: 2.5, w: 0.3 }], beAfterTp1: false } },
+]);
+
 // events: [{ symbol, strategy, dir, stop, barsRef(심볼별 확정 봉 배열), i }]. 반환: { [strategy]: { [variantId]: summary } }
 export function scaleCompare(events, { variants = SCALE_VARIANTS, equity = SSIM.equity, maxBars = SSIM.maxBars, window = SSIM.window } = {}) {
   const out = {};

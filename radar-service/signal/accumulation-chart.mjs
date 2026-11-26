@@ -134,7 +134,7 @@ export function buildAccumulationSvg(symbol, x, c1h) {
 export function accumulationCaption(symbol,x){
   const retest=x.stage==='RETEST', f=fmtPrice;
   const lines=[
-    '🟡 RICH · 관찰 | '+symbol.replace(/USDT$/,'')+' LONG',
+    '🟡 관심종목 관찰 | '+symbol.replace(/USDT$/,'')+' LONG',
     '📌 전략: '+(retest?'3단계 재지지 관심 후보 · 진입 기록 미연동':x.stage==='BREAKOUT'?'2단계 돌파 관찰':'1단계 매집 감시'),
     '⏱ 1H 확정 '+kst(x.asOf)+' KST',
     '📦 박스 '+f(x.lower)+' ~ '+f(x.upper),

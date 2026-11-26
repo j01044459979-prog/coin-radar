@@ -251,7 +251,7 @@ test('실행: 일일 상한은 진입 후보에만 적용하고 초과분은 보
 test('실행: 여러 후보는 조건 적합도 높은 순으로 보내고, 무효화가 먼저', async () => {
   const scores = { ETHUSDT: 70, SOLUSDT: 90 }; let k = 0; const syms = ['ETHUSDT', 'SOLUSDT'];
   const r = run({ symbols: syms, state: oppState(syms) }); r.args.analyze = () => mkA({ score: { total: scores[syms[k++ % 2]], grade: '', parts: [] } });
-  await signalStep(r.args); assert.deepEqual(r.sd.sent.map(m => m.text.match(/<b>([A-Z]+)<\/b> <b>LONG/)?.[1]), ['SOL', 'ETH']);
+  await signalStep(r.args); assert.deepEqual(r.sd.sent.map(m => m.text.match(/<b>진입 검토 LONG<\/b> \| <b>([A-Z]+)<\/b>/)?.[1]), ['SOL', 'ETH']);
 });
 test('실행: 관찰 후보가 없으면 아무것도 하지 않는다 / 기존 레이더의 quiet·제한 대기를 따른다', async () => {
   const none = run({ state: {} }); assert.equal((await signalStep(none.args)).skipped, 'no-watchlist'); assert.equal(none.calls.length, 0);
