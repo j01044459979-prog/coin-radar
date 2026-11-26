@@ -1,5 +1,6 @@
 // Experimental market-context gate. No account information, orders or win-rate estimates.
 import { ema, H1, H4 } from '../opportunity/indicators.mjs';
+import { derivativeAt } from './btc-derivatives.mjs';
 const M5=300000,M15=900000;
 const finite = n => Number.isFinite(n) && n>0;
 const clean=(bars,step,n,at)=>{
@@ -11,7 +12,7 @@ const clean=(bars,step,n,at)=>{
 const change=b=>(b.at(-1).c/b.at(-2).c-1)*100;
 const avg=a=>a.reduce((s,x)=>s+x,0)/a.length;
 export const btcGateMode=(env={})=>['on','preview'].includes(String(env.RADAR_BTC_GATE??'').toLowerCase())?String(env.RADAR_BTC_GATE).toLowerCase():'off';
-export function btcGate({btc1h,btc4h,btc5m,btc15m,coin1h,dir,at}={}){
+export function btcGate({btc1h,btc4h,btc5m,btc15m,coin1h,derivatives,dir,at}={}){
   const s=dir==='LONG'?1:dir==='SHORT'?-1:0;
   const h=clean(btc1h,H1,55,at),f=clean(btc4h,H4,55,at),m=clean(btc15m,M15,22,at),q=clean(btc5m,M5,22,at),a=clean(coin1h,H1,2,at);
   const notes=[],missing=[],hard=[];let score=0,available=0;
@@ -34,10 +35,15 @@ export function btcGate({btc1h,btc4h,btc5m,btc15m,coin1h,dir,at}={}){
   }else{for(const [n,w] of [['구조',15],['거래량',10],['변동성',15]])add(n,w,null,'');}
   const rel=h&&a&&h.at(-1).t===a.at(-1).t?change(a)-change(h):null;
   add('상대강도',10,rel===null||!s?null:rel*s>.05?1:Math.abs(rel)<=.05?.5:0,rel===null?'':rel.toFixed(2)+'%p');
-  // Derivatives not collected in this version. Never invent or renormalize missing 10 points.
-  add('펀딩/OI',10,null,'');
+  const d=derivativeAt(derivatives,at);
+  const funding=Number.isFinite(d.funding8hPct)&&s?d.funding8hPct:null;
+  const oi=Number.isFinite(d.oi1hPct)&&h&&s?d.oi1hPct:null;
+  // Funding is a crowding/carry risk proxy, not directional proof; OI is non-directional.
+  add('펀딩',5,funding===null?null:funding*s>=.08?0:funding*s>=.03?.5:1,funding===null?'':funding.toFixed(4)+'% (8H 환산, 직전 정산)');
+  add('OI',5,oi===null?null:oi>1?(change(h)*s>0?1:0):oi< -1?.25:.5,oi===null?'':oi.toFixed(2)+'% (1H 계약수 변화)');
+  if(funding!==null&&funding*s>=.08&&oi!==null&&oi>2)hard.push('BTC 방향 과밀 위험');
   if(h&&f&&s&&trend(h)===0&&trend(f)===0)hard.push('BTC 1H·4H 동시 역행');
-  const core=!!(s&&h&&f&&m&&q&&a&&available>=80);
+  const core=!!(s&&h&&f&&m&&q&&a&&available===100);
   const rounded=Math.round(score);
   const grade=hard.length?'C':!core?'B':rounded>=85?'A+':rounded>=70?'A':rounded>=50?'B':'C';
   return {score:rounded,available,grade,allow:core&&!hard.length&&rounded>=70,notes,missing,hard};
