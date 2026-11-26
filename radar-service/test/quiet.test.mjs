@@ -24,7 +24,7 @@ test('플래그: RADAR_TELEGRAM_QUIET=on 일 때만 켜진다(기본 off, 대소
 });
 test('기본(off)은 기존 동작: 정기 보고가 전송된다', async () => {
   const { o, out } = harness({}); await cycle({ ...o, now });
-  assert.ok(out.texts.filter(t => t.includes('📡 RICH')).length >= 1);
+  assert.ok(out.texts.filter(t => t.includes('RICH · 관찰 | 정기 요약')).length >= 1);
 });
 test('조용한 모드: 정기 보고·차트는 전송·렌더하지 않고, 시간대·쿨다운 상태는 평소처럼 남는다', async () => {
   const state = {}, { o, out } = harness(state); await cycle({ ...o, now, quietReports: true });
