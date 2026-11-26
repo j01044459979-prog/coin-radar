@@ -10,7 +10,8 @@ export function parseOi(rows){
   return (Array.isArray(rows)?rows:[]).filter(Array.isArray).map(x=>({t:num(x[0]),oi:num(x[1])}))
     .filter(x=>Number.isSafeInteger(x.t)&&x.t>0&&Number.isFinite(x.oi)&&x.oi>0).sort((a,b)=>a.t-b.t);
 }
-export function derivativeAt({funding=[],oi=[]}={},at){
+export function derivativeAt(data,at){
+  const {funding=[],oi=[]}=data??{};
   if(!Number.isFinite(at))return {};
   const f=funding.filter(x=>x.t<=at).slice(-2), o=oi.filter(x=>x.t+H<=at).slice(-2);
   // Conservative: hourly OI bucket is not available until one hour after its label.
