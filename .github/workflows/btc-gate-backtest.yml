@@ -1,0 +1,38 @@
+name: btc-gate-backtest
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'radar-service/signal/btc-gate*.mjs'
+      - 'radar-service/signal/btc-derivatives.mjs'
+      - '.github/workflows/btc-gate-backtest.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: btc-gate-backtest-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    if: github.repository == 'j01044459979-prog/coin-radar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test radar-service/test/btc-gate.test.mjs
+      - name: Read-only market replay
+        run: node radar-service/signal/btc-gate-backtest-cli.mjs "$RUNNER_TEMP/btc-gate-backtest.json"
+      - name: Summary
+        run: |
+          echo '### BTC gate comparison (experimental, no automatic activation)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/btc-gate-backtest.json" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: btc-gate-backtest
+          path: ${{ runner.temp }}/btc-gate-backtest.json
