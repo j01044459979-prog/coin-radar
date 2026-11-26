@@ -454,3 +454,22 @@ test('실제 분석 경로: 기존 단계 판정에는 영향이 없다(분석 �
   }
   assert.ok(n > 30);
 });
+
+test('BTC gate preview preserves candidate; live incomplete context blocks entry without active record', async()=>{
+  const extra={collectM5:async()=>({coins:{},calls:0,stopped:null}),collectDerivatives:async()=>({funding:[],oi:[],calls:0})};
+  const p=run({env:{RADAR_BTC_GATE:'preview',RADAR_PRICE_ONLY:'on',RADAR_RICH300_BUTTONS:'on'},extra});
+  const a=await signalStep(p.args);
+  assert.equal(a.sentMessages,1);assert.equal(a.btcGate.wouldBlock,1);
+  assert.match(p.sd.sent[0].text,/BTC 필터 실험/);assert.match(p.sd.sent[0].text,/누적 평균/);
+  assert.equal(p.st.signal.coins.ETHUSDT.status,'active');
+  const b=run({env:{RADAR_BTC_GATE:'on',RADAR_PRICE_ONLY:'on',RADAR_RICH300_BUTTONS:'on'},extra});
+  const out=await signalStep(b.args);
+  assert.equal(out.candidates,1);assert.equal(out.btcGate.wouldBlock,1);assert.equal(out.sentMessages,0);
+  assert.notEqual(b.st.signal.coins.ETHUSDT?.status,'active');
+});
+test('BTC gate does not suppress existing invalidation alerts',async()=>{
+  const r=run();await signalStep(r.args);
+  const bc=mk15({closeT:T+2*M15,lastClose:97.4,lastOpen:98,lastHigh:98.1,lastLow:97.3,level:98});
+  const out=await signalStep({...r.args,env:{...r.args.env,RADAR_BTC_GATE:'on'},now:T+2*M15+60000,...collectors({c15:bc})});
+  assert.equal(out.invalidated,1);assert.equal(out.sentMessages,1);assert.match(r.sd.sent[1].text,/무효화/);
+});
