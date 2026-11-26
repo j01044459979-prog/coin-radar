@@ -276,7 +276,7 @@ export function followDecisionEvidence({ signal, market, btcMarket, now, assessm
   const validBars = (m, key, step) => m && followLevelBars(m[key], 55, step, now);
   for (const [name, key, step] of [['1H','bars1h',FOLLOW_HOUR_MS],['4H','bars4h',4*FOLLOW_HOUR_MS]]) {
     const bars = validBars(market,key,step);
-    const t = bars ? watchTrend(bars) : null;
+    const t = bars ? watchTrend(market[key]) : null;
     if (!t || ![t.fast,t.slow,t.last].every(followLevelNumber)) { lines.push(name + ': 확정 EMA 근거 확인 불가'); continue; }
     const relation = (t.last-t.slow)*sign > 0 && (t.fast-t.slow)*sign > 0 ? '추천 방향 정렬' : '추천 방향 정렬 미충족';
     lines.push(name + ' 종가 ' + fmt(t.last) + ' · EMA20 ' + fmt(t.fast) + ' · EMA50 ' + fmt(t.slow) + ' (' + relation + ')');
@@ -324,10 +324,11 @@ export function followReport({ signal, market, btcMarket = null, now, enteredAt,
       ? '4H 추세·1H 눌림 구간·15분 확정 트리거·거래량·비용 반영 손익비가 추천 당시 조건이었습니다.'
       : '추천 세부 설명 미저장. 최초 진입·손절·목표 기준을 비교합니다.';
   const dir = signal.dir;
+  const evidence = urgent ? [] : followDecisionEvidence({ signal, market, btcMarket, now, assessment: a });
   return [
     urgent ? '🚨 포지션 관리 · 전략 변경 경고' : '🚨 포지션 관리 · 2시간 점검',
     signal.symbolId.replace(/USDT$/, '') + ' ' + dir + ' · ' + time + ' KST',
-    '🔎 판단: [' + a.status + '] ' + (urgent ? a.verdict : '종합 판단은 유지·정리 근거 참조'),
+    '🔎 판단: [' + a.status + '] ' + (urgent ? a.verdict : evidence[evidence.length - 1].replace('종합 판단: ', '')),
     '진입 응답: ' + new Date(enteredAt + 9 * FOLLOW_HOUR_MS).toISOString().slice(11,16) + ' KST (실제 체결 미확인)',
     '',
     '① 현재 위치 (공개 시세 · 실제 손익 아님)',
@@ -342,10 +343,10 @@ export function followReport({ signal, market, btcMarket = null, now, enteredAt,
     a.trendText,
     a.m15Text,
     ...(urgent ? [''] : followDetailedPlan({ signal, market, now }).concat([''])),
-    ...(urgent ? [] : followDecisionEvidence({ signal, market, btcMarket, now, assessment: a }).concat([''])),
+    ...(urgent ? [] : evidence.concat([''])),
     urgent ? '③ 지금 판단과 대응' : '⑦ 지금 판단과 대응',
     '근거: ' + a.why,
-    '대응: ' + a.next,
+    '대응: ' + (!urgent && a.status === '추세 유지' && !evidence[evidence.length - 1].includes('조건부 유지') ? '방어 구간·BTC 및 확정봉을 재확인하고 최초 손절 기준을 넓히지 마세요.' : a.next),
     '다음 점검: ' + a.trigger,
     '',
     '최초 추천 기준: ' + original,
