@@ -15,6 +15,7 @@ import { ema as emaSeries } from '../opportunity/indicators.mjs';
 import { evaluateSignal, M15, SIG } from './evaluate.mjs';
 import { btcContext, btcContextLines } from './btc-context.mjs';
 import { btcGate, btcGateMode, btcGateLines } from './btc-gate.mjs';
+import { collectBtcDerivatives } from './btc-derivatives.mjs';
 import { escHtml } from '../format.mjs';
 import { watchDecorate } from '../watch-button.mjs';
 import { accumulationAutoInterests } from './auto-interest.mjs';
@@ -173,7 +174,7 @@ export function expandedWatchlist(state, sg, now, paper = null, marketPool = nul
   return watch;
 }
 
-export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, collectM5 = collect5, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
+export async function signalStep({ now, state, env = process.env, fetcher = fetch, send = null, save = async () => {}, log = () => {}, collectHour = collectOpportunity, collectM15 = collect15, collectM5 = collect5, collectDerivatives = collectBtcDerivatives, sendPhoto = null, renderChart = renderSignalChart, analyze = analyzeCoin, paperRunner = paperStep, marketScan = scanSignalMarket, force = false, gapMs = 260, budgetMs = 60000, deadline = Infinity, clock = Date.now, scanAll = false, topN = 20, checkpoint = null } = {}) {
   const cfg = signalSettings(env), mode = cfg.mode, fibSetting = fibMode(env), emaEnabled = String(env.RADAR_EMA_PULLBACK ?? '').toLowerCase() === 'on';
   // Independent opt-in for *new live* EMA alerts. Paper tracking and prior alert invalidations stay active.
   const emaLive = String(env.RADAR_EMA_LIVE ?? 'off').toLowerCase() === 'on';
@@ -399,7 +400,7 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
   const btcFor = i => btcContext({btc4h:hourData.btc4h,btc1h,coin1h:rows.find(r=>r.symbol===i.symbol)?.c1h,dir:i.event.ev.dir,at:i.event.ev.triggerCloseT});
   const gates = new Map();
   if(gateMode !== 'off' && cand.length){
-    let b15=m15.coins?.['BTC-USDT-SWAP']?.status==='fresh'?m15.coins['BTC-USDT-SWAP'].c15:null,b5=null;
+    let b15=m15.coins?.['BTC-USDT-SWAP']?.status==='fresh'?m15.coins['BTC-USDT-SWAP'].c15:null,b5=null,derivatives=null;
     try {
       if(!b15&&!m15.stopped&&!hourData.stopped&&!expired('beforeBtc15')){
         const x=await collectM15({fetcher,now,ids:['BTC-USDT-SWAP'],gapMs,budgetMs:5000,shouldStop:()=>clock()>deadline});
@@ -410,8 +411,11 @@ export async function signalStep({ now, state, env = process.env, fetcher = fetc
         const x=await collectM5({fetcher,now,ids:['BTC-USDT-SWAP'],gapMs,budgetMs:5000,shouldStop:()=>clock()>deadline});
         base.calls+=x.calls??0;if(!x.stopped)b5=x.coins?.['BTC-USDT-SWAP']?.c5;
       }
+      if(b15&&b5&&!expired('beforeBtcDerivatives')){
+        derivatives=await collectDerivatives({fetcher,shouldStop:()=>clock()>deadline});base.calls+=derivatives.calls??0;
+      }
     }catch{/* incomplete context never treated as a pass */}
-    for(const i of cand)gates.set(i,btcGate({btc1h,btc4h:hourData.btc4h,btc15m:b15,btc5m:b5,coin1h:rows.find(r=>r.symbol===i.symbol)?.c1h,dir:i.event.ev.dir,at:i.event.ev.triggerCloseT}));
+    for(const i of cand)gates.set(i,btcGate({btc1h,btc4h:hourData.btc4h,btc15m:b15,btc5m:b5,derivatives,coin1h:rows.find(r=>r.symbol===i.symbol)?.c1h,dir:i.event.ev.dir,at:i.event.ev.triggerCloseT}));
   }
   const eligible=gateMode==='on'?cand.filter(i=>gates.get(i)?.allow).sort((a,b)=>gates.get(b).score-gates.get(a).score||b.score-a.score||b.rr-a.rr):cand;
   const room = Math.max(0, cfg.maxPerDay - dy.candidates), toSend = [...inv, ...eligible.slice(0, room)].slice(0, MAX_MESSAGES_PER_RUN);
